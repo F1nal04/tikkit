@@ -1,0 +1,36 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #19251f;
+  background: #f6f7f4;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+body { margin: 0; }
+
+main {
+  max-width: 40rem;
+  margin: 15vh auto;
+  padding: 2rem;
+}
+
+h1 {
+  margin: 1rem 0;
+  font-size: clamp(3rem, 10vw, 5rem);
+  letter-spacing: -0.06em;
+}
+
+.eyebrow {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.status {
+  display: inline-block;
+  margin-top: 2rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #cad3cb;
+  border-radius: 0.5rem;
+}

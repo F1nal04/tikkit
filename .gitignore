@@ -1,0 +1,15 @@
+node_modules/
+.turbo/
+.tanstack/
+.output/
+dist/
+/target/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+*.pem
+*-debug.log*
+.vercel/

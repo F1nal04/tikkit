@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "dev": { "cache": false, "persistent": true },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".output/**", "dist/**"]
+    },
+    "check": {},
+    "test": {},
+    "start": { "cache": false, "persistent": true },
+    "@tikkit/web#check": { "dependsOn": ["build"] },
+    "@tikkit/api#dev": {
+      "cache": false,
+      "persistent": true,
+      "env": ["API_ADDR"]
+    },
+    "@tikkit/api#build": {
+      "cache": false,
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/Cargo.toml", "$TURBO_ROOT$/Cargo.lock"]
+    },
+    "@tikkit/api#check": { "cache": false },
+    "@tikkit/api#test": { "cache": false },
+    "@tikkit/api#start": {
+      "cache": false,
+      "persistent": true,
+      "env": ["API_ADDR"]
+    },
+    "@tikkit/web#start": {
+      "cache": false,
+      "persistent": true,
+      "env": ["HOST", "PORT"]
+    }
+  }
+}
