@@ -1,7 +1,7 @@
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-gradient-to-bl from-black via-neutral-900 to-red-900 text-white">
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-8 pt-24">
         <h1 className="text-3xl font-bold text-white mb-6">Privacy</h1>
         <div className="bg-gray-900 p-6 rounded-lg border border-gray-800 max-w-4xl">
           <div className="text-gray-300 space-y-4">

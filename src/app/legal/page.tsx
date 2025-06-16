@@ -1,7 +1,7 @@
 export default function LegalPage() {
   return (
     <div className="min-h-screen bg-gradient-to-tl from-red-900 via-neutral-900 to-black text-white">
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-8 pt-24">
         <h1 className="text-3xl font-bold text-white mb-6">Legal Notice</h1>
         <div className="bg-gray-900 p-6 rounded-lg border border-gray-800 max-w-4xl">
           <div className="text-gray-300 space-y-4">
