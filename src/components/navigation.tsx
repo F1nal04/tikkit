@@ -9,9 +9,6 @@ export function Navigation() {
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
         <div className="flex items-center">
           <Link href="/" className="flex items-center space-x-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-800">
-              <span className="text-lg font-bold text-white">T</span>
-            </div>
             <span className="text-2xl font-bold text-white">tikkit</span>
           </Link>
         </div>
