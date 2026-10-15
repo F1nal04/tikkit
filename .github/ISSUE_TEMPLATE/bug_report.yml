@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible problem in Tikkit.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use sanitized examples. Do not include credentials, provider API keys, or personal ticket data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What went wrong, and who is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Sign in as a User, Operator, Specialist, Team Lead, or Admin.
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit or release, browser, operating system, and deployment type.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include relevant logs, screenshots, HTTP status codes, and ticket state transitions. Remove personal information and secrets first.
+  - type: dropdown
+    id: ai
+    attributes:
+      label: AI involvement
+      options:
+        - Not related to AI
+        - AI disabled or not configured
+        - Suggestion generation
+        - Solved confirmation or escalation
+        - BYOK configuration
+        - Unknown

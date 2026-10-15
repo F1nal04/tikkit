@@ -1,0 +1,83 @@
+name: Implementation task
+description: Define a feature, infrastructure change, or testable implementation task for Tikkit.
+title: "[Area]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe one deliverable that can be implemented and verified independently.
+        Never include provider API keys, credentials, or real ticket content.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Who needs this, and what observable behavior should change?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Foundation and CI
+        - Authentication and permissions
+        - Ticket submission and requester portal
+        - Operator workspace
+        - AI assistance and BYOK
+        - Administration and reporting
+        - Security and operations
+        - Testing and documentation
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Describe the API, UI, data changes, and boundaries of this task.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use checkboxes with observable outcomes, including failure behavior.
+      placeholder: |
+        - [ ] A requester can ...
+        - [ ] An unauthorized request ...
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Link blocking issues using #issue-number. Write None if this can start immediately.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Specify automated tests, manual checks, and migration or rollback checks where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: considerations
+    attributes:
+      label: Security, data, and AI considerations
+      description: Note permission boundaries, retention, secrets, external AI disclosure, and impact on reporting where relevant.
+  - type: checkboxes
+    id: workflow
+    attributes:
+      label: Ticket workflow impact
+      description: Select any invariant this task must preserve.
+      options:
+        - label: When AI is enabled for a non-exempt category, requester skipping is forbidden unless the admin toggle allows it.
+        - label: Admin-exempt categories bypass AI automatically without a provider call; disabled or failed AI still routes to operators.
+        - label: Only an explicit requester confirmation marks a ticket as AI solved.
+        - label: AI-solved tickets remain read-only in the owning requester's history and available to admin reporting, stay out of operator views, and cannot be reopened.
+        - label: Operator-resolved tickets can be reopened only if the admin toggle is enabled (default off) and the actor is authorized.
+        - label: Unresolved tickets reach operators with their existing context and without duplicate creation.
+        - label: New tickets requiring human support enter the shared general queue; operators manually dispatch them to teams.
+        - label: After team dispatch, staff access is limited to that team's current members and admins; the requester retains their own public ticket access.
+        - label: On claimed tickets, staff writes require the current assignee, that team's Team Lead, or Admin; other team members have read-only access.
