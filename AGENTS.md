@@ -50,7 +50,7 @@ Bun + Turborepo monorepo, two apps, same-origin routing by path prefix:
 - `apps/api` — Rust crate `tikkit-api` (Axum 0.8, Tokio, serde). `lib.rs` exposes `app() -> Router`; `main.rs` only binds the listener (`API_ADDR`, default `127.0.0.1:3001`) and handles graceful shutdown. Keep routes/handlers in the lib so tests can drive the router with `tower::ServiceExt::oneshot` without a socket (see the existing health test). The `package.json` in this dir exists solely to let Turbo invoke Cargo.
 - All backend routes are mounted under `/api/*`. In production a reverse proxy sends `/api/*` to Rust and everything else to the Node frontend; changing the API dev port means also changing the Vite proxy.
 
-Planned per `spec.md` (not yet present): PostgreSQL with a single migration path, private filesystem volume for screenshots, durable job processing (AI attempts, notification outbox, resolution-confirmation timeouts), Docker Compose deployment. Validation and authorization are enforced in Rust, not the frontend.
+Planned per `spec.md` (not yet present): private filesystem volume for screenshots, durable job processing (AI attempts, notification outbox, resolution-confirmation timeouts), Docker Compose deployment. Validation and authorization are enforced in Rust, not the frontend.
 
 ## Product invariants that code must preserve
 
