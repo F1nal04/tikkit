@@ -10,6 +10,10 @@
     "test": {},
     "start": { "cache": false, "persistent": true },
     "@tikkit/web#check": { "dependsOn": ["build"] },
+    "test:e2e": {
+      "cache": false,
+      "passThroughEnv": ["CI", "E2E_DATABASE_URL", "PW_CHROMIUM_PATH", "PLAYWRIGHT_*", "CARGO_*", "RUSTUP_*"]
+    },
     "@tikkit/api#dev": {
       "cache": false,
       "persistent": true,

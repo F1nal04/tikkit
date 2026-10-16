@@ -9,6 +9,7 @@
     "build": "turbo run build",
     "check": "turbo run check",
     "test": "turbo run test",
+    "test:e2e": "bun run --cwd apps/web test:e2e",
     "start": "turbo run start"
   },
   "devDependencies": {
