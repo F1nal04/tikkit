@@ -41,3 +41,7 @@ CREATE TRIGGER accounts_last_active_admin
 -- Role changes cascade here, so demoting a member to User requires leaving the team first.
 ALTER TABLE team_memberships ADD CONSTRAINT team_memberships_role_staff
     CHECK (role NOT IN ('admin', 'user'));
+
+-- Name the "active team's lead is active" CHECK so the API can report it
+-- (`active_team_lead`, together with `teams_lead_role_check`).
+ALTER TABLE teams RENAME CONSTRAINT teams_check1 TO teams_active_lead_active;

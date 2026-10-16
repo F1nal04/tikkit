@@ -48,6 +48,8 @@ pub enum ApiError {
     ResetTokenInvalid,
     /// The change would leave no active Admin.
     LastActiveAdmin,
+    /// Deactivating or demoting the lead of an active team (replace the lead or archive first).
+    ActiveTeamLead,
     /// Only where the resource's existence is already known to the caller;
     /// otherwise deny with `NotFound` so existence does not leak.
     Forbidden,
@@ -77,6 +79,7 @@ pub enum ErrorCode {
     InvitationInvalid,
     ResetTokenInvalid,
     LastActiveAdmin,
+    ActiveTeamLead,
     Forbidden,
     NotFound,
     MethodNotAllowed,
@@ -186,6 +189,11 @@ impl ApiError {
                 ErrorCode::LastActiveAdmin,
                 "At least one active administrator must remain.",
             ),
+            ActiveTeamLead => (
+                StatusCode::CONFLICT,
+                ErrorCode::ActiveTeamLead,
+                "The account leads an active team; appoint another lead or archive the team first.",
+            ),
             Forbidden => (
                 StatusCode::FORBIDDEN,
                 ErrorCode::Forbidden,
@@ -274,8 +282,12 @@ impl IntoResponse for ApiError {
 impl From<sqlx::Error> for ApiError {
     fn from(error: sqlx::Error) -> Self {
         let constraint = error.as_database_error().and_then(|db| db.constraint());
-        if constraint == Some("last_active_admin") {
-            return Self::LastActiveAdmin;
+        match constraint {
+            Some("last_active_admin") => return Self::LastActiveAdmin,
+            Some("teams_lead_role_check" | "teams_active_lead_active") => {
+                return Self::ActiveTeamLead;
+            }
+            _ => {}
         }
         // Serialization failure / deadlock: a concurrent change won; the client may retry.
         let code = error.as_database_error().and_then(|db| db.code());
