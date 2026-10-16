@@ -134,10 +134,10 @@ transaction; login is refused and every request re-checks `is_active`. Tickets,
 messages, and audit history keep referring to the account. The same transaction
 marks the account's unused recovery tokens used (reactivation does not revive
 them) and revokes the pending invitations it issued (`invitation_revoked`,
-reason `issuer_deactivated`). The transaction first
-locks every active Admin row (`accounts::lock_active_admins`), so the last active
-Admin cannot be deactivated (`409 last_active_admin`), even by two Admins at once.
-Deactivating an active team's lead is `409 conflict`. `GET /api/accounts` (Admin)
+reason `issuer_deactivated`). A database trigger keeps the last active Admin
+(`409 last_active_admin`), even against two Admins at once (see
+[authorization.md](authorization.md)). Deactivating an active team's lead is
+`409 active_team_lead`. `GET /api/accounts` (Admin)
 lists accounts. Non-Admins get `403 forbidden` on Admin endpoints.
 
 ## Audit events

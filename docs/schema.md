@@ -46,7 +46,7 @@ Rust validates and authorizes first; these constraints are the backstop.
   and leads carry a copy of the account's role (and leads its `is_active`) via
   foreign keys to `accounts (id, role[, is_active])` with `ON UPDATE CASCADE`.
   A role or activation change cascades into those rows, where CHECKs reject it:
-  `team_memberships.role <> 'admin'`, `teams.lead_role = 'team_lead'`, and an
+  `team_memberships.role NOT IN ('admin', 'user')`, `teams.lead_role = 'team_lead'`, and an
   active team's lead must be active. Foreign-key row locks make a concurrent
   role change and membership/appointment conflict instead of both committing.
   Insert memberships with the account's current role
@@ -55,13 +55,22 @@ Rust validates and authorizes first; these constraints are the backstop.
   key to `team_memberships (account_id, team_id)`, so the lead is a member of
   that same team. `lead_account_id`, `lead_role` and `lead_active` are NULL
   together (`MATCH FULL`), which only an archived team may do.
-- So: admins can be neither members nor leads; members cannot be promoted to
+- So: admins and users can be neither members nor leads; members cannot be promoted to
   admin; a current lead cannot be demoted or deactivated. These surface as
-  `23514`/`23503` here; Rust validates first and returns friendly errors (#11).
+  `23514`/`23503`; `ApiError` maps the lead checks (`teams_lead_role_check`,
+  `teams_active_lead_active`) to `409 active_team_lead`.
 - Team creation is atomic: insert the team (with its lead) and the lead's
   membership in one transaction; the deferred key is checked at commit.
 - Ticket assignees are members of the ticket's team (deferred composite key)
   and never the requester.
+- At least one active Admin remains: a trigger rejects demoting, deactivating,
+  or deleting the last one (constraint `last_active_admin`, `23514`), serialized
+  by an advisory lock so concurrent changes cannot both pass (see
+  [authorization.md](authorization.md)). Do not lock Admin rows `FOR UPDATE`
+  before changing `role`/`is_active`; let the statement take the advisory lock
+  first, or concurrent changes can deadlock (`40P01`, mapped to `409 conflict`).
+- Team members are staff: `team_memberships_role_staff` rejects `user` and
+  `admin` roles, so demoting a member to User requires leaving the team first.
 - `organization` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`);
   `setup_completed_at` closes first-admin setup.
 - `sessions.token_hash` (SHA-256 of the cookie token) is unique; tokens are never stored.

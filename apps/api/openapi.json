@@ -125,7 +125,7 @@
             }
           },
           "409": {
-            "description": "`last_active_admin`, or `conflict` (the account leads an active team)",
+            "description": "`last_active_admin`, `active_team_lead`, or `conflict` (concurrent change)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1168,6 +1168,7 @@
           "invitation_invalid",
           "reset_token_invalid",
           "last_active_admin",
+          "active_team_lead",
           "forbidden",
           "not_found",
           "method_not_allowed",

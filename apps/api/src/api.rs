@@ -48,6 +48,8 @@ pub enum ApiError {
     ResetTokenInvalid,
     /// The change would leave no active Admin.
     LastActiveAdmin,
+    /// Deactivating or demoting the lead of an active team (replace the lead or archive first).
+    ActiveTeamLead,
     /// Only where the resource's existence is already known to the caller;
     /// otherwise deny with `NotFound` so existence does not leak.
     Forbidden,
@@ -77,6 +79,7 @@ pub enum ErrorCode {
     InvitationInvalid,
     ResetTokenInvalid,
     LastActiveAdmin,
+    ActiveTeamLead,
     Forbidden,
     NotFound,
     MethodNotAllowed,
@@ -184,7 +187,12 @@ impl ApiError {
             LastActiveAdmin => (
                 StatusCode::CONFLICT,
                 ErrorCode::LastActiveAdmin,
-                "The last active administrator cannot be deactivated.",
+                "At least one active administrator must remain.",
+            ),
+            ActiveTeamLead => (
+                StatusCode::CONFLICT,
+                ErrorCode::ActiveTeamLead,
+                "The account leads an active team; appoint another lead or archive the team first.",
             ),
             Forbidden => (
                 StatusCode::FORBIDDEN,
@@ -273,6 +281,19 @@ impl IntoResponse for ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(error: sqlx::Error) -> Self {
+        let constraint = error.as_database_error().and_then(|db| db.constraint());
+        match constraint {
+            Some("last_active_admin") => return Self::LastActiveAdmin,
+            Some("teams_lead_role_check" | "teams_active_lead_active") => {
+                return Self::ActiveTeamLead;
+            }
+            _ => {}
+        }
+        // Serialization failure / deadlock: a concurrent change won; the client may retry.
+        let code = error.as_database_error().and_then(|db| db.code());
+        if matches!(code.as_deref(), Some("40001" | "40P01")) {
+            return Self::Conflict;
+        }
         tracing::error!(%error, "database error");
         Self::Internal
     }

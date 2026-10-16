@@ -19,6 +19,7 @@ use utoipa::{OpenApi, ToSchema};
 pub mod accounts;
 pub mod api;
 pub mod auth;
+pub mod authz;
 pub mod config;
 pub mod db;
 pub mod mail;
