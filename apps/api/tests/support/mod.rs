@@ -9,7 +9,7 @@ use sqlx::{
     Connection, Executor, PgConnection, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use tikkit_api::{AppState, config::Config, db};
+use tikkit_api::{AppState, auth::Settings, config::Config, db};
 use uuid::Uuid;
 
 /// A freshly created and migrated database, dropped when this value is dropped
@@ -90,9 +90,15 @@ pub fn test_config() -> Config {
     .unwrap()
 }
 
-/// The real application router on `pool`; drive it with `tower::ServiceExt::oneshot`.
+/// The real application router on `pool` with development auth settings
+/// (no `Secure` cookie); drive it with `tower::ServiceExt::oneshot`. Clones share
+/// one rate limiter. State-changing requests need `x-requested-with: tikkit`.
 pub fn test_app(pool: &PgPool) -> Router {
-    tikkit_api::app(AppState { pool: pool.clone() })
+    test_app_with(pool, Settings::default())
+}
+
+pub fn test_app_with(pool: &PgPool, settings: Settings) -> Router {
+    tikkit_api::app_with(AppState { pool: pool.clone() }, settings)
 }
 
 pub mod fixtures {
@@ -100,9 +106,10 @@ pub mod fixtures {
     pub use tikkit_api::api::Role;
     use uuid::Uuid;
 
-    /// Stored for every fixture account. Placeholder until password hashing
-    /// lands (#9); swap in a real hash of a known test password there.
-    pub const PASSWORD_HASH: &str = "test-password-hash";
+    /// Password of every fixture account; sign in with `POST /api/auth/login`.
+    pub const PASSWORD: &str = "correct horse battery staple!";
+    /// Argon2id hash of [`PASSWORD`], precomputed so fixtures stay fast.
+    pub const PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$nRhnZ6rgmgEaPuxLd8YUoA$zty/+hkq7huelI0TWA7Npoi2D4sbeM0NELyGfaCDmS4";
 
     /// An active account. Every fixture account shares one email on purpose:
     /// email is contact info only and must never identify an account.
@@ -120,9 +127,14 @@ pub mod fixtures {
         .unwrap()
     }
 
-    /// The Admin created by first setup. Plain insert until the setup flow exists.
+    /// The first-setup Admin: inserts it and closes setup, as `POST /api/setup` would.
     pub async fn bootstrap_admin(pool: &PgPool) -> Uuid {
-        account(pool, Role::Admin, "admin").await
+        let id = account(pool, Role::Admin, "admin").await;
+        sqlx::query("UPDATE organization SET setup_completed_at = now()")
+            .execute(pool)
+            .await
+            .unwrap();
+        id
     }
 
     /// An account created by accepting an invitation. Plain insert until the

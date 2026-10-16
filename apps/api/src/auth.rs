@@ -49,6 +49,9 @@ pub const CSRF_VALUE: &str = "tikkit";
 const LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const LIMIT_PER_IP: u32 = 10;
 const LIMIT_PER_USERNAME: u32 = 5;
+const LIMIT_MAX_KEYS: usize = 10_000;
+/// How long a rotated-away token keeps working, for requests already in flight.
+const ROTATION_GRACE: &str = "interval '1 minute'";
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -96,36 +99,35 @@ impl Auth {
     }
 
     /// Fixed-window counters; every listed key counts the attempt.
-    fn limit(&self, keys: &[(String, u32)]) -> Result<(), ApiError> {
+    /// One fixed-window counter. When the table is full of live keys, new keys
+    /// are refused rather than growing memory without bound.
+    fn hit(&self, key: String, max: u32) -> Result<(), ApiError> {
         let now = Instant::now();
         let mut attempts = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
-        if attempts.len() > 10_000 {
+        if attempts.len() >= LIMIT_MAX_KEYS {
             attempts.retain(|_, (start, _)| now - *start < LIMIT_WINDOW);
-        }
-        let mut retry_after = 0;
-        for (key, max) in keys {
-            let (start, count) = attempts.entry(key.clone()).or_insert((now, 0));
-            if now - *start >= LIMIT_WINDOW {
-                (*start, *count) = (now, 0);
-            }
-            *count += 1;
-            if *count > *max {
-                let left = LIMIT_WINDOW.saturating_sub(now - *start).as_secs();
-                retry_after = retry_after.max(left.max(1));
+            if attempts.len() >= LIMIT_MAX_KEYS && !attempts.contains_key(&key) {
+                return Err(ApiError::RateLimited(LIMIT_WINDOW.as_secs()));
             }
         }
-        match retry_after {
-            0 => Ok(()),
-            secs => Err(ApiError::RateLimited(secs)),
+        let (start, count) = attempts.entry(key).or_insert((now, 0));
+        if now - *start >= LIMIT_WINDOW {
+            (*start, *count) = (now, 0);
         }
+        *count += 1;
+        if *count > max {
+            let left = LIMIT_WINDOW.saturating_sub(now - *start).as_secs();
+            return Err(ApiError::RateLimited(left.max(1)));
+        }
+        Ok(())
     }
 
+    /// Per-IP first, so one client cannot mint unbounded per-username keys.
     fn limit_attempt(&self, scope: &str, client: &Client, username: &str) -> Result<(), ApiError> {
         let ip = client.ip.as_deref().unwrap_or("unknown");
-        self.limit(&[
-            (format!("{scope}:ip:{ip}"), LIMIT_PER_IP),
-            (format!("{scope}:user:{username}"), LIMIT_PER_USERNAME),
-        ])
+        self.hit(format!("{scope}:ip:{ip}"), LIMIT_PER_IP)?;
+        let username: String = username.chars().take(64).collect();
+        self.hit(format!("{scope}:user:{username}"), LIMIT_PER_USERNAME)
     }
 
     fn cookie(&self, token: &str, expires_at: OffsetDateTime) -> HeaderValue {
@@ -306,10 +308,10 @@ pub async fn session(
     request.extensions_mut().insert(user);
     let mut response = next.run(request).await;
     // Handlers that set the cookie themselves (login, logout, password change) win.
-    if let Some(cookie) = cookie {
-        if !response.headers().contains_key(SET_COOKIE) {
-            response.headers_mut().insert(SET_COOKIE, cookie);
-        }
+    if let Some(cookie) = cookie
+        && !response.headers().contains_key(SET_COOKIE)
+    {
+        response.headers_mut().insert(SET_COOKIE, cookie);
     }
     response
 }
@@ -324,7 +326,8 @@ async fn resolve(
                 s.created_at < now() - $2 AS rotate,
                 s.last_seen_at < now() - interval '1 hour' AS stale, {ACCOUNT_COLUMNS}
          FROM sessions s JOIN accounts a ON a.id = s.account_id
-         WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND a.is_active"
+         WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND a.is_active
+           AND (s.rotated_at IS NULL OR s.rotated_at > now() - {ROTATION_GRACE})"
     ))
     .bind(token_hash(token))
     .bind(auth.settings.session_rotate)
@@ -334,15 +337,17 @@ async fn resolve(
     let mut session_id = row.session_id;
     let mut cookie = None;
     if row.rotate {
-        // Same absolute expiry; the old token stops working immediately. If a
-        // concurrent request already rotated it, keep serving this one unrotated.
+        // Same absolute expiry. The old token stays valid for ROTATION_GRACE so
+        // parallel in-flight requests (e.g. SSR loads) are not logged out; those
+        // find it already rotated and are served unrotated.
         let new_token = new_token();
         let rotated: Option<Uuid> = sqlx::query_scalar(
             "WITH old AS (
-                UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
-                RETURNING account_id, expires_at, user_agent, ip)
-             INSERT INTO sessions (account_id, token_hash, expires_at, user_agent, ip)
-             SELECT account_id, $2, expires_at, user_agent, ip FROM old RETURNING id",
+                UPDATE sessions SET rotated_at = now()
+                WHERE id = $1 AND revoked_at IS NULL AND rotated_at IS NULL
+                RETURNING id, account_id, expires_at, user_agent, ip)
+             INSERT INTO sessions (account_id, token_hash, expires_at, user_agent, ip, rotated_from)
+             SELECT account_id, $2, expires_at, user_agent, ip, id FROM old RETURNING id",
         )
         .bind(row.session_id)
         .bind(token_hash(&new_token))
@@ -422,10 +427,10 @@ pub async fn setup(
 ) -> Result<Response, ApiError> {
     let username = body.username.trim().to_owned();
     let normalized = username.to_lowercase();
-    auth.limit_attempt("setup", &client, &normalized)?;
     if !setup_open(&state).await? {
         return Err(ApiError::SetupAlreadyCompleted);
     }
+    auth.limit_attempt("setup", &client, &normalized)?;
     let mut errors = FieldErrors::new();
     if let Err(code) = check_username(&normalized) {
         errors.insert("username".into(), vec![code]);
@@ -494,6 +499,7 @@ pub async fn login(
     State(state): State<AppState>,
     Extension(auth): Extension<Arc<Auth>>,
     client: Client,
+    headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
     let normalized: String = body
@@ -525,12 +531,23 @@ pub async fn login(
     let subject = found.as_ref().map(|f| f.0);
     if let Some(reason) = failure {
         let metadata =
-            json!({ "username_normalized": normalized, "reason": reason, "ip": client.ip });
+            // No typed username: for unknown users it may be a misplaced password.
+            json!({ "reason": reason, "ip": client.ip });
         audit(&state.pool, "login_failed", None, subject, metadata).await?;
         return Err(ApiError::InvalidCredentials);
     }
     let account_id = subject.expect("checked above");
     let mut tx = state.pool.begin().await?;
+    // The session this browser held before signing in ends here.
+    if let Some(previous) = cookie_token(&headers) {
+        let id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sessions WHERE token_hash = $1")
+            .bind(token_hash(&previous))
+            .fetch_optional(&mut *tx)
+            .await?;
+        if let Some(id) = id {
+            revoke_session(&mut *tx, id).await?;
+        }
+    }
     let token = create_session(&mut tx, &auth, account_id, &client).await?;
     audit(
         &mut *tx,
@@ -555,10 +572,7 @@ pub async fn logout(
 ) -> Result<Response, ApiError> {
     if let Some(user) = user {
         let mut tx = state.pool.begin().await?;
-        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
-            .bind(user.session_id)
-            .execute(&mut *tx)
-            .await?;
+        revoke_session(&mut *tx, user.session_id).await?;
         let id = Some(user.account_id());
         audit(&mut *tx, "logout", id, id, json!({})).await?;
         tx.commit().await?;
@@ -648,6 +662,20 @@ pub async fn change_password(
 
 fn signed_in(auth: &Auth, token: &str, account: Account) -> Response {
     ([(SET_COOKIE, auth.new_cookie(token))], Json(account)).into_response()
+}
+
+/// Revokes a session together with its rotation predecessor/successor, so
+/// signing out with a token still in its rotation grace window ends both.
+async fn revoke_session<'c>(db: impl PgExecutor<'c>, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE sessions SET revoked_at = now()
+         WHERE revoked_at IS NULL
+           AND (id = $1 OR rotated_from = $1 OR id = (SELECT rotated_from FROM sessions WHERE id = $1))",
+    )
+    .bind(id)
+    .execute(db)
+    .await
+    .map(drop)
 }
 
 /// Always a brand-new random token: a cookie presented before login is never adopted.
@@ -890,12 +918,44 @@ mod tests {
     #[test]
     fn rate_limits_are_per_key_fixed_windows() {
         let auth = Auth::new(Settings::default());
-        let keys = [("ip:1".to_owned(), 2)];
-        assert!(auth.limit(&keys).is_ok());
-        assert!(auth.limit(&keys).is_ok());
-        assert!(
-            matches!(auth.limit(&keys), Err(ApiError::RateLimited(s)) if (1..=60).contains(&s))
+        let hit = |key: &str| auth.hit(key.to_owned(), 2);
+        assert!(hit("ip:1").is_ok() && hit("ip:1").is_ok());
+        assert!(matches!(hit("ip:1"), Err(ApiError::RateLimited(s)) if (1..=60).contains(&s)));
+        assert!(hit("ip:2").is_ok());
+    }
+
+    #[test]
+    fn rate_limiter_checks_ip_first_and_caps_its_memory() {
+        let auth = Auth::new(Settings::default());
+        let client = Client {
+            ip: Some("10.0.0.1".into()),
+            user_agent: None,
+        };
+        for i in 0..LIMIT_PER_IP {
+            assert!(
+                auth.limit_attempt("login", &client, &format!("u{i}"))
+                    .is_ok()
+            );
+        }
+        assert!(auth.limit_attempt("login", &client, "fresh").is_err());
+        let keys = auth.attempts.lock().unwrap().len();
+        assert_eq!(
+            keys as u32,
+            1 + LIMIT_PER_IP,
+            "a blocked IP adds no username key"
         );
-        assert!(auth.limit(&[("ip:2".to_owned(), 2)]).is_ok());
+
+        let live = auth.attempts.lock().unwrap().len();
+        for i in live..LIMIT_MAX_KEYS {
+            auth.hit(format!("k{i}"), 1).unwrap();
+        }
+        assert!(matches!(
+            auth.hit("new".into(), 1),
+            Err(ApiError::RateLimited(60))
+        ));
+        assert!(
+            auth.hit("k100".into(), 5).is_ok(),
+            "existing keys keep counting"
+        );
     }
 }
