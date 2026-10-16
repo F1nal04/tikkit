@@ -8,6 +8,7 @@
     },
     "check": {},
     "test": {},
+    "@tikkit/web#test:e2e": { "dependsOn": ["build"], "cache": false, "env": ["CI"] },
     "start": { "cache": false, "persistent": true },
     "@tikkit/api-client#check": {
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/api/openapi.json"]
