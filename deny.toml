@@ -1,0 +1,25 @@
+# cargo-deny configuration. CI runs only the advisories check:
+#   cargo deny --locked check advisories
+# Policy and exception rules: docs/ci.md ("Rust advisories").
+
+[graph]
+# Evaluate the dependency graph for every target, so a vulnerable crate that
+# is only pulled in on another platform is still reported.
+all-features = true
+
+[advisories]
+# RustSec advisory database (fetched fresh on every run).
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Any vulnerability advisory fails the check, whatever its CVSS score.
+# Unmaintained crates fail only when they are direct dependencies of the
+# workspace; transitive unmaintained crates are reported as warnings.
+unmaintained = "workspace"
+# Unsound advisories fail for workspace dependencies as well.
+unsound = "workspace"
+# Yanked crates in Cargo.lock fail the check.
+yanked = "deny"
+# Exceptions. Each entry MUST carry a reason that names the tracking issue
+# and an expiry ("review by YYYY-MM-DD"). Remove the entry once fixed.
+# Example:
+#   { id = "RUSTSEC-0000-0000", reason = "not reachable: we never call X; tracked in #123; review by 2026-12-31" },
+ignore = []

@@ -1,0 +1,48 @@
+version: 2
+
+updates:
+  # Bun workspace: root package.json, apps/*/package.json and bun.lock.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      # A dependency joins the first group that matches, so TanStack comes first.
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+      bun-dependencies:
+        patterns:
+          - "*"
+
+  # Cargo workspace at the repository root with the shared Cargo.lock.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
+
+  # SHA-pinned actions in .github/workflows (the `# vX.Y.Z` comments are updated too).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(ci)
+    groups:
+      github-actions:
+        patterns:
+          - "*"

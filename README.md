@@ -71,6 +71,11 @@ Turbo caches frontend builds; Cargo manages Rust compilation caching.
 service, then the browser tests. `checks` is the required status check. See
 [`docs/ci.md`](docs/ci.md) for pinned versions and branch-protection setup.
 
+`.github/workflows/security.yml` checks Rust advisories (`cargo deny`),
+JavaScript vulnerabilities (`bun audit`), and secrets (`gitleaks`) on pull
+requests and weekly. Dependabot opens grouped weekly Bun, Cargo, and GitHub
+Actions updates. Exception policy and local commands are in `docs/ci.md`.
+
 ## Production
 
 The frontend runs with Node.js from `apps/web/.output/server/index.mjs`

@@ -80,3 +80,97 @@ confirm `checks` goes red, then revert and confirm it goes green:
   `bun install` (or edit `Cargo.toml` without updating `Cargo.lock`).
 
 Push two commits in quick succession to see the first run cancelled.
+
+## Dependency updates (`.github/dependabot.yml`)
+
+Weekly (Monday) Dependabot version updates, at most 5 open PRs per ecosystem:
+
+| Ecosystem | Directory | Groups | Commit prefix |
+| --- | --- | --- | --- |
+| `bun` | `/` (workspace + `bun.lock`) | `tanstack` (`@tanstack/*`), `bun-dependencies` (everything else) | `chore(deps)` |
+| `cargo` | `/` (workspace + shared `Cargo.lock`) | `cargo-dependencies` | `chore(deps)` |
+| `github-actions` | `/` (`.github/workflows`) | `github-actions` | `chore(ci)` |
+
+Dependabot regenerates `bun.lock` / `Cargo.lock` in its PRs and updates SHA
+pins together with their `# vX.Y.Z` comments. Its PRs run the same `checks`
+job (and `Security` workflow) as human PRs; nothing skips bot actors. Two
+things are not tracked and are bumped by hand: `RUST_TOOLCHAIN` in both
+workflows, and the `node-version` / `GITLEAKS_VERSION` / `cargo-deny@x.y.z`
+pins inside step inputs.
+
+Dependabot version updates and Dependabot alerts are free for public and
+private repositories. Enable alerts and security updates under **Settings →
+Code security**; the `Security` workflow below is the runnable check that does
+not depend on those settings.
+
+## `Security` workflow (`.github/workflows/security.yml`)
+
+Runs on pull requests to `main`, pushes to `main`, weekly (Monday 05:17 UTC,
+so new advisories surface without a code change) and on manual dispatch. One
+`security` job, `contents: read`, same concurrency scheme as CI. It is a
+separate workflow so the scheduled run does not re-run the full build; it can
+be added as a second required check (`security`) if desired.
+
+### Rust advisories
+
+`cargo deny --locked check advisories` (cargo-deny pinned in the workflow,
+installed with `taiki-e/install-action`), configured by `deny.toml`:
+
+- Any RustSec **vulnerability** advisory fails, regardless of severity score.
+- **Unmaintained** and **unsound** advisories fail for direct workspace
+  dependencies and warn for transitive ones.
+- **Yanked** crates in `Cargo.lock` fail.
+
+Locally: `cargo install cargo-deny --locked` (or download a release), then
+`cargo deny --locked check advisories`.
+
+### JavaScript vulnerabilities
+
+`bun audit --audit-level=high` after `bun install --frozen-lockfile
+--ignore-scripts`. **High** and **critical** advisories fail the job; low and
+moderate are not printed and do not fail it (run plain `bun audit` to see
+them, and fix them in routine dependency updates).
+
+### Secret scanning
+
+`gitleaks git --redact` over the full history with `.gitleaks.toml`, which
+extends the upstream default rules and adds Tikkit rules for OpenAI
+(`sk-proj-`, `sk-svcacct-`, `sk-admin-`, legacy `sk-…`), Anthropic
+(`sk-ant-…`) and Google (`AIza…`) keys. `--redact` keeps matched values out
+of logs and reports. The gitleaks binary is a pinned release verified by
+SHA-256 (the gitleaks GitHub Action is not used).
+
+`scripts/verify-secret-scan.sh` is the safe fixture: it builds obviously fake
+keys (`…TIKKITFAKE…` plus random characters) at runtime in a temporary
+directory outside the repository, scans them with the repository config, and
+fails unless every provider rule fires and no fake key is printed. CI runs it
+after the real scan; run it locally with gitleaks on `PATH`. Nothing that
+matches the rules is committed, so the repository scan stays clean.
+
+Locally: `gitleaks git --redact --verbose --config .gitleaks.toml .`
+
+GitHub's own secret scanning and push protection are free for public
+repositories but need GitHub Secret Protection for private ones. The gitleaks
+step is the plan-independent check; enable GitHub's scanning as well when it
+is available.
+
+If a real secret is found: revoke/rotate it first, then remove it. Rewriting
+history does not un-leak a pushed key.
+
+### Severity and exception policy
+
+- Fix rather than ignore: update the dependency (or the lockfile) in the PR
+  that turns the check red, or in a dedicated `chore(deps)` PR.
+- An exception needs a written justification (why it is not exploitable here
+  or why no fix exists), a tracking issue, and a review date no more than 90
+  days out. Remove it when the date passes or a fix ships.
+- Rust: add `{ id = "RUSTSEC-YYYY-NNNN", reason = "…; tracked in #N; review by YYYY-MM-DD" }`
+  to `ignore` in `deny.toml`.
+- JavaScript: add `--ignore=GHSA-xxxx-xxxx-xxxx` to the `bun audit` step in
+  `security.yml` with a comment line above it carrying the same
+  justification, issue and review date.
+- Secrets: only for confirmed false positives (never for real or test
+  credentials). Add the finding's `Fingerprint` (from `gitleaks … --report-path`)
+  to `.gitleaksignore` with a preceding `# reason; tracked in #N; review by YYYY-MM-DD`
+  comment, or prefer narrowing the content (for example splitting a
+  fixture string) so it no longer matches.

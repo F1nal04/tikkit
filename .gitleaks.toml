@@ -1,0 +1,40 @@
+# Gitleaks configuration for Tikkit.
+#
+# Extends the upstream default rule set and adds explicit rules for the BYOK
+# AI provider keys Tikkit handles (OpenAI, Anthropic, Google). Always run with
+# --redact so findings never print the matched secret:
+#   gitleaks git --config .gitleaks.toml --redact --verbose .
+#
+# False positives: add the finding's fingerprint to .gitleaksignore with a
+# justification comment (see docs/ci.md, "Secret scanning"). Never commit a
+# real credential, even "temporarily"; rotate it if one was pushed.
+
+title = "Tikkit gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "tikkit-openai-project-key"
+description = "OpenAI project, service-account or admin API key"
+regex = '''\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-proj-", "sk-svcacct-", "sk-admin-"]
+
+[[rules]]
+id = "tikkit-openai-legacy-key"
+description = "OpenAI legacy user API key"
+regex = '''\bsk-[A-Za-z0-9]{32,}\b'''
+entropy = 3.0
+keywords = ["sk-"]
+
+[[rules]]
+id = "tikkit-anthropic-key"
+description = "Anthropic API or admin key"
+regex = '''\bsk-ant-[A-Za-z0-9]+-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+id = "tikkit-google-api-key"
+description = "Google API key (Gemini / Google Cloud)"
+regex = '''\bAIza[0-9A-Za-z_-]{35}\b'''
+keywords = ["aiza"]
