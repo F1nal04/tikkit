@@ -44,6 +44,10 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Unparsable query parameter | 400 | `invalid_query` |
 | JSON body over 1 MiB | 413 | `payload_too_large` |
 | Not signed in | 401 | `unauthorized` |
+| Login failed (any reason) | 401 | `invalid_credentials` |
+| State-changing request without `X-Requested-With: tikkit` | 403 | `csrf_rejected` |
+| Too many login/setup attempts (`Retry-After` header set) | 429 | `rate_limited` |
+| First-admin setup already done | 409 | `setup_already_completed` |
 | Signed in, action not allowed on a visible resource | 403 | `forbidden` |
 | Unknown route, or a resource the caller may not see | 404 | `not_found` |
 | Wrong method | 405 | `method_not_allowed` |
@@ -59,6 +63,15 @@ to a claimed ticket).
 
 In Rust: return `api::ApiError`, extract with `api::Json`, `api::Path`,
 `api::Query` (not the raw axum extractors) so rejections use the envelope.
+
+## Authentication and CSRF
+
+Sessions are the HttpOnly `tikkit_session` cookie (see [auth.md](auth.md)).
+Every `POST`/`PUT`/`PATCH`/`DELETE` under `/api/` must carry
+`X-Requested-With: tikkit`, otherwise `403 csrf_rejected`. Browsers cannot add
+custom headers to cross-site requests without a CORS preflight, which the API
+never grants. `@tikkit/api-client` sends the header on every request.
+Handlers take `auth::CurrentUser` to require a session (`401 unauthorized` otherwise).
 
 ## Lists: pagination, ordering, filtering
 
@@ -117,5 +130,7 @@ export const load = async ({ fetch }) => {
 };
 ```
 
-Requests always use `credentials: "include"`. Failures throw `ApiError` with
-`status`, `code`, `fields`, and `requestId`.
+Requests always use `credentials: "include"` and send `X-Requested-With: tikkit`.
+Failures throw `ApiError` with `status`, `code`, `fields`, and `requestId`.
+When no envelope arrives (network failure: `status` 0, or a non-JSON body such
+as a proxy's HTML 502) `code` is the client-side `unavailable`.

@@ -19,6 +19,13 @@ Open <http://localhost:3000>. The page checks the Rust API through Vite's
 `/api` proxy. Add `?lang=de` for German. The API listens on `127.0.0.1:3001` and exposes
 `GET /api/health`, returning `{"status":"ok"}`.
 
+On a fresh database every page redirects to <http://localhost:3000/setup>:
+create the first Admin there (username, contact email, password, language) and
+you are signed in. Setup works exactly once; afterwards sign in at `/login`.
+In production, complete `/setup` before exposing the deployment publicly:
+until then whoever opens it first becomes the Admin.
+Sessions, cookies, CSRF, and rate limits are described in [docs/auth.md](docs/auth.md).
+
 The frontend reloads automatically. Restart `bun run dev` after Rust changes.
 Cargo downloads and compiles Rust dependencies on the first run.
 

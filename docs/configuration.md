@@ -15,6 +15,9 @@ name the variable and the fix but never echo values.
 | `ENCRYPTION_KEY` | yes | | Exactly 32 random bytes, base64 or hex. Encrypts stored AI/SMTP credentials. Back it up separately from database backups; losing it makes those credentials unreadable. |
 | `API_ADDR` | no | `127.0.0.1:3001` | Listen address. Use `0.0.0.0:3001` in a container. |
 | `ENVIRONMENT` | no | `development` | `development` or `production` (production enforces https origin and secure cookies). |
+| `SESSION_TTL_HOURS` | no | `336` (14 days) | Absolute session lifetime (1-8760). Sign in again afterwards. |
+| `SESSION_ROTATE_HOURS` | no | `24` | Session age after which its token is replaced on the next request (1-8760). |
+| `TRUST_PROXY_HEADERS` | no | `false` | `true` only behind a reverse proxy that overwrites `X-Forwarded-For` (the production compose sets it for Caddy); the last hop is used as client IP for rate limits. Otherwise every client shares the proxy's IP. |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
 | `RUST_LOG` | no | `info,sqlx=warn` | Log filter, e.g. `info,tower_http=debug`. Request logs include the request ID and path, never query strings or bodies. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |

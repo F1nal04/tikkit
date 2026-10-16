@@ -13,6 +13,9 @@
     },
     "apps/web": {
       "name": "@tikkit/web",
+      "dependencies": {
+        "@tikkit/api-client": "workspace:*",
+      },
       "devDependencies": {
         "@playwright/test": "^1.64.1",
         "@sveltejs/adapter-node": "^6.0.0",
