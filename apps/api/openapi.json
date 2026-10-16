@@ -109,10 +109,343 @@
           }
         }
       }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs in with username and password. Always creates a new session; a\nsession cookie sent with the request is revoked (session fixation\ndefence). Unknown usernames, wrong passwords and deactivated accounts get\nthe same `401 invalid_credentials`.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in; sets the session cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_credentials`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`csrf_rejected`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs out: revokes the presented session server-side and clears the\ncookie. Idempotent (204 without a session too).",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Signed out; clears the session cookie"
+          },
+          "403": {
+            "description": "`csrf_rejected`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The current session. This is the source of truth for the signed-in UI\nstate (e.g. after a page refresh).",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthenticated` (an invalid cookie is cleared)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/setup": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "Whether first setup is still open.",
+        "operationId": "getSetupStatus",
+        "responses": {
+          "200": {
+            "description": "Setup state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "Creates the initial Admin account and signs it in. One-time: after it\nsucceeded (or concurrently with a winning attempt) it answers `409\nsetup_completed`. All later accounts require an invitation.",
+        "operationId": "completeSetup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Admin created and signed in; sets the session cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`csrf_rejected`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`setup_completed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Account": {
+        "type": "object",
+        "description": "The signed-in account's own view of itself.",
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "email",
+          "role",
+          "specialization",
+          "language",
+          "status",
+          "team",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact address only; not unique and never used to identify accounts."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "specialization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Specialist field designation; grants no access."
+          },
+          "status": {
+            "$ref": "#/components/schemas/AccountStatus"
+          },
+          "team": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccountTeam",
+                "description": "The current team membership, `null` when the account has no team."
+              }
+            ]
+          },
+          "username": {
+            "type": "string",
+            "description": "As entered at creation (trimmed); login compares the normalized form."
+          }
+        }
+      },
+      "AccountStatus": {
+        "type": "string",
+        "description": "Account lifecycle status.",
+        "enum": [
+          "active",
+          "deactivated"
+        ]
+      },
+      "AccountTeam": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "isLead"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "isLead": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AssignmentQueue": {
         "type": "string",
         "description": "Where a ticket currently is, as shown to its requester.",
@@ -152,6 +485,8 @@
           "not_found",
           "method_not_allowed",
           "conflict",
+          "invalid_credentials",
+          "setup_completed",
           "payload_too_large",
           "rate_limited",
           "internal_error",
@@ -245,6 +580,22 @@
           "de"
         ]
       },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "PublicAssignee": {
         "type": "object",
         "required": [
@@ -333,6 +684,17 @@
           }
         }
       },
+      "Role": {
+        "type": "string",
+        "description": "Account role. Exactly one per account; see spec.md \"Roles\".",
+        "enum": [
+          "user",
+          "operator",
+          "specialist",
+          "team_lead",
+          "admin"
+        ]
+      },
       "SchemaCheck": {
         "type": "string",
         "enum": [
@@ -341,6 +703,75 @@
           "incompatible",
           "unknown"
         ]
+      },
+      "SessionInfo": {
+        "type": "object",
+        "description": "The current session: who is signed in and until when.",
+        "required": [
+          "account",
+          "expiresAt"
+        ],
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/Account"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Absolute expiry of the session (UTC). The session also ends after 12\nhours without activity."
+          }
+        }
+      },
+      "SetupRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "displayName",
+          "email",
+          "password",
+          "language"
+        ],
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact address; not unique."
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "password": {
+            "type": "string",
+            "description": "12–256 characters, not equal to the username."
+          },
+          "username": {
+            "type": "string",
+            "description": "3–32 characters of `[a-z0-9._-]` after trimming, NFKC normalization\nand lowercasing. Stored as entered (trimmed) for display."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetupStatus": {
+        "type": "object",
+        "required": [
+          "setupRequired"
+        ],
+        "properties": {
+          "setupRequired": {
+            "type": "boolean",
+            "description": "`true` until the initial Admin has been created. Never becomes `true`\nagain."
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "session_cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "tikkit_session",
+        "description": "HttpOnly session cookie set by setup/login. Named `__Host-tikkit_session` in production."
       }
     }
   },
@@ -348,6 +779,14 @@
     {
       "name": "system",
       "description": "Health and API metadata"
+    },
+    {
+      "name": "setup",
+      "description": "One-time first setup (initial Admin)"
+    },
+    {
+      "name": "auth",
+      "description": "Login, logout and the current session. Unsafe requests need `Origin: <PUBLIC_ORIGIN>`."
     }
   ]
 }

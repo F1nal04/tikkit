@@ -1,6 +1,6 @@
 //! Serving with bounded graceful shutdown (issue #8).
 
-use std::{future::Future, io, time::Duration};
+use std::{future::Future, io, net::SocketAddr, time::Duration};
 
 use axum::Router;
 use tokio::{net::TcpListener, sync::watch};
@@ -27,11 +27,15 @@ pub async fn serve(
 ) -> io::Result<ShutdownOutcome> {
     let (stop_tx, mut stop_rx) = watch::channel(false);
     let mut server = tokio::spawn(
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = stop_rx.wait_for(|stop| *stop).await;
-            })
-            .into_future(),
+        // Peer addresses feed rate limiting (`auth::ClientIp`).
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = stop_rx.wait_for(|stop| *stop).await;
+        })
+        .into_future(),
     );
 
     tokio::select! {

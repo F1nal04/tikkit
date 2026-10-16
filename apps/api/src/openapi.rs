@@ -14,9 +14,17 @@ use axum::{
     http::{HeaderValue, header},
     response::{IntoResponse, Response},
 };
-use utoipa::OpenApi;
+use utoipa::{
+    Modify, OpenApi,
+    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
+};
 
 use crate::{
+    auth::{
+        account::{Account, AccountTeam, SessionInfo},
+        handlers::{LoginRequest, SetupRequest, SetupStatus},
+    },
+    domain::{AccountStatus, Role},
     dto::{AssignmentQueue, Language, PublicAssignee, PublicTeam, PublicTicketAssignment},
     error::{ErrorBody, ErrorCode, ErrorDetail, FieldError, FieldErrorCode},
 };
@@ -30,8 +38,27 @@ use crate::{
             Every non-2xx response uses the `ErrorBody` shape; see docs/api.md."
     ),
     servers((url = "/", description = "Same origin as the web app")),
-    paths(crate::health::live, crate::health::live_alias, crate::health::ready, serve),
+    paths(
+        crate::health::live,
+        crate::health::live_alias,
+        crate::health::ready,
+        serve,
+        crate::auth::handlers::setup_status,
+        crate::auth::handlers::setup,
+        crate::auth::handlers::login,
+        crate::auth::handlers::logout,
+        crate::auth::handlers::current_session,
+    ),
+    modifiers(&SessionCookieScheme),
     components(schemas(
+        Role,
+        AccountStatus,
+        Account,
+        AccountTeam,
+        SessionInfo,
+        SetupStatus,
+        SetupRequest,
+        LoginRequest,
         ErrorBody,
         ErrorDetail,
         ErrorCode,
@@ -45,9 +72,27 @@ use crate::{
     )),
     tags(
         (name = "system", description = "Health and API metadata"),
+        (name = "setup", description = "One-time first setup (initial Admin)"),
+        (name = "auth", description = "Login, logout and the current session. Unsafe requests need `Origin: <PUBLIC_ORIGIN>`."),
     )
 )]
 pub struct ApiDoc;
+
+/// Documents the session cookie (`__Host-tikkit_session` in production).
+struct SessionCookieScheme;
+
+impl Modify for SessionCookieScheme {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "session_cookie",
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description(
+                crate::auth::cookie::DEVELOPMENT_COOKIE_NAME,
+                "HttpOnly session cookie set by setup/login. Named `__Host-tikkit_session` in production.",
+            ))),
+        );
+    }
+}
 
 /// Pretty-printed spec as committed in `apps/api/openapi.json`.
 pub fn spec_json() -> String {

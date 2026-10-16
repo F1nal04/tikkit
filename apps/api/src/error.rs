@@ -49,6 +49,11 @@ pub enum ErrorCode {
     MethodNotAllowed,
     /// 409: the request conflicts with current state (e.g. a concurrent update won).
     Conflict,
+    /// 401: login failed. Same response for unknown usernames, wrong
+    /// passwords and deactivated accounts (no account enumeration).
+    InvalidCredentials,
+    /// 409: first setup has already been completed; it never reopens.
+    SetupCompleted,
     /// 413: request body exceeds the limit.
     PayloadTooLarge,
     /// 429: too many requests.
@@ -64,11 +69,11 @@ impl ErrorCode {
         match self {
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::ValidationFailed => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::Unauthenticated => StatusCode::UNAUTHORIZED,
+            Self::Unauthenticated | Self::InvalidCredentials => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CsrfRejected => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::Conflict => StatusCode::CONFLICT,
+            Self::Conflict | Self::SetupCompleted => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
@@ -87,6 +92,8 @@ impl ErrorCode {
             Self::NotFound => "The requested resource was not found.",
             Self::MethodNotAllowed => "This method is not allowed for this resource.",
             Self::Conflict => "The request conflicts with the current state.",
+            Self::InvalidCredentials => "The username or password is incorrect.",
+            Self::SetupCompleted => "First setup has already been completed.",
             Self::PayloadTooLarge => "The request body is too large.",
             Self::RateLimited => "Too many requests. Try again later.",
             Self::InternalError => "An unexpected error occurred.",

@@ -1,7 +1,9 @@
-use axum::{Router, routing::get};
+use axum::{Router, middleware, routing::get};
 
+pub mod auth;
 pub mod config;
 pub mod db;
+pub mod domain;
 pub mod health;
 pub mod server;
 pub mod state;
@@ -25,6 +27,17 @@ pub fn app(state: AppState) -> Router {
         .route("/api/health/live", get(health::live_alias))
         .route("/api/health/ready", get(health::ready))
         .route("/api/openapi.json", get(openapi::serve))
+        .merge(auth::handlers::routes())
+        // Session cookie slot (innermost), then the CSRF origin check, so a
+        // rejected request never touches sessions.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::cookie::middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::csrf::middleware,
+        ))
         .with_state(state);
     // Shared HTTP contract (fallbacks, body limit, request ids). Keep this
     // the last step after all routes are added, whatever the router state.

@@ -32,6 +32,15 @@ impl Language {
     }
 }
 
+/// `#[sqlx(try_from = "String")]` support for `FromRow` structs.
+impl TryFrom<String> for Language {
+    type Error = crate::domain::UnknownValue;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value).ok_or(crate::domain::UnknownValue(value))
+    }
+}
+
 /// Where a ticket currently is, as shown to its requester.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

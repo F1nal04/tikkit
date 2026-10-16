@@ -18,12 +18,18 @@ use sqlx::{
     Connection, Executor, PgConnection, PgPool, Postgres,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use tikkit_api::{AppState, Config, db::MIGRATOR};
+use tikkit_api::{
+    AppState, Config,
+    auth::{AuthSettings, PasswordHasher, username},
+    db::MIGRATOR,
+};
 use uuid::Uuid;
 
 pub const DEFAULT_TEST_DATABASE_URL: &str = "postgres://tikkit:tikkit@127.0.0.1:5432/postgres";
 
-/// Placeholder password hash until argon2 lands (#9). Never a valid login.
+/// A syntactically valid argon2id hash that matches no password. Accounts
+/// created with [`create_account`] use it and therefore cannot log in; use
+/// [`create_account_with_password`] for accounts that sign in.
 pub const DUMMY_PASSWORD_HASH: &str =
     "$argon2id$v=19$m=19456,t=2,p=1$dGVzdC1zYWx0$dGVzdC1oYXNoLW5vdC1yZWFs";
 
@@ -126,8 +132,32 @@ impl TestDb {
         config_with_database_url(&self.url())
     }
 
+    /// Development configuration with extra/overridden variables, e.g.
+    /// `&[("TIKKIT_ENV", "production"), ("PUBLIC_ORIGIN", "https://…")]`.
+    pub fn config_with(&self, overrides: &[(&str, &str)]) -> Config {
+        config_with_overrides(&self.url(), overrides)
+    }
+
+    /// Production configuration (https origin [`PRODUCTION_ORIGIN`]).
+    pub fn production_config(&self) -> Config {
+        self.config_with(&[
+            ("TIKKIT_ENV", "production"),
+            ("PUBLIC_ORIGIN", PRODUCTION_ORIGIN),
+            (
+                "TIKKIT_ENCRYPTION_KEY",
+                "CsjNdhpLwWqa7gYbpMji99S5DQC2Y7ttfW5aisLe/Nc=",
+            ),
+        ])
+    }
+
+    /// State with the development config and fast (test-only) password
+    /// hashing; otherwise the production auth policy.
     pub fn state(&self) -> AppState {
-        AppState::new(self.pool.clone(), self.config())
+        self.state_with(self.config(), AuthSettings::insecure_fast_for_tests())
+    }
+
+    pub fn state_with(&self, config: Config, settings: AuthSettings) -> AppState {
+        AppState::new(self.pool.clone(), config).with_auth_settings(settings)
     }
 
     pub fn app(&self) -> Router {
@@ -178,13 +208,26 @@ async fn drop_database(server: PgConnectOptions, name: String) {
 }
 
 pub fn config_with_database_url(database_url: &str) -> Config {
-    let database_url = database_url.to_owned();
-    Config::from_source(move |name| match name {
-        "DATABASE_URL" => Some(database_url.clone()),
-        "TIKKIT_ENV" => Some("development".to_owned()),
-        _ => None,
-    })
-    .expect("valid test configuration")
+    config_with_overrides(database_url, &[])
+}
+
+/// Public origin of the development test configuration.
+pub const DEV_ORIGIN: &str = "http://localhost:3000";
+/// Public origin of [`TestDb::production_config`].
+pub const PRODUCTION_ORIGIN: &str = "https://help.example.test";
+
+pub fn config_with_overrides(database_url: &str, overrides: &[(&str, &str)]) -> Config {
+    let mut vars: std::collections::HashMap<String, String> = [
+        ("DATABASE_URL", database_url),
+        ("TIKKIT_ENV", "development"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
+    for (k, v) in overrides {
+        vars.insert((*k).to_owned(), (*v).to_owned());
+    }
+    Config::from_source(move |name| vars.get(name).cloned()).expect("valid test configuration")
 }
 
 // ---------------------------------------------------------------------------
@@ -235,8 +278,9 @@ pub struct Team {
     pub name: String,
 }
 
-/// Inserts an active account. `username` is stored as given and normalized
-/// by lowercasing (full NFKC normalization lands with #9).
+/// Inserts an active account that cannot log in (see
+/// [`DUMMY_PASSWORD_HASH`]). `username` is stored as given and normalized
+/// like the API does (trim, NFKC, lowercase).
 ///
 /// Invited-account fixtures: once #10 adds the invitations table, build
 /// `create_invited_account` on top of this (create the invitation, then the
@@ -245,19 +289,51 @@ pub async fn create_account<'e, E>(executor: E, role: Role, username: &str, emai
 where
     E: sqlx::Executor<'e, Database = Postgres>,
 {
+    insert_account(executor, role, username, email, DUMMY_PASSWORD_HASH).await
+}
+
+/// Like [`create_account`], but with a real argon2id hash of `password`
+/// (cheap test parameters), so the account can log in through the API.
+pub async fn create_account_with_password<'e, E>(
+    executor: E,
+    role: Role,
+    username: &str,
+    email: &str,
+    password: &str,
+) -> Account
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    let hash = PasswordHasher::new(AuthSettings::insecure_fast_for_tests().hash_params)
+        .hash(password)
+        .expect("hash test password");
+    insert_account(executor, role, username, email, &hash).await
+}
+
+async fn insert_account<'e, E>(
+    executor: E,
+    role: Role,
+    username: &str,
+    email: &str,
+    password_hash: &str,
+) -> Account
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     sqlx::query_as(
         "INSERT INTO accounts (id, username, username_normalized, email, display_name, role, \
                                specialization, password_hash) \
-         VALUES ($1, $2, lower($2), $3, $4, $5, $6, $7) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
          RETURNING id, username, username_normalized, email, role",
     )
     .bind(Uuid::now_v7())
-    .bind(username)
+    .bind(username.trim())
+    .bind(username::normalize(username))
     .bind(email)
     .bind(format!("Test {username}"))
     .bind(role.as_str())
     .bind((role == Role::Specialist).then_some("Networking"))
-    .bind(DUMMY_PASSWORD_HASH)
+    .bind(password_hash)
     .fetch_one(executor)
     .await
     .unwrap_or_else(|e| panic!("create_account({username}): {e}"))

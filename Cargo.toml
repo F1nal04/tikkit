@@ -7,3 +7,11 @@ edition = "2024"
 rust-version = "1.85"
 version = "0.1.0"
 publish = false
+
+# Password hashing is deliberately expensive; keep it fast in debug builds
+# (tests, `bun run dev`) without weakening the parameters.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
