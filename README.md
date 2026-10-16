@@ -7,17 +7,27 @@ A Bun + Turborepo workspace with a TanStack Start frontend and Rust backend.
 - Bun 1.4.3 or newer
 - Node.js 22.12 or newer
 - Rust 1.85 or newer, including Cargo, rustfmt, and Clippy
+- PostgreSQL 16 (for example via Docker Compose, below)
 
 ## Getting started
 
 ```sh
 bun install
+docker compose -f compose.dev.yml up -d   # PostgreSQL 16 on 127.0.0.1:5432
 bun run dev
 ```
 
 Open <http://localhost:3000>. The page checks the Rust API through Vite's
-`/api` proxy. The API listens on `127.0.0.1:3001` and exposes
-`GET /api/health`, returning `{"status":"ok"}`.
+`/api` proxy. The API listens on `127.0.0.1:3001`, applies database
+migrations on start, and exposes `GET /api/health` / `GET /api/health/live`
+(liveness, `{"status":"ok"}`) and `GET /api/health/ready` (database and schema
+readiness, 503 when not ready).
+
+In development no configuration is needed: with `DATABASE_URL` unset the API
+uses `postgres://tikkit:tikkit@127.0.0.1:5432/tikkit` (the Compose database).
+See [docs/configuration.md](docs/configuration.md) for all environment
+variables and [docs/database.md](docs/database.md) for migrations and the
+schema. `cargo run --locked -- check-config` validates a configuration.
 
 The frontend reloads automatically. Restart `bun run dev` after Rust changes.
 Cargo downloads and compiles Rust dependencies on the first run.
@@ -38,7 +48,7 @@ turbo.json  Workspace tasks and caching
 bun run dev       # Run both applications
 bun run build     # Build the frontend and release API binary
 bun run check     # TypeScript, rustfmt, and Clippy
-bun run test      # Web component tests (Vitest) and Rust API tests
+bun run test      # Web component tests (Vitest) and Rust API tests (unit + PostgreSQL integration)
 bun run test:e2e  # Browser tests (Playwright); requires PostgreSQL
 bun run start     # Run both production builds (build first)
 ```
@@ -63,6 +73,12 @@ single application. Cargo commands also work from the repository root.
 `check` builds the frontend first so route types are generated on a fresh clone.
 Turbo caches frontend builds; Cargo manages Rust compilation caching.
 
+API integration tests need a reachable PostgreSQL 16 server where the user
+may create databases; each test creates and drops its own database. They use
+`TEST_DATABASE_URL`, defaulting to the Compose server
+(`postgres://tikkit:tikkit@127.0.0.1:5432/postgres`), and fail with
+instructions when it is unreachable.
+
 ## CI
 
 `.github/workflows/ci.yml` runs one `checks` job on every pull request to
@@ -80,8 +96,15 @@ Actions updates. Exception policy and local commands are in `docs/ci.md`.
 
 The frontend runs with Node.js from `apps/web/.output/server/index.mjs`
 (Nitro). Its port defaults to 3000; set `PORT` and `HOST` as needed.
-The backend executable is `target/release/tikkit-api`. Set `API_ADDR` to
-change its listen address, for example `API_ADDR=0.0.0.0:3001` in a container.
+The backend executable is `target/release/tikkit-api`. Production requires
+`TIKKIT_ENV=production`, `DATABASE_URL`, an https `PUBLIC_ORIGIN`, and
+`TIKKIT_ENCRYPTION_KEY` (`openssl rand -base64 32`); set `API_ADDR` to change
+its listen address, for example `API_ADDR=0.0.0.0:3001` in a container. Run
+`tikkit-api migrate` to apply migrations explicitly (or keep
+`DATABASE_AUTO_MIGRATE=true`). Start from
+[`deploy/compose.env.example`](deploy/compose.env.example) and see
+[docs/configuration.md](docs/configuration.md) for probes and graceful
+shutdown.
 
 Configure your deployment's reverse proxy to send `/api/*` to Rust and
 other requests to the frontend. The Vite API proxy runs only in development.
