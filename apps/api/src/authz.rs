@@ -155,7 +155,7 @@ pub async fn is_lead_of<'c>(
     .await
 }
 
-/// Active accounts in a non-archived team, ordered by ID. Use for assignment
+/// Active staff accounts in a non-archived team, ordered by ID. Use for assignment
 /// eligibility and notification recipients.
 pub async fn active_team_members<'c>(
     db: impl PgExecutor<'c>,
@@ -165,7 +165,7 @@ pub async fn active_team_members<'c>(
         "SELECT a.id FROM team_memberships m
          JOIN accounts a ON a.id = m.account_id
          JOIN teams t ON t.id = m.team_id
-         WHERE m.team_id = $1 AND a.is_active AND t.archived_at IS NULL
+         WHERE m.team_id = $1 AND a.is_active AND a.role <> 'user' AND t.archived_at IS NULL
          ORDER BY a.id",
     )
     .bind(team_id)
@@ -204,11 +204,12 @@ pub fn ticket_view(actor: &Actor, ticket: &TicketScope) -> Option<TicketView> {
         return Some(TicketView::Requester);
     }
     let admin = actor.role == Role::Admin;
-    // ponytail: a ticket cancelled during AI shows in the general queue's
-    // `cancelled` history; add a "was human-bound" column if that matters.
     let visible = match ticket.status {
         Draft => false,
         AiProcessing | AwaitingAiDecision | AiSolved => admin,
+        // Fail closed: a cancellation without a team may have ended during AI,
+        // never reaching operators.
+        Cancelled if ticket.team_id.is_none() => admin,
         _ => {
             admin
                 || match ticket.team_id {
@@ -255,8 +256,11 @@ pub fn authorize_ticket(
         && match action {
             ClaimTicket => ticket.team_id.is_some() && ticket.assignee_account_id.is_none(),
             AssignTicket => ticket.team_id.is_some() && (admin || actor.leads(ticket.team_id)),
-            DispatchTicket | ReplyAsStaff | AddInternalNote | ChangePriority
-            | ProposeResolution => in_charge(),
+            DispatchTicket => in_charge(),
+            // General-queue tickets are dispatch-only; work happens in a team.
+            ReplyAsStaff | AddInternalNote | ChangePriority | ProposeResolution => {
+                ticket.team_id.is_some() && in_charge()
+            }
             _ => false, // not a ticket action
         };
     if ok { Ok(()) } else { Err(ApiError::Forbidden) }
@@ -346,8 +350,9 @@ mod tests {
     fn docs_show_the_current_matrix() {
         let docs = include_str!("../../../docs/authorization.md");
         let table = render_matrix();
-        assert!(
-            docs.contains(&table),
+        assert_eq!(
+            docs.matches(&table).count(),
+            1,
             "update docs/authorization.md:\n{table}"
         );
     }
@@ -450,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn general_queue_is_open_to_all_staff_and_hidden_from_users() {
+    fn general_queue_is_open_to_all_staff_dispatch_only_and_hidden_from_users() {
         let t = ticket(1, None, None, TicketStatus::Queued);
         for role in ROLES {
             let a = actor(2, role, None);
@@ -462,13 +467,16 @@ mod tests {
                 expected,
                 "{role:?}"
             );
-            assert_eq!(
-                code(authorize_ticket(&a, &t, ReplyAsStaff)),
-                expected,
-                "{role:?}"
-            );
-            // Claim/assign need a team first.
+            // Claim, assign, and ticket work need a team first.
             if staff {
+                for p in [
+                    ReplyAsStaff,
+                    AddInternalNote,
+                    ChangePriority,
+                    ProposeResolution,
+                ] {
+                    assert_eq!(code(authorize_ticket(&a, &t, p)), "forbidden", "{p:?}");
+                }
                 assert_eq!(code(authorize_ticket(&a, &t, ClaimTicket)), "forbidden");
                 assert_eq!(code(authorize_ticket(&a, &t, AssignTicket)), "forbidden");
             }
@@ -550,7 +558,8 @@ mod tests {
         use TicketStatus::*;
         let op = actor(2, Operator, None);
         let admin = actor(3, Admin, None);
-        for status in [Draft, AiProcessing, AwaitingAiDecision, AiSolved] {
+        // A teamless cancellation may have ended during AI: fail closed.
+        for status in [Draft, AiProcessing, AwaitingAiDecision, AiSolved, Cancelled] {
             let t = ticket(1, None, None, status);
             assert_eq!(ticket_view(&op, &t), None, "{status:?}");
             assert_eq!(code(authorize_ticket(&op, &t, ReplyAsStaff)), "not_found");
