@@ -15,13 +15,19 @@ export const handle: Handle = ({ event, resolve }) => {
   }
   event.locals.locale = locale
   // Pages are rendered per user and per language; never let caches share them.
-  event.setHeaders({ 'cache-control': 'private, no-store', vary: 'Cookie, Accept-Language' })
+  // no-referrer: invite and reset page URLs carry tokens.
+  event.setHeaders({
+    'cache-control': 'private, no-store',
+    vary: 'Cookie, Accept-Language',
+    'referrer-policy': 'no-referrer',
+  })
   let done = false
   return resolve(event, {
     transformPageChunk: ({ html }) => {
       if (done || !html.includes('<html')) return html
       done = true
-      return html.replace('%lang%', locale)
+      // The layout load may switch to the signed-in account's language.
+      return html.replace('%lang%', event.locals.locale)
     },
   })
 }

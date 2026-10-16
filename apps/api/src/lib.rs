@@ -16,10 +16,12 @@ use tower_http::{
 };
 use utoipa::{OpenApi, ToSchema};
 
+pub mod accounts;
 pub mod api;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod mail;
 
 use api::{ApiError, Json};
 
@@ -48,6 +50,17 @@ pub struct AppState {
         auth::logout,
         auth::me,
         auth::change_password,
+        accounts::update_profile,
+        accounts::request_recovery,
+        accounts::reset_password,
+        accounts::create_invitation,
+        accounts::list_invitations,
+        accounts::revoke_invitation,
+        accounts::lookup_invitation,
+        accounts::accept_invitation,
+        accounts::list_accounts,
+        accounts::deactivate_account,
+        accounts::reactivate_account,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -150,8 +163,32 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/setup", get(auth::setup_status).post(auth::setup))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
-        .route("/api/auth/me", get(auth::me))
+        .route(
+            "/api/auth/me",
+            get(auth::me).patch(accounts::update_profile),
+        )
         .route("/api/auth/password", post(auth::change_password))
+        .route("/api/auth/recovery", post(accounts::request_recovery))
+        .route("/api/auth/recovery/reset", post(accounts::reset_password))
+        .route(
+            "/api/invitations",
+            get(accounts::list_invitations).post(accounts::create_invitation),
+        )
+        .route("/api/invitations/lookup", post(accounts::lookup_invitation))
+        .route("/api/invitations/accept", post(accounts::accept_invitation))
+        .route(
+            "/api/invitations/{id}/revoke",
+            post(accounts::revoke_invitation),
+        )
+        .route("/api/accounts", get(accounts::list_accounts))
+        .route(
+            "/api/accounts/{id}/deactivate",
+            post(accounts::deactivate_account),
+        )
+        .route(
+            "/api/accounts/{id}/reactivate",
+            post(accounts::reactivate_account),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,

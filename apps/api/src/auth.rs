@@ -39,6 +39,7 @@ use crate::{
     AppState,
     api::{ApiError, FieldErrors, Json, Language, Role},
     config::{Config, Environment},
+    mail::Mailer,
 };
 
 pub const COOKIE_NAME: &str = "tikkit_session";
@@ -59,6 +60,9 @@ pub struct Settings {
     pub session_rotate: Duration,
     pub secure_cookie: bool,
     pub trust_proxy_headers: bool,
+    /// Origin for links in invitations and emails, without trailing slash.
+    pub public_origin: String,
+    pub mailer: Mailer,
 }
 
 impl Default for Settings {
@@ -68,6 +72,8 @@ impl Default for Settings {
             session_rotate: Duration::from_secs(24 * 3600),
             secure_cookie: false,
             trust_proxy_headers: false,
+            public_origin: "http://localhost:3000".into(),
+            mailer: Mailer::None,
         }
     }
 }
@@ -79,13 +85,15 @@ impl From<&Config> for Settings {
             session_rotate: c.session_rotate,
             secure_cookie: c.environment == Environment::Production,
             trust_proxy_headers: c.trust_proxy_headers,
+            public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
+            mailer: c.mailer.clone(),
         }
     }
 }
 
 /// Shared per-process auth state, installed as a request extension by `app_with`.
 pub struct Auth {
-    settings: Settings,
+    pub(crate) settings: Settings,
     // ponytail: in-memory limiter, single process; move to Postgres/Redis if multi-instance
     attempts: Mutex<HashMap<String, (Instant, u32)>>,
 }
@@ -122,10 +130,20 @@ impl Auth {
         Ok(())
     }
 
-    /// Per-IP first, so one client cannot mint unbounded per-username keys.
-    fn limit_attempt(&self, scope: &str, client: &Client, username: &str) -> Result<(), ApiError> {
+    /// Per-IP only, for endpoints keyed by an unguessable token rather than a username.
+    pub(crate) fn limit_ip(&self, scope: &str, client: &Client) -> Result<(), ApiError> {
         let ip = client.ip.as_deref().unwrap_or("unknown");
-        self.hit(format!("{scope}:ip:{ip}"), LIMIT_PER_IP)?;
+        self.hit(format!("{scope}:ip:{ip}"), LIMIT_PER_IP)
+    }
+
+    /// Per-IP first, so one client cannot mint unbounded per-username keys.
+    pub(crate) fn limit_attempt(
+        &self,
+        scope: &str,
+        client: &Client,
+        username: &str,
+    ) -> Result<(), ApiError> {
+        self.limit_ip(scope, client)?;
         let username: String = username.chars().take(64).collect();
         self.hit(format!("{scope}:user:{username}"), LIMIT_PER_USERNAME)
     }
@@ -138,7 +156,7 @@ impl Auth {
     }
 
     /// Cookie for a session created just now: Max-Age is exactly the session lifetime.
-    fn new_cookie(&self, token: &str) -> HeaderValue {
+    pub(crate) fn new_cookie(&self, token: &str) -> HeaderValue {
         self.cookie_value(token, self.settings.session_ttl.as_secs() as i64)
     }
 
@@ -200,7 +218,7 @@ impl<S: Send + Sync> OptionalFromRequestParts<S> for CurrentUser {
 /// Client address (from the socket, or the last `X-Forwarded-For` hop when
 /// `TRUST_PROXY_HEADERS=true`) and user agent, for rate limits and session records.
 pub struct Client {
-    ip: Option<String>,
+    pub(crate) ip: Option<String>,
     user_agent: Option<String>,
 }
 
@@ -538,16 +556,7 @@ pub async fn login(
     }
     let account_id = subject.expect("checked above");
     let mut tx = state.pool.begin().await?;
-    // The session this browser held before signing in ends here.
-    if let Some(previous) = cookie_token(&headers) {
-        let id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sessions WHERE token_hash = $1")
-            .bind(token_hash(&previous))
-            .fetch_optional(&mut *tx)
-            .await?;
-        if let Some(id) = id {
-            revoke_session(&mut *tx, id).await?;
-        }
-    }
+    end_presented_session(&mut tx, &headers).await?;
     let token = create_session(&mut tx, &auth, account_id, &client).await?;
     audit(
         &mut *tx,
@@ -634,13 +643,7 @@ pub async fn change_password(
         .bind(&new_hash)
         .execute(&mut *tx)
         .await?;
-    let revoked = sqlx::query(
-        "UPDATE sessions SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL",
-    )
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    let revoked = revoke_all_sessions(&mut *tx, account_id).await?;
     let id = Some(account_id);
     audit(&mut *tx, "password_changed", id, id, json!({})).await?;
     audit(
@@ -660,7 +663,7 @@ pub async fn change_password(
         .into_response())
 }
 
-fn signed_in(auth: &Auth, token: &str, account: Account) -> Response {
+pub(crate) fn signed_in(auth: &Auth, token: &str, account: Account) -> Response {
     ([(SET_COOKIE, auth.new_cookie(token))], Json(account)).into_response()
 }
 
@@ -678,8 +681,40 @@ async fn revoke_session<'c>(db: impl PgExecutor<'c>, id: Uuid) -> Result<(), sql
     .map(drop)
 }
 
+/// The session this browser held before signing in ends here (no fixation).
+pub(crate) async fn end_presented_session(
+    tx: &mut sqlx::PgConnection,
+    headers: &HeaderMap,
+) -> Result<(), sqlx::Error> {
+    let Some(previous) = cookie_token(headers) else {
+        return Ok(());
+    };
+    let id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sessions WHERE token_hash = $1")
+        .bind(token_hash(&previous))
+        .fetch_optional(&mut *tx)
+        .await?;
+    match id {
+        Some(id) => revoke_session(tx, id).await,
+        None => Ok(()),
+    }
+}
+
+/// Revokes every live session of one account (never of others sharing its email).
+pub(crate) async fn revoke_all_sessions<'c>(
+    db: impl PgExecutor<'c>,
+    account_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE sessions SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(account_id)
+    .execute(db)
+    .await
+    .map(|r| r.rows_affected())
+}
+
 /// Always a brand-new random token: a cookie presented before login is never adopted.
-async fn create_session(
+pub(crate) async fn create_session(
     tx: &mut sqlx::PgConnection,
     auth: &Auth,
     account_id: Uuid,
@@ -700,7 +735,10 @@ async fn create_session(
     Ok(token)
 }
 
-async fn load_account<'c>(db: impl PgExecutor<'c>, id: Uuid) -> Result<Account, ApiError> {
+pub(crate) async fn load_account<'c>(
+    db: impl PgExecutor<'c>,
+    id: Uuid,
+) -> Result<Account, ApiError> {
     let row: (Uuid, String, String, String, String, String) = sqlx::query_as(&format!(
         "SELECT {ACCOUNT_COLUMNS} FROM accounts a WHERE a.id = $1"
     ))
@@ -749,22 +787,30 @@ fn cookie_token(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn new_token() -> String {
+pub(crate) fn new_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn token_hash(token: &str) -> Vec<u8> {
+pub(crate) fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
 
+/// The machine identifier of a role or language, as stored in the database.
+pub(crate) fn ident_str<T: Serialize>(value: T) -> String {
+    match serde_json::to_value(value) {
+        Ok(Value::String(s)) => s,
+        _ => unreachable!("identifiers serialize as strings"),
+    }
+}
+
 /// Parses a stored machine identifier (role, language) into its enum.
-fn ident<T: DeserializeOwned>(value: String) -> Result<T, ApiError> {
+pub(crate) fn ident<T: DeserializeOwned>(value: String) -> Result<T, ApiError> {
     serde_json::from_value(Value::String(value)).map_err(|_| ApiError::Internal)
 }
 
-fn unique_violation(error: sqlx::Error, field: &str) -> ApiError {
+pub(crate) fn unique_violation(error: sqlx::Error, field: &str) -> ApiError {
     match &error {
         sqlx::Error::Database(e) if e.is_unique_violation() => {
             ApiError::Validation(FieldErrors::from([(field.into(), vec!["taken"])]))
@@ -773,7 +819,7 @@ fn unique_violation(error: sqlx::Error, field: &str) -> ApiError {
     }
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(f)
@@ -851,7 +897,7 @@ pub fn check_password(password: &str, normalized_username: &str) -> Result<(), &
     }
 }
 
-fn valid_email(email: &str) -> bool {
+pub(crate) fn valid_email(email: &str) -> bool {
     let email = email.trim();
     let Some((local, domain)) = email.split_once('@') else {
         return false;

@@ -4,12 +4,21 @@
 
 use std::str::FromStr;
 
-use axum::Router;
+use std::net::SocketAddr;
+
+use axum::{
+    Router,
+    body::{Body, to_bytes},
+    extract::ConnectInfo,
+    http::{Request, StatusCode},
+};
+use serde_json::{Value, json};
 use sqlx::{
     Connection, Executor, PgConnection, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use tikkit_api::{AppState, auth::Settings, config::Config, db};
+use tower::ServiceExt;
 use uuid::Uuid;
 
 /// A freshly created and migrated database, dropped when this value is dropped
@@ -101,6 +110,85 @@ pub fn test_app_with(pool: &PgPool, settings: Settings) -> Router {
     tikkit_api::app_with(AppState { pool: pool.clone() }, settings)
 }
 
+/// One HTTP exchange with the app, decoded for assertions.
+pub struct Reply {
+    pub status: StatusCode,
+    pub cookie: Option<String>,
+    pub retry_after: Option<String>,
+    pub body: Value,
+}
+
+impl Reply {
+    pub fn code(&self) -> &str {
+        self.body["error"]["code"].as_str().unwrap_or_default()
+    }
+    /// `name=value` part of the session cookie.
+    pub fn session(&self) -> String {
+        let cookie = self.cookie.as_deref().expect("set-cookie");
+        cookie.split(';').next().unwrap().to_owned()
+    }
+}
+
+pub async fn call(
+    app: &Router,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    cookie: Option<&str>,
+) -> Reply {
+    call_from(app, method, path, body, cookie, [127, 0, 0, 1]).await
+}
+
+pub async fn call_from(
+    app: &Router,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    cookie: Option<&str>,
+    ip: [u8; 4],
+) -> Reply {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("x-requested-with", "tikkit");
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    let mut request = match body {
+        Some(body) => request
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string())),
+        None => request.body(Body::empty()),
+    }
+    .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from((ip, 1234))));
+    let response = app.clone().oneshot(request).await.unwrap();
+    let (parts, body) = response.into_parts();
+    let header = |name| {
+        parts
+            .headers
+            .get(name)
+            .map(|v: &axum::http::HeaderValue| v.to_str().unwrap().to_owned())
+    };
+    let (cookie, retry_after) = (header("set-cookie"), header("retry-after"));
+    let status = parts.status;
+    let bytes = to_bytes(body, usize::MAX).await.unwrap();
+    Reply {
+        status,
+        cookie,
+        retry_after,
+        body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    }
+}
+
+/// Signs in through `POST /api/auth/login`.
+pub async fn login(app: &Router, username: &str, password: &str) -> Reply {
+    let body = json!({ "username": username, "password": password });
+    call(app, "POST", "/api/auth/login", Some(body), None).await
+}
+
 pub mod fixtures {
     use sqlx::{PgExecutor, PgPool};
     pub use tikkit_api::api::Role;
@@ -137,10 +225,32 @@ pub mod fixtures {
         id
     }
 
-    /// An account created by accepting an invitation. Plain insert until the
-    /// invitations table exists; #10 extends this to create and accept one.
+    /// An account created through the real invitation flow: an invitation for
+    /// `role`, issued by an existing Admin (e.g. [`bootstrap_admin`]), accepted
+    /// with `POST /api/invitations/accept`. Shares the fixture email and password.
     pub async fn invited_account(pool: &PgPool, role: Role, username: &str) -> Uuid {
-        account(pool, role, username).await
+        let token = Uuid::new_v4().to_string();
+        let role = serde_json::to_value(role).unwrap();
+        let issued = sqlx::query(
+            "INSERT INTO invitations (token_hash, role, created_by, expires_at)
+             SELECT sha256(convert_to($1, 'UTF8')), $2, id, now() + interval '1 day'
+             FROM accounts WHERE role = 'admin' AND is_active ORDER BY created_at LIMIT 1",
+        )
+        .bind(&token)
+        .bind(role.as_str())
+        .execute(pool)
+        .await
+        .unwrap()
+        .rows_affected();
+        assert_eq!(issued, 1, "invited_account needs an active Admin first");
+        let body = serde_json::json!({
+            "token": token, "username": username, "email": "shared@example.com",
+            "password": PASSWORD, "language": "en",
+        });
+        let app = super::test_app(pool);
+        let r = super::call(&app, "POST", "/api/invitations/accept", Some(body), None).await;
+        assert_eq!(r.status, 200, "{}", r.body);
+        r.body["id"].as_str().unwrap().parse().unwrap()
     }
 
     /// A team with `lead` (an active `TeamLead` account) as member and lead, in one

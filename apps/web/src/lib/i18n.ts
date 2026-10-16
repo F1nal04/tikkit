@@ -27,6 +27,11 @@ export function resolveLocale(
   return ranked.map(({ tag }) => tag).find(isLocale) ?? 'en'
 }
 
+/** Signed in, the account's language applies unless this request picked one with `?lang=`. */
+export function pageLocale(resolved: Locale, query: string | null, account: Locale | undefined): Locale {
+  return account && query !== resolved ? account : resolved
+}
+
 type Messages = (typeof messages)[Locale]
 
 /** Localized text for a failed API call, chosen by its stable error code. */

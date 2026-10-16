@@ -1,6 +1,8 @@
 # Authentication
 
-Local username/password accounts with server-side sessions. Code: `apps/api/src/auth.rs`.
+Local username/password accounts with server-side sessions. Code: `apps/api/src/auth.rs`
+(setup, login, sessions) and `apps/api/src/accounts.rs` (invitations, recovery,
+profile, deactivation).
 
 ## First-admin setup
 
@@ -56,19 +58,96 @@ set custom headers without a CORS preflight, which the API never allows; the
 
 ## Abuse protection
 
-Login, setup, and password change allow 10 attempts per minute per client IP and
-then 5 per minute per username, else `429 rate_limited` with `Retry-After`.
+Login, setup, password change, invitation acceptance, and recovery requests allow 10 attempts per minute per client IP and
+then 5 per minute per username; the token endpoints (`/api/invitations/lookup`,
+`/api/auth/recovery/reset`) allow 10 per minute per client IP, else `429 rate_limited` with `Retry-After`.
 The IP is checked first, so a blocked client creates no further keys. Counters
 are in memory (one API process) and capped at 10,000 live keys; beyond that new
 keys are refused for the window. The IP is the socket peer, or the last
 `X-Forwarded-For` hop when `TRUST_PROXY_HEADERS=true`: set it only behind a
 reverse proxy that overwrites that header (the production compose sets it for Caddy).
 
+## Invitations
+
+After setup, accounts are created only from Admin invitations.
+
+- `POST /api/invitations` (Admin): optional `role` (default `user`, any of the
+  five), `email`, `language` (default `en`), `expires_in_hours` (1-720, default
+  168). Returns the link `PUBLIC_ORIGIN/invite/<token>?lang=<language>` **once**;
+  only the token's SHA-256 is stored, so a lost link means revoke and re-invite.
+  With SMTP and an `email`, the link is also emailed in that language.
+- `GET /api/invitations` (Admin) lists pending ones; `POST /api/invitations/{id}/revoke`
+  revokes one (used or revoked ones are `404`).
+- `POST /api/invitations/lookup {token}` previews role, email and language without
+  consuming anything. Tokens travel in request bodies, never API URLs, so request logs never hold them.
+- `POST /api/invitations/accept` (`token`, `username`, `email`, `password`,
+  `language`) creates the account with the invitation's stored role and signs it
+  in. The invitation row is locked (`FOR UPDATE`) and marked used in the same
+  transaction as the account insert, so validation errors, a taken username, or a
+  failed transaction leave it usable, and concurrent acceptance has one winner.
+  Unknown fields such as `role` are rejected (`422 unknown_field`).
+- Unknown, expired, revoked, and used tokens are all `410 invitation_invalid`.
+- An existing account with the same email is never reused, linked, or upgraded.
+
+## Password recovery
+
+- `POST /api/auth/recovery {username}` always answers `202` with no body. Only an
+  active account whose normalized username matches gets a token; the link
+  `PUBLIC_ORIGIN/reset-password/<token>?lang=<account language>` goes to that
+  account's stored email. Email is never used to find an account.
+- Tokens: 32 random bytes, SHA-256 stored, bound to one account ID, valid **one
+  hour**, single use. Rate limited like login (`recovery` scope), and at most
+  one link per account every 15 minutes: while an unused link younger than that
+  exists, further requests still answer `202` but create and send nothing. The
+  cooldown query runs for unknown usernames too, so both paths take similar time.
+- `POST /api/auth/recovery/reset {token, new_password}` sets the password, marks
+  every unused recovery token of the account used, and revokes all of its
+  sessions (only that account's, even when others share the email). A rejected
+  password leaves the token usable. Bad tokens are `410 reset_token_invalid`.
+  The user then signs in normally.
+
+## Email delivery
+
+SMTP is optional (`SMTP_URL`, `SMTP_FROM`, see [configuration.md](configuration.md)).
+Messages are plain text in the recipient's language and sent in the background,
+so the response time does not depend on delivery. Without SMTP, or when sending
+fails, nothing is retried: Admins copy invitation links from the response, and a
+recovery request only logs `no email was sent` at info level. Logs never contain
+tokens, links, addresses, or SMTP credentials. (ponytail: no outbox or retries
+yet; the notification outbox and Admin-managed SMTP settings replace this.)
+
+The `/invite/...` and `/reset-password/...` page URLs do contain the token; keep
+reverse-proxy access logs off or path-redacted. Every web page is served with
+`Referrer-Policy: no-referrer` so the token never leaks through `Referer`.
+
+## Profile
+
+`PATCH /api/auth/me` (`email`, `language`, both optional) updates the signed-in
+account. The web app renders in the account's language once signed in, unless a
+request picks one with `?lang=`.
+
+## Deactivation
+
+`POST /api/accounts/{id}/deactivate` and `.../reactivate` (Admin) flip
+`accounts.is_active`. Deactivation revokes all the account's sessions in the same
+transaction; login is refused and every request re-checks `is_active`. Tickets,
+messages, and audit history keep referring to the account. The same transaction
+marks the account's unused recovery tokens used (reactivation does not revive
+them) and revokes the pending invitations it issued (`invitation_revoked`,
+reason `issuer_deactivated`). The transaction first
+locks every active Admin row (`accounts::lock_active_admins`), so the last active
+Admin cannot be deactivated (`409 last_active_admin`), even by two Admins at once.
+Deactivating an active team's lead is `409 conflict`. `GET /api/accounts` (Admin)
+lists accounts. Non-Admins get `403 forbidden` on Admin endpoints.
+
 ## Audit events
 
 Append-only `audit_events`: `setup_completed`, `login_succeeded`, `login_failed`
 (reason and IP; the account as subject when the username matched, never the typed username), `logout`, `password_changed`,
-`session_revoked`. Passwords and tokens are never stored or logged.
+`session_revoked` (with `reason`), `invitation_created`, `invitation_revoked`,
+`invitation_accepted`, `recovery_requested` (IP, `matched`), `recovery_completed`,
+`profile_updated` (changed field names), `account_deactivated`,
+`account_reactivated`. Passwords and tokens are never stored or logged.
 
 ## Endpoints
 
@@ -80,3 +159,12 @@ Append-only `audit_events`: `setup_completed`, `login_succeeded`, `login_failed`
 | POST | `/api/auth/logout` | `204`, cookie cleared |
 | GET | `/api/auth/me` | `200 Account` or `401` |
 | POST | `/api/auth/password` | `204` + new cookie, `401`, `422`, `429` |
+| PATCH | `/api/auth/me` | `200 Account`, `401`, `422` |
+| POST | `/api/auth/recovery` | `202` always, `429` |
+| POST | `/api/auth/recovery/reset` | `204`, `410`, `422` |
+| GET/POST | `/api/invitations` | Admin: `200 Page<Invitation>` / `201 CreatedInvitation` |
+| POST | `/api/invitations/{id}/revoke` | Admin: `204`, `404` |
+| POST | `/api/invitations/lookup` | `200 InvitationPreview`, `410` |
+| POST | `/api/invitations/accept` | `200 Account` + cookie, `410`, `422`, `429` |
+| GET | `/api/accounts` | Admin: `200 Page<AccountSummary>` |
+| POST | `/api/accounts/{id}/deactivate`, `.../reactivate` | Admin: `204`, `404`, `409` |

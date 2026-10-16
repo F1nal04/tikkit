@@ -61,3 +61,9 @@ button { cursor: pointer; background: #19251f; color: #fff; }
 .hint { font-size: 0.875rem; font-weight: 400; color: #46544b; }
 
 .error { color: #a1260d; font-weight: 400; }
+
+main.wide { max-width: 60rem; margin-top: 2rem; }
+
+table { width: 100%; border-collapse: collapse; }
+
+th, td { padding: 0.5rem; border-bottom: 1px solid #cad3cb; text-align: left; }
