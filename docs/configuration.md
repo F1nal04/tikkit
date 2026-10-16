@@ -16,6 +16,7 @@ name the variable and the fix but never echo values.
 | `API_ADDR` | no | `127.0.0.1:3001` | Listen address. Use `0.0.0.0:3001` in a container. |
 | `ENVIRONMENT` | no | `development` | `development` or `production` (production enforces https origin and secure cookies). |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
+| `RUST_LOG` | no | `info,sqlx=warn` | Log filter, e.g. `info,tower_http=debug`. Request logs include the request ID and path, never query strings or bodies. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 
 AI providers and SMTP are not environment configuration. They are optional,

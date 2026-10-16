@@ -9,6 +9,9 @@
     "check": {},
     "test": {},
     "start": { "cache": false, "persistent": true },
+    "@tikkit/api-client#check": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/api/openapi.json"]
+    },
     "@tikkit/api#dev": {
       "cache": false,
       "persistent": true,
@@ -19,7 +22,8 @@
         "SESSION_SECRET",
         "ENCRYPTION_KEY",
         "SHUTDOWN_TIMEOUT_SECS",
-        "ENVIRONMENT"
+        "ENVIRONMENT",
+        "RUST_LOG"
       ]
     },
     "@tikkit/api#build": {
@@ -41,7 +45,8 @@
         "SESSION_SECRET",
         "ENCRYPTION_KEY",
         "SHUTDOWN_TIMEOUT_SECS",
-        "ENVIRONMENT"
+        "ENVIRONMENT",
+        "RUST_LOG"
       ]
     },
     "@tikkit/web#start": {

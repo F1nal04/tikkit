@@ -1,0 +1,118 @@
+# API conventions
+
+All backend routes live under `/api/`. The contract is described by OpenAPI 3.1
+at `GET /api/openapi.json`, committed as `apps/api/openapi.json`, and consumed
+by the frontend through the generated, typed `@tikkit/api-client` package.
+The web app and API ship together from one commit behind one origin, so there is
+no URL versioning; contract changes stay additive, and a breaking change would
+get a new path.
+
+Rust is the authorization and validation boundary. The client only types and
+transports requests.
+
+## Errors
+
+Every non-2xx response (except the `/api/ready` probe body) is:
+
+```json
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "Some fields are invalid.",
+    "details": { "fields": { "subject": ["required"], "priority_id": ["invalid"] } }
+  },
+  "request_id": "5f0c..."
+}
+```
+
+- `code` is a stable snake_case identifier (`ErrorCode` in the OpenAPI doc).
+  Clients translate by `code` (English and German); `message` is safe English
+  fallback text that never contains internals, SQL, or secrets.
+- `details.fields` maps dotted field paths to stable field codes such as
+  `required`, `invalid`, `unknown_field`, `invalid_cursor`. More specific codes
+  are added per feature.
+- `request_id` equals the `x-request-id` response header. Clients may send their
+  own `x-request-id`; otherwise the API generates a UUID. Logs carry it.
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| Body is not JSON / malformed / wrong top-level type | 400 | `invalid_json` |
+| Missing `content-type: application/json` | 415 | `unsupported_media_type` |
+| Field missing or of the wrong type | 422 | `validation_failed` |
+| Field not in the schema (types use `deny_unknown_fields`) | 422 | `unknown_field` |
+| Malformed path identifier, e.g. a bad UUID | 400 | `invalid_identifier` |
+| Unparsable query parameter | 400 | `invalid_query` |
+| JSON body over 1 MiB | 413 | `payload_too_large` |
+| Not signed in | 401 | `unauthorized` |
+| Signed in, action not allowed on a visible resource | 403 | `forbidden` |
+| Unknown route, or a resource the caller may not see | 404 | `not_found` |
+| Wrong method | 405 | `method_not_allowed` |
+| Stale or concurrent update lost | 409 | `conflict` |
+| Anything unexpected (logged with the request ID) | 500 | `internal` |
+
+**Denied access does not reveal existence.** When the caller may not see a
+resource at all (another requester's ticket, a ticket dispatched to another
+team, an AI-solved record for operators), respond `not_found`, identical to a
+missing resource. Use `forbidden` only when the caller can already see the
+resource but may not perform the action (e.g. a read-only team member replying
+to a claimed ticket).
+
+In Rust: return `api::ApiError`, extract with `api::Json`, `api::Path`,
+`api::Query` (not the raw axum extractors) so rejections use the envelope.
+
+## Lists: pagination, ordering, filtering
+
+- Query `?limit=` (default 25, clamped to 1-100) and `?cursor=` (opaque; pass
+  back `next_cursor`). Use `api::Pagination` as the query struct.
+- Response `{ "items": [...], "next_cursor": "..." | null }` (`api::Page<T>`).
+  Fetch `limit + 1` rows and build with `Page::from_rows`.
+- Default order is newest first by `(created_at, id)`; the cursor encodes that
+  pair, so pages are stable under inserts. Endpoints that need another order
+  document a fixed `sort` enum; there is no free-form ordering.
+- Filters are plain query parameters with documented values (stable
+  identifiers, e.g. `status=queued`). Unknown filter values are
+  `validation_failed`. Filters and counts always apply the caller's visibility
+  rules in SQL, never after fetching.
+
+## Identifiers and language
+
+Role (`user`, `operator`, `specialist`, `team_lead`, `admin`), ticket status,
+language (`en`, `de`), and error codes are machine identifiers published as
+OpenAPI enums. They never change with the interface language. Clients send
+`Accept-Language` for display preferences only; it never affects authorization
+or business rules. Timestamps are RFC 3339 UTC.
+
+## Requester ticket assignment (contract for upcoming ticket endpoints)
+
+Requester-facing ticket responses include `TicketAssignmentView`:
+`team_name` (`null` = shared general queue) and `assignee_display_name`
+(`null` = unassigned). Both keys are always present. Nothing else about staff,
+internal notes, or team membership is exposed to requesters.
+
+## Typed client and drift checks
+
+```sh
+cargo run --locked -p tikkit-api --bin openapi > apps/api/openapi.json  # after API changes
+bun run --cwd packages/api-client generate                               # regenerate src/schema.d.ts
+```
+
+CI catches drift in two steps, both part of the root `check`/`test` tasks:
+`cargo test` fails if `apps/api/openapi.json` differs from the code
+(`served_openapi_matches_committed_file`), and `@tikkit/api-client`'s `check`
+runs `check:client` (`openapi-typescript --check`) which fails if
+`schema.d.ts` differs from `openapi.json`.
+
+Use the client from SvelteKit `load` functions with the provided `fetch`, and
+create it per request on the server; it stores no per-user state:
+
+```ts
+import { createClient } from "@tikkit/api-client";
+
+export const load = async ({ fetch }) => {
+  const api = createClient({ fetch });
+  return { health: await api.request("get", "/api/health") };
+};
+```
+
+Requests always use `credentials: "include"`. Failures throw `ApiError` with
+`status`, `code`, `fields`, and `requestId`.

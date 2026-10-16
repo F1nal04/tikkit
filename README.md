@@ -51,12 +51,21 @@ Stop with `docker compose -f docker-compose.dev.yml down` (add `-v` to delete
 the data volume). See [docs/schema.md](docs/schema.md) for identifiers and
 database-enforced invariants.
 
+## API contract
+
+The API publishes OpenAPI at `/api/openapi.json` (committed as
+`apps/api/openapi.json`); `packages/api-client` is the typed client generated
+from it. Error format, pagination, and regeneration commands are in
+[docs/api-conventions.md](docs/api-conventions.md).
+
 ## Layout
 
 ```text
 apps/
   web/      SvelteKit, Svelte, TypeScript, Vite (adapter-node)
   api/      Axum and Tokio; package.json connects Cargo to Turbo
+packages/
+  api-client/  Typed API client generated from apps/api/openapi.json
 Cargo.toml  Rust workspace (shared target directory and lockfile)
 turbo.json  Workspace tasks and caching
 ```
