@@ -22,3 +22,26 @@ pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
          partially applied, or an applied migration was modified",
     )
 }
+
+/// Compares applied migrations with the embedded ones: `ok`, `pending`
+/// (database is behind this build) or `incompatible` (unknown, modified, or failed).
+pub async fn migration_status(pool: &PgPool) -> Result<&'static str, sqlx::Error> {
+    let applied: Vec<(i64, Vec<u8>, bool)> =
+        sqlx::query_as("SELECT version, checksum, success FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await?;
+    let expected = MIGRATOR.iter().map(|m| (m.version, &*m.checksum));
+    let mut applied_iter = applied.iter();
+    for (version, checksum) in expected {
+        match applied_iter.next() {
+            Some((v, c, true)) if *v == version && c.as_slice() == checksum => {}
+            None => return Ok("pending"),
+            Some(_) => return Ok("incompatible"),
+        }
+    }
+    Ok(if applied_iter.next().is_some() {
+        "incompatible"
+    } else {
+        "ok"
+    })
+}

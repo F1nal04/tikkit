@@ -1,0 +1,74 @@
+# Production deployment sketch, not a finished package (images are built later).
+# Required values come from the environment or a git-ignored .env next to this
+# file; see docs/configuration.md. AI and SMTP stay disabled until an Admin
+# configures them in the application.
+name: tikkit
+
+services:
+  proxy:
+    image: caddy:2.10
+    ports: ["80:80", "443:443"]
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes: [caddy-data:/data]
+    networks: [edge]
+    depends_on: [api, web]
+
+  web:
+    image: ghcr.io/f1nal04/tikkit-web:${TIKKIT_VERSION:-latest}
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST, e.g. help.example.com}
+      API_ORIGIN: http://api:3001 # server-side rendering calls the API directly
+    networks: [edge]
+
+  api:
+    image: ghcr.io/f1nal04/tikkit-api:${TIKKIT_VERSION:-latest}
+    environment:
+      ENVIRONMENT: production
+      API_ADDR: 0.0.0.0:3001
+      PUBLIC_ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST}
+      DATABASE_URL: postgres://tikkit:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/tikkit
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (openssl rand -base64 32)}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY (openssl rand -base64 32)}
+      SHUTDOWN_TIMEOUT_SECS: 20
+    stop_grace_period: 30s # longer than SHUTDOWN_TIMEOUT_SECS + 5s pool close
+    networks: [edge, internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: tikkit
+      POSTGRES_USER: tikkit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tikkit -d tikkit"]
+      interval: 5s
+      retries: 20
+
+configs:
+  caddyfile:
+    content: |
+      ${PUBLIC_HOST:?set PUBLIC_HOST} {
+        handle /api/* {
+          reverse_proxy api:3001
+        }
+        handle {
+          reverse_proxy web:3000
+        }
+      }
+
+networks:
+  edge:
+  internal:
+    internal: true # no outbound or published access to the database
+
+volumes:
+  caddy-data:
+  postgres-data:

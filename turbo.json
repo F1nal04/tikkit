@@ -12,7 +12,15 @@
     "@tikkit/api#dev": {
       "cache": false,
       "persistent": true,
-      "env": ["API_ADDR", "DATABASE_URL"]
+      "passThroughEnv": [
+        "API_ADDR",
+        "DATABASE_URL",
+        "PUBLIC_ORIGIN",
+        "SESSION_SECRET",
+        "ENCRYPTION_KEY",
+        "SHUTDOWN_TIMEOUT_SECS",
+        "ENVIRONMENT"
+      ]
     },
     "@tikkit/api#build": {
       "cache": false,
@@ -26,7 +34,15 @@
     "@tikkit/api#start": {
       "cache": false,
       "persistent": true,
-      "env": ["API_ADDR", "DATABASE_URL"]
+      "passThroughEnv": [
+        "API_ADDR",
+        "DATABASE_URL",
+        "PUBLIC_ORIGIN",
+        "SESSION_SECRET",
+        "ENCRYPTION_KEY",
+        "SHUTDOWN_TIMEOUT_SECS",
+        "ENVIRONMENT"
+      ]
     },
     "@tikkit/web#start": {
       "cache": false,
