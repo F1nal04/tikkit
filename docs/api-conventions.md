@@ -56,6 +56,7 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Wrong method | 405 | `method_not_allowed` |
 | Stale or concurrent update lost | 409 | `conflict` |
 | Demoting or deactivating the last active Admin | 409 | `last_active_admin` |
+| Demoting or deactivating an active team's lead | 409 | `active_team_lead` |
 | Anything unexpected (logged with the request ID) | 500 | `internal` |
 
 **Denied access does not reveal existence.** When the caller may not see a

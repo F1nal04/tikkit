@@ -57,7 +57,8 @@ Rust validates and authorizes first; these constraints are the backstop.
   together (`MATCH FULL`), which only an archived team may do.
 - So: admins and users can be neither members nor leads; members cannot be promoted to
   admin; a current lead cannot be demoted or deactivated. These surface as
-  `23514`/`23503` here; Rust validates first and returns friendly errors (#11).
+  `23514`/`23503`; `ApiError` maps the lead checks (`teams_lead_role_check`,
+  `teams_active_lead_active`) to `409 active_team_lead`.
 - Team creation is atomic: insert the team (with its lead) and the lead's
   membership in one transaction; the deferred key is checked at commit.
 - Ticket assignees are members of the ticket's team (deferred composite key)

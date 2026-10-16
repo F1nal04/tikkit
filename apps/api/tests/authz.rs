@@ -99,6 +99,16 @@ async fn the_last_active_admin_cannot_be_demoted_or_deactivated() {
         .await
         .unwrap_err();
     assert!(matches!(ApiError::from(err), ApiError::LastActiveAdmin));
+    // The lead of an active team cannot be deactivated or demoted.
+    let lead = account(pool, Role::TeamLead, "lead").await;
+    team(pool, "Desk", lead).await.unwrap();
+    for sql in [deactivate, demote] {
+        let err = exec(pool, sql, lead).await.unwrap_err();
+        assert!(
+            matches!(ApiError::from(err), ApiError::ActiveTeamLead),
+            "{sql}"
+        );
+    }
     // Other updates of the last Admin are fine.
     exec(
         pool,
