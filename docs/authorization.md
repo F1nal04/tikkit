@@ -100,7 +100,7 @@ after fetching. Team helpers: `authz::team_of`, `authz::is_lead_of`,
 
 ## Last active Admin
 
-Migration `0003_last_active_admin.sql` makes it impossible to demote,
+Migration `0004_last_active_admin.sql` makes it impossible to demote,
 deactivate, or delete the last active Admin by any path. Any `UPDATE accounts`
 that changes `role` or `is_active`, and any `DELETE`, first takes a transaction-level advisory lock, so concurrent
 changes run one after another; the row trigger then fails with constraint
