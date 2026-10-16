@@ -1,100 +1,15 @@
 //! PostgreSQL integration tests. Each test gets its own throwaway database.
 //! Set TEST_DATABASE_URL (or DATABASE_URL); without it these tests are skipped.
 
-use std::str::FromStr;
+mod support;
 
-use sqlx::{
-    Connection, Executor, PgConnection, PgPool, Row,
-    postgres::{PgConnectOptions, PgPoolOptions},
+use sqlx::Row;
+use support::{
+    TestDb,
+    fixtures::{Role, account, member, team},
 };
 use tikkit_api::db;
 use uuid::Uuid;
-
-struct TestDb {
-    pool: PgPool,
-    admin: PgConnectOptions,
-    name: String,
-}
-
-impl TestDb {
-    async fn new() -> Option<Self> {
-        dotenvy::dotenv().ok();
-        let Ok(url) = std::env::var("TEST_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL"))
-        else {
-            eprintln!("skipping: set TEST_DATABASE_URL to run PostgreSQL integration tests");
-            return None;
-        };
-        let admin = PgConnectOptions::from_str(&url).expect("valid TEST_DATABASE_URL");
-        let name = format!("tikkit_test_{}", Uuid::new_v4().simple());
-        let mut conn = PgConnection::connect_with(&admin).await.unwrap();
-        conn.execute(format!("CREATE DATABASE {name}").as_str())
-            .await
-            .unwrap();
-        let pool = PgPoolOptions::new()
-            .connect_with(admin.clone().database(&name))
-            .await
-            .unwrap();
-        db::migrate(&pool).await.unwrap();
-        Some(Self { pool, admin, name })
-    }
-}
-
-impl Drop for TestDb {
-    // Runs even when the test panics. FORCE terminates the pool's open sessions.
-    fn drop(&mut self) {
-        let (admin, name) = (self.admin.clone(), self.name.clone());
-        std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let mut conn = PgConnection::connect_with(&admin).await.unwrap();
-                    conn.execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
-                        .await
-                        .unwrap();
-                })
-        })
-        .join()
-        .unwrap();
-    }
-}
-
-async fn account(pool: &PgPool, username: &str, role: &str) -> Uuid {
-    sqlx::query_scalar(
-        "INSERT INTO accounts (username, display_name, email, password_hash, role)
-         VALUES ($1, $1, 'shared@example.com', 'x', $2) RETURNING id",
-    )
-    .bind(username)
-    .bind(role)
-    .fetch_one(pool)
-    .await
-    .unwrap()
-}
-
-/// Creates a team with `lead` as member and lead in one transaction.
-async fn team(pool: &PgPool, name: &str, lead: Uuid) -> Result<Uuid, sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO teams (name, lead_account_id) VALUES ($1, $2) RETURNING id",
-    )
-    .bind(name)
-    .bind(lead)
-    .fetch_one(&mut *tx)
-    .await?;
-    join(&mut tx, lead, id).await?;
-    tx.commit().await?;
-    Ok(id)
-}
-
-async fn join(conn: &mut PgConnection, account: Uuid, team: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO team_memberships (account_id, role, team_id) SELECT id, role, $2 FROM accounts WHERE id = $1")
-        .bind(account)
-        .bind(team)
-        .execute(conn)
-        .await
-        .map(drop)
-}
 
 fn sql_state(result: Result<impl std::fmt::Debug, sqlx::Error>) -> String {
     match result {
@@ -117,9 +32,9 @@ async fn migrations_apply_to_fresh_database_and_rerun_cleanly() {
 #[tokio::test]
 async fn usernames_are_unique_after_normalization_but_emails_may_repeat() {
     let Some(t) = TestDb::new().await else { return };
-    account(&t.pool, "Alice", "admin").await;
+    account(&t.pool, Role::Admin, "Alice").await;
     // Same email, different username: a separate account.
-    account(&t.pool, "alice.ops", "operator").await;
+    account(&t.pool, Role::Operator, "alice.ops").await;
     let insert = |name: &'static str| {
         sqlx::query("INSERT INTO accounts (username, display_name, email, password_hash) VALUES ($1, 'A', 'a@example.com', 'x')")
             .bind(name)
@@ -145,12 +60,11 @@ async fn usernames_are_unique_after_normalization_but_emails_may_repeat() {
 #[tokio::test]
 async fn admins_cannot_be_members_or_leads() {
     let Some(t) = TestDb::new().await else { return };
-    let admin = account(&t.pool, "admin", "admin").await;
-    let lead = account(&t.pool, "lead", "team_lead").await;
+    let admin = account(&t.pool, Role::Admin, "admin").await;
+    let lead = account(&t.pool, Role::TeamLead, "lead").await;
     let team_id = team(&t.pool, "Network", lead).await.unwrap();
 
-    let mut conn = t.pool.acquire().await.unwrap();
-    assert_eq!(sql_state(join(&mut conn, admin, team_id).await), "23514");
+    assert_eq!(sql_state(member(&t.pool, team_id, admin).await), "23514");
     assert_eq!(sql_state(team(&t.pool, "Admins", admin).await), "23503");
     // A member cannot be promoted to admin while in a team.
     let promote = sqlx::query("UPDATE accounts SET role = 'admin' WHERE id = $1")
@@ -163,16 +77,23 @@ async fn admins_cannot_be_members_or_leads() {
 #[tokio::test]
 async fn an_account_belongs_to_at_most_one_team_and_history_is_kept() {
     let Some(t) = TestDb::new().await else { return };
-    let a = team(&t.pool, "A", account(&t.pool, "lead_a", "team_lead").await)
-        .await
-        .unwrap();
-    let b = team(&t.pool, "B", account(&t.pool, "lead_b", "team_lead").await)
-        .await
-        .unwrap();
-    let op = account(&t.pool, "op", "operator").await;
-    let mut conn = t.pool.acquire().await.unwrap();
-    join(&mut conn, op, a).await.unwrap();
-    assert_eq!(sql_state(join(&mut conn, op, b).await), "23505");
+    let a = team(
+        &t.pool,
+        "A",
+        account(&t.pool, Role::TeamLead, "lead_a").await,
+    )
+    .await
+    .unwrap();
+    let b = team(
+        &t.pool,
+        "B",
+        account(&t.pool, Role::TeamLead, "lead_b").await,
+    )
+    .await
+    .unwrap();
+    let op = account(&t.pool, Role::Operator, "op").await;
+    member(&t.pool, a, op).await.unwrap();
+    assert_eq!(sql_state(member(&t.pool, b, op).await), "23505");
 
     sqlx::query("UPDATE team_memberships SET team_id = $1 WHERE account_id = $2")
         .bind(b)
@@ -201,7 +122,7 @@ async fn an_account_belongs_to_at_most_one_team_and_history_is_kept() {
 #[tokio::test]
 async fn team_leads_are_unique_members_with_the_team_lead_role() {
     let Some(t) = TestDb::new().await else { return };
-    let lead = account(&t.pool, "lead", "team_lead").await;
+    let lead = account(&t.pool, Role::TeamLead, "lead").await;
     let team_id = team(&t.pool, "Network", lead).await.unwrap();
 
     // One lead account cannot lead a second team.
@@ -214,9 +135,8 @@ async fn team_leads_are_unique_members_with_the_team_lead_role() {
     drop(tx);
 
     // The lead must hold the team_lead role.
-    let op = account(&t.pool, "op", "operator").await;
-    let mut conn = t.pool.acquire().await.unwrap();
-    join(&mut conn, op, team_id).await.unwrap();
+    let op = account(&t.pool, Role::Operator, "op").await;
+    member(&t.pool, team_id, op).await.unwrap();
     let set_lead = sqlx::query("UPDATE teams SET lead_account_id = $1 WHERE id = $2")
         .bind(op)
         .bind(team_id)
@@ -241,7 +161,7 @@ async fn team_leads_are_unique_members_with_the_team_lead_role() {
     deactivate(op).await.unwrap();
 
     // The lead must be a member of the same team (checked at commit).
-    let other_lead = account(&t.pool, "other", "team_lead").await;
+    let other_lead = account(&t.pool, Role::TeamLead, "other").await;
     let mut tx = t.pool.begin().await.unwrap();
     sqlx::query("INSERT INTO teams (name, lead_account_id) VALUES ('NoMember', $1)")
         .bind(other_lead)
@@ -266,8 +186,8 @@ async fn team_leads_are_unique_members_with_the_team_lead_role() {
 #[tokio::test]
 async fn tickets_keep_stable_references_events_and_foreign_keys() {
     let Some(t) = TestDb::new().await else { return };
-    let requester = account(&t.pool, "req", "user").await;
-    let lead = account(&t.pool, "lead", "team_lead").await;
+    let requester = account(&t.pool, Role::User, "req").await;
+    let lead = account(&t.pool, Role::TeamLead, "lead").await;
     let team_id = team(&t.pool, "Desk", lead).await.unwrap();
     let category: Uuid =
         sqlx::query_scalar("INSERT INTO categories (name) VALUES ('Hardware') RETURNING id")
@@ -322,7 +242,7 @@ async fn tickets_keep_stable_references_events_and_foreign_keys() {
     assert_eq!(sql_state(orphan), "23503");
 
     // Assignees must be members of the ticket's team; requesters never handle their own ticket.
-    let outsider = account(&t.pool, "outsider", "operator").await;
+    let outsider = account(&t.pool, Role::Operator, "outsider").await;
     let mut tx = t.pool.begin().await.unwrap();
     sqlx::query("UPDATE tickets SET team_id = $1, assignee_account_id = $2 WHERE id = $3")
         .bind(team_id)
@@ -370,9 +290,9 @@ async fn tickets_keep_stable_references_events_and_foreign_keys() {
 #[tokio::test]
 async fn concurrent_membership_and_admin_promotion_cannot_both_commit() {
     let Some(t) = TestDb::new().await else { return };
-    let lead = account(&t.pool, "lead", "team_lead").await;
+    let lead = account(&t.pool, Role::TeamLead, "lead").await;
     let team_id = team(&t.pool, "Desk", lead).await.unwrap();
-    let op = account(&t.pool, "op", "operator").await;
+    let op = account(&t.pool, Role::Operator, "op").await;
 
     // Both transactions take their REPEATABLE READ snapshot before either writes.
     let mut joiner = t.pool.begin().await.unwrap();
@@ -387,7 +307,7 @@ async fn concurrent_membership_and_admin_promotion_cannot_both_commit() {
             .await
             .unwrap();
     }
-    join(&mut joiner, op, team_id).await.unwrap();
+    member(&mut *joiner, team_id, op).await.unwrap();
     // The promotion blocks on the membership's key lock until the join commits.
     let promotion = tokio::spawn(async move {
         sqlx::query("UPDATE accounts SET role = 'admin' WHERE id = $1")
@@ -416,9 +336,7 @@ async fn ready_reports_ok_until_schema_is_newer_than_build() {
 
     let Some(t) = TestDb::new().await else { return };
     let ready = || async {
-        let app = tikkit_api::app(tikkit_api::AppState {
-            pool: t.pool.clone(),
-        });
+        let app = support::test_app(&t.pool);
         let response = app
             .oneshot(Request::get("/api/ready").body(Body::empty()).unwrap())
             .await
