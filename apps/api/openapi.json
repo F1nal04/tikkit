@@ -465,6 +465,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -702,6 +712,16 @@
           },
           "410": {
             "description": "`invitation_invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
             "content": {
               "application/json": {
                 "schema": {

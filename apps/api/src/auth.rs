@@ -130,6 +130,12 @@ impl Auth {
         Ok(())
     }
 
+    /// Per-IP only, for endpoints keyed by an unguessable token rather than a username.
+    pub(crate) fn limit_ip(&self, scope: &str, client: &Client) -> Result<(), ApiError> {
+        let ip = client.ip.as_deref().unwrap_or("unknown");
+        self.hit(format!("{scope}:ip:{ip}"), LIMIT_PER_IP)
+    }
+
     /// Per-IP first, so one client cannot mint unbounded per-username keys.
     pub(crate) fn limit_attempt(
         &self,
@@ -137,8 +143,7 @@ impl Auth {
         client: &Client,
         username: &str,
     ) -> Result<(), ApiError> {
-        let ip = client.ip.as_deref().unwrap_or("unknown");
-        self.hit(format!("{scope}:ip:{ip}"), LIMIT_PER_IP)?;
+        self.limit_ip(scope, client)?;
         let username: String = username.chars().take(64).collect();
         self.hit(format!("{scope}:user:{username}"), LIMIT_PER_USERNAME)
     }
