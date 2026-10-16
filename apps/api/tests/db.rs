@@ -408,3 +408,36 @@ async fn concurrent_membership_and_admin_promotion_cannot_both_commit() {
     .unwrap();
     assert_eq!(admin_members, 0);
 }
+
+#[tokio::test]
+async fn ready_reports_ok_until_schema_is_newer_than_build() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    let Some(t) = TestDb::new().await else { return };
+    let ready = || async {
+        let app = tikkit_api::app(tikkit_api::AppState {
+            pool: t.pool.clone(),
+        });
+        let response = app
+            .oneshot(Request::get("/api/ready").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
+    };
+    assert_eq!(
+        ready().await,
+        r#"{"status":"ready","checks":{"database":"ok","migrations":"ok"}}"#
+    );
+
+    sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (999999, 'future', true, '\\x00', 0)")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(db::migration_status(&t.pool).await.unwrap(), "incompatible");
+    assert!(ready().await.contains(r#""status":"unavailable""#));
+    assert!(db::migrate(&t.pool).await.is_err());
+}

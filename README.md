@@ -30,7 +30,12 @@ copy the example environment (the API loads `.env` from the repository root):
 ```sh
 docker compose -f docker-compose.dev.yml up -d --wait
 cp .env.example .env
+# then replace both CHANGE_ME values in .env with `openssl rand -base64 32` output
 ```
+
+All API settings, probes (`/api/health`, `/api/ready`), graceful shutdown, and a
+production Compose sketch are described in
+[docs/configuration.md](docs/configuration.md).
 
 The API applies migrations from `apps/api/migrations/` on startup, so
 `bun run dev` or `cargo run -p tikkit-api` migrates a fresh database; it exits
