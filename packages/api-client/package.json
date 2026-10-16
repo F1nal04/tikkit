@@ -1,0 +1,17 @@
+{
+  "name": "@tikkit/api-client",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript ../../apps/api/openapi.json -o src/schema.d.ts",
+    "check:client": "openapi-typescript ../../apps/api/openapi.json -o src/schema.d.ts --check",
+    "check": "bun run check:client && tsc --noEmit"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.3"
+  }
+}

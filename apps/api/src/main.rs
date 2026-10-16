@@ -11,6 +11,12 @@ async fn main() -> anyhow::Result<()> {
     if std::env::var("ENVIRONMENT").as_deref() != Ok("production") {
         dotenvy::dotenv().ok();
     }
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,sqlx=warn".into()),
+        )
+        .init();
     let config = Config::from_env()?;
 
     let pool = db::connect(&config.database_url).await?;
@@ -19,14 +25,14 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.api_addr)
         .await
         .with_context(|| format!("cannot listen on API_ADDR {}", config.api_addr))?;
-    println!("Tikkit API listening on http://{}", listener.local_addr()?);
+    tracing::info!("Tikkit API listening on http://{}", listener.local_addr()?);
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
     let server = axum::serve(listener, app(AppState { pool: pool.clone() }))
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
-            println!(
+            tracing::info!(
                 "Shutting down; draining requests for up to {:?}",
                 config.shutdown_timeout
             );
@@ -39,23 +45,23 @@ async fn main() -> anyhow::Result<()> {
     };
     tokio::select! {
         result = server => result?,
-        () = deadline => eprintln!("Drain timeout reached; aborting remaining requests"),
+        () = deadline => tracing::warn!("Drain timeout reached; aborting remaining requests"),
     }
     // Bounded so a stuck connection cannot hold the process past the drain window.
     if tokio::time::timeout(Duration::from_secs(5), pool.close())
         .await
         .is_err()
     {
-        eprintln!("Timed out closing database connections");
+        tracing::warn!("Timed out closing database connections");
     }
-    println!("Tikkit API stopped");
+    tracing::info!("Tikkit API stopped");
     Ok(())
 }
 
 async fn shutdown_signal() {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
-            eprintln!("Unable to listen for Ctrl+C: {error}");
+            tracing::error!("Unable to listen for Ctrl+C: {error}");
             std::future::pending::<()>().await;
         }
     };
@@ -66,7 +72,7 @@ async fn shutdown_signal() {
                 signal.recv().await;
             }
             Err(error) => {
-                eprintln!("Unable to listen for SIGTERM: {error}");
+                tracing::error!("Unable to listen for SIGTERM: {error}");
                 std::future::pending::<()>().await;
             }
         }

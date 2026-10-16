@@ -1,36 +1,90 @@
 use std::time::Duration;
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use axum::{
+    Router,
+    extract::{DefaultBodyLimit, State},
+    http::{Request, StatusCode},
+    response::IntoResponse,
+    routing::get,
+};
 use serde::Serialize;
 use sqlx::PgPool;
+use tower_http::{
+    catch_panic::CatchPanicLayer,
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::{DefaultOnResponse, TraceLayer},
+};
+use utoipa::{OpenApi, ToSchema};
 
+pub mod api;
 pub mod config;
 pub mod db;
+
+use api::{ApiError, Json};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
 }
 
-#[derive(Serialize)]
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Tikkit API",
+        version = "1",
+        description = "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; \
+                       lists use `limit`/`cursor` and return a Page."
+    ),
+    paths(health, ready, openapi_json),
+    components(schemas(
+        api::ErrorEnvelope,
+        api::Page<api::TicketAssignmentView>,
+        api::Language,
+        api::Role,
+        api::TicketStatus,
+        api::TicketAssignmentView,
+    ))
+)]
+pub struct ApiDoc;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
+}
+
+#[derive(Serialize, ToSchema)]
 struct Health {
     status: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct Readiness {
+    /// `ready` or `unavailable`.
     status: &'static str,
     checks: Checks,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct Checks {
+    /// `ok` or `unavailable`.
     database: &'static str,
+    /// `ok`, `pending`, `incompatible`, or `unknown`.
     migrations: &'static str,
+}
+
+/// Liveness: the process is serving. Touches no dependencies.
+#[utoipa::path(get, path = "/api/health", tag = "operations",
+    responses((status = 200, description = "Process is alive", body = Health)))]
+async fn health() -> Json<Health> {
+    Json(Health { status: "ok" })
 }
 
 /// Readiness: the database answers and its schema matches this build.
 /// Reports stable check identifiers only, never connection details.
+#[utoipa::path(get, path = "/api/ready", tag = "operations",
+    responses(
+        (status = 200, description = "Ready to serve traffic", body = Readiness),
+        (status = 503, description = "A required dependency is unavailable or incompatible", body = Readiness),
+    ))]
 async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     let probe = async {
         sqlx::query("SELECT 1").execute(&state.pool).await?;
@@ -63,24 +117,62 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     }
 }
 
+/// This OpenAPI document.
+#[utoipa::path(get, path = "/api/openapi.json", tag = "operations",
+    responses((status = 200, description = "OpenAPI 3.1 document", content_type = "application/json")))]
+async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(openapi())
+}
+
 pub fn app(state: AppState) -> Router {
-    Router::new()
-        .route(
-            "/api/health",
-            get(|| async { Json(Health { status: "ok" }) }),
-        )
+    let routes = Router::new()
+        .route("/api/health", get(health))
         .route("/api/ready", get(ready))
-        .with_state(state)
+        .route("/api/openapi.json", get(openapi_json))
+        .with_state(state);
+    with_conventions(routes)
+}
+
+/// Request IDs, tracing, panic safety, body limit, and the error envelope.
+/// Layers run outermost-last: the request ID is set before anything else.
+pub fn with_conventions(router: Router) -> Router {
+    router
+        .layer(DefaultBodyLimit::max(api::MAX_JSON_BODY))
+        .layer(CatchPanicLayer::custom(|_| {
+            tracing::error!("request handler panicked");
+            ApiError::Internal.into_response()
+        }))
+        .layer(axum::middleware::from_fn(api::error_envelope))
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(
+            // Logs the path only: query strings may carry tokens.
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request<_>| {
+                    let id = request.headers().get("x-request-id").and_then(|v| v.to_str().ok());
+                    tracing::info_span!("request", method = %request.method(), path = request.uri().path(), request_id = id)
+                })
+                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+        )
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
 }
 
 #[cfg(test)]
 mod tests {
     use axum::{
+        Router,
         body::{Body, to_bytes},
         http::{Request, StatusCode},
+        response::Response,
+        routing::{get, post},
     };
+    use serde::Deserialize;
+    use serde_json::{Value, json};
     use sqlx::postgres::PgPoolOptions;
+    use time::OffsetDateTime;
     use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use crate::api::{Cursor, Json, Page, Pagination, Path, Query};
 
     fn lazy_state() -> super::AppState {
         // Never connects unless a handler touches the database.
@@ -89,6 +181,62 @@ mod tests {
             .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
             .unwrap();
         super::AppState { pool }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct NewThing {
+        name: String,
+        count: u8,
+    }
+
+    fn test_app() -> Router {
+        let routes =
+            Router::new()
+                .route(
+                    "/api/things/{id}",
+                    get(|Path(id): Path<Uuid>| async move { id.to_string() }),
+                )
+                .route(
+                    "/api/things",
+                    post(|Json(_): Json<NewThing>| async { "created" }),
+                )
+                .route(
+                    "/api/list",
+                    get(|Query(p): Query<Pagination>| async move {
+                        Json(json!({ "limit": p.limit() }))
+                    }),
+                )
+                .route(
+                    "/api/panic",
+                    get(|| async { panic!("boom") as &'static str }),
+                )
+                .merge(super::app(lazy_state()));
+        super::with_conventions(routes)
+    }
+
+    async fn send(request: Request<Body>) -> (Response, Value) {
+        let response = test_app().oneshot(request).await.unwrap();
+        let (parts, body) = response.into_parts();
+        let bytes = to_bytes(body, usize::MAX).await.unwrap();
+        let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (Response::from_parts(parts, Body::empty()), value)
+    }
+
+    fn post_json(body: impl Into<Body>) -> Request<Body> {
+        Request::post("/api/things")
+            .header("content-type", "application/json")
+            .body(body.into())
+            .unwrap()
+    }
+
+    fn assert_error(response: &Response, body: &Value, status: StatusCode, code: &str) {
+        assert_eq!(response.status(), status, "{body}");
+        assert_eq!(body["error"]["code"], code, "{body}");
+        assert!(body["error"]["message"].is_string());
+        let header = response.headers()["x-request-id"].to_str().unwrap();
+        assert_eq!(body["request_id"], header);
     }
 
     #[tokio::test]
@@ -107,18 +255,185 @@ mod tests {
 
     #[tokio::test]
     async fn ready_is_unavailable_without_database() {
-        let response = super::app(lazy_state())
-            .oneshot(Request::get("/api/ready").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-
+        let (response, body) = send(Request::get("/api/ready").body(Body::empty()).unwrap()).await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
-        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let expected = serde_json::json!({
+        let expected = json!({
             "status": "unavailable",
             "checks": { "database": "unavailable", "migrations": "unknown" }
         });
-        assert_eq!(payload, expected);
+        assert_eq!(body, expected);
+    }
+
+    #[tokio::test]
+    async fn request_ids_are_generated_or_propagated() {
+        let (response, _) = send(Request::get("/api/health").body(Body::empty()).unwrap()).await;
+        let generated = response.headers()["x-request-id"].to_str().unwrap();
+        assert!(Uuid::parse_str(generated).is_ok());
+
+        let request = Request::get("/api/nope").header("x-request-id", "abc-123");
+        let (response, body) = send(request.body(Body::empty()).unwrap()).await;
+        assert_eq!(response.headers()["x-request-id"], "abc-123");
+        assert_eq!(body["request_id"], "abc-123");
+    }
+
+    #[tokio::test]
+    async fn unknown_routes_and_methods_use_the_envelope() {
+        let (response, body) = send(Request::get("/api/nope").body(Body::empty()).unwrap()).await;
+        assert_error(&response, &body, StatusCode::NOT_FOUND, "not_found");
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let (response, body) =
+            send(Request::delete("/api/health").body(Body::empty()).unwrap()).await;
+        assert_error(
+            &response,
+            &body,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "method_not_allowed",
+        );
+        assert_eq!(response.headers()["allow"], "GET,HEAD");
+    }
+
+    #[tokio::test]
+    async fn json_bodies_are_validated() {
+        let (r, b) = send(post_json(r#"{"name": "x", "count": 1}"#)).await;
+        assert_eq!(r.status(), StatusCode::OK, "{b}");
+
+        let (r, b) = send(post_json("{not json")).await;
+        assert_error(&r, &b, StatusCode::BAD_REQUEST, "invalid_json");
+
+        let (r, b) = send(post_json(r#"{"name": "x", "count": 1, "admin": true}"#)).await;
+        assert_error(&r, &b, StatusCode::UNPROCESSABLE_ENTITY, "unknown_field");
+        assert_eq!(
+            b["error"]["details"],
+            json!({ "fields": { "admin": ["unknown_field"] } })
+        );
+
+        let (r, b) = send(post_json(r#"{"count": 1}"#)).await;
+        assert_error(
+            &r,
+            &b,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+        );
+        assert_eq!(
+            b["error"]["details"],
+            json!({ "fields": { "name": ["required"] } })
+        );
+
+        let (r, b) = send(post_json(r#"{"name": "x", "count": 999}"#)).await;
+        assert_eq!(
+            b["error"]["details"],
+            json!({ "fields": { "count": ["invalid"] } }),
+            "{r:?}"
+        );
+
+        let request = Request::post("/api/things").body(Body::from("{}")).unwrap();
+        let (r, b) = send(request).await;
+        assert_error(
+            &r,
+            &b,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+        );
+
+        let huge = format!(
+            r#"{{"name": "{}", "count": 1}}"#,
+            "x".repeat(super::api::MAX_JSON_BODY)
+        );
+        let (r, b) = send(post_json(huge)).await;
+        assert_error(&r, &b, StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large");
+    }
+
+    #[tokio::test]
+    async fn malformed_identifiers_and_queries_are_rejected() {
+        let id = Uuid::new_v4();
+        let (r, _) = send(
+            Request::get(format!("/api/things/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let (r, b) = send(
+            Request::get("/api/things/not-a-uuid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_error(&r, &b, StatusCode::BAD_REQUEST, "invalid_identifier");
+        let (r, b) = send(
+            Request::get("/api/list?limit=ten")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_error(&r, &b, StatusCode::BAD_REQUEST, "invalid_query");
+    }
+
+    #[tokio::test]
+    async fn panics_become_internal_errors() {
+        let (r, b) = send(Request::get("/api/panic").body(Body::empty()).unwrap()).await;
+        assert_error(&r, &b, StatusCode::INTERNAL_SERVER_ERROR, "internal");
+    }
+
+    #[tokio::test]
+    async fn pagination_limits_are_clamped() {
+        for (query, limit) in [
+            ("", 25),
+            ("?limit=0", 1),
+            ("?limit=-5", 1),
+            ("?limit=40", 40),
+            ("?limit=1000", 100),
+        ] {
+            let (_, b) = send(
+                Request::get(format!("/api/list{query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(b["limit"], limit, "{query}");
+        }
+    }
+
+    #[test]
+    fn cursors_round_trip_and_pages_know_when_to_stop() {
+        let cursor = Cursor {
+            created_at: OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap(),
+            id: Uuid::new_v4(),
+        };
+        let page = Page::from_rows(vec![cursor; 3], 2, |c| *c);
+        assert_eq!(page.items.len(), 2);
+        let next = Pagination {
+            limit: None,
+            cursor: page.next_cursor,
+        };
+        assert_eq!(next.cursor().unwrap(), Some(cursor));
+        assert!(
+            Page::from_rows(vec![cursor; 2], 2, |c| *c)
+                .next_cursor
+                .is_none()
+        );
+        let bad = Pagination {
+            limit: None,
+            cursor: Some("bm9wZQ".into()),
+        };
+        assert!(bad.cursor().is_err());
+    }
+
+    #[tokio::test]
+    async fn served_openapi_matches_committed_file() {
+        let (r, served) = send(
+            Request::get("/api/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let committed = include_str!("../openapi.json");
+        assert_eq!(
+            super::openapi().to_pretty_json().unwrap() + "\n",
+            committed,
+            "apps/api/openapi.json is stale; run: cargo run --locked -p tikkit-api --bin openapi > apps/api/openapi.json"
+        );
+        assert_eq!(served, serde_json::from_str::<Value>(committed).unwrap());
     }
 }

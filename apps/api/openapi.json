@@ -1,0 +1,310 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tikkit API",
+    "description": "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; lists use `limit`/`cursor` and return a Page.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "1"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Liveness: the process is serving. Touches no dependencies.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "This OpenAPI document.",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/ready": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Readiness: the database answers and its schema matches this build.\nReports stable check identifiers only, never connection details.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "Ready to serve traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A required dependency is unavailable or incompatible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Checks": {
+        "type": "object",
+        "required": [
+          "database",
+          "migrations"
+        ],
+        "properties": {
+          "database": {
+            "type": "string",
+            "description": "`ok` or `unavailable`."
+          },
+          "migrations": {
+            "type": "string",
+            "description": "`ok`, `pending`, `incompatible`, or `unknown`."
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "details": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorDetails"
+              }
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Safe English fallback text; translate by `code` instead of showing this."
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Stable machine-readable error codes. Never translated; clients map them to text.",
+        "enum": [
+          "validation_failed",
+          "invalid_json",
+          "unknown_field",
+          "invalid_identifier",
+          "invalid_query",
+          "bad_request",
+          "unsupported_media_type",
+          "unauthorized",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "conflict",
+          "payload_too_large",
+          "internal"
+        ]
+      },
+      "ErrorDetails": {
+        "type": "object",
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "object",
+            "description": "Invalid input fields (dotted paths) and their stable error codes.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Same value as the `x-request-id` response header."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "Language": {
+        "type": "string",
+        "description": "Machine identifiers published in the contract; display text is localized by clients.",
+        "enum": [
+          "en",
+          "de"
+        ]
+      },
+      "Page_TicketAssignmentView": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
+              "required": [
+                "team_name",
+                "assignee_display_name"
+              ],
+              "properties": {
+                "assignee_display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "team_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Readiness": {
+        "type": "object",
+        "required": [
+          "status",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/Checks"
+          },
+          "status": {
+            "type": "string",
+            "description": "`ready` or `unavailable`."
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "user",
+          "operator",
+          "specialist",
+          "team_lead",
+          "admin"
+        ]
+      },
+      "TicketAssignmentView": {
+        "type": "object",
+        "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
+        "required": [
+          "team_name",
+          "assignee_display_name"
+        ],
+        "properties": {
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TicketStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "ai_processing",
+          "awaiting_ai_decision",
+          "queued",
+          "in_progress",
+          "waiting_for_requester",
+          "awaiting_confirmation",
+          "closed",
+          "cancelled",
+          "ai_solved"
+        ]
+      }
+    }
+  }
+}
