@@ -7,7 +7,10 @@ use std::collections::BTreeMap;
 use axum::{
     body::Bytes,
     extract::{FromRequest, FromRequestParts, Request, rejection::BytesRejection},
-    http::{HeaderMap, StatusCode, header::CONTENT_TYPE},
+    http::{
+        HeaderMap, StatusCode,
+        header::{CONTENT_LENGTH, CONTENT_TYPE},
+    },
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -220,18 +223,28 @@ impl From<sqlx::Error> for ApiError {
 pub async fn error_envelope(request: Request, next: Next) -> Response {
     let request_id = request_id(request.headers());
     let mut response = next.run(request).await;
-    if let Some(error) = response.extensions_mut().remove::<ApiError>() {
-        return error.render(request_id);
+    let error = match response.extensions_mut().remove::<ApiError>() {
+        Some(error) => error,
+        None => {
+            let status = response.status();
+            let is_json = response
+                .headers()
+                .get(CONTENT_TYPE)
+                .is_some_and(|v| v.as_bytes().starts_with(b"application/json"));
+            if !(status.is_client_error() || status.is_server_error()) || is_json {
+                return response;
+            }
+            ApiError::from_status(status)
+        }
+    };
+    // Keep headers such as `Allow` (405) or `WWW-Authenticate`; only the body changes.
+    let mut rendered = error.render(request_id);
+    for (name, value) in response.headers() {
+        if name != CONTENT_TYPE && name != CONTENT_LENGTH {
+            rendered.headers_mut().append(name, value.clone());
+        }
     }
-    let status = response.status();
-    let is_json = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .is_some_and(|v| v.as_bytes().starts_with(b"application/json"));
-    if (status.is_client_error() || status.is_server_error()) && !is_json {
-        return ApiError::from_status(status).render(request_id);
-    }
-    response
+    rendered
 }
 
 fn request_id(headers: &HeaderMap) -> String {

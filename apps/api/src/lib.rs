@@ -289,6 +289,7 @@ mod tests {
             StatusCode::METHOD_NOT_ALLOWED,
             "method_not_allowed",
         );
+        assert_eq!(response.headers()["allow"], "GET,HEAD");
     }
 
     #[tokio::test]

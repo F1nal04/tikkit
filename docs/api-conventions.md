@@ -67,11 +67,14 @@ In Rust: return `api::ApiError`, extract with `api::Json`, `api::Path`,
 - Response `{ "items": [...], "next_cursor": "..." | null }` (`api::Page<T>`).
   Fetch `limit + 1` rows and build with `Page::from_rows`.
 - Default order is newest first by `(created_at, id)`; the cursor encodes that
-  pair, so pages are stable under inserts. Endpoints that need another order
+  pair, so a page never repeats or skips rows that already existed. `created_at`
+  is the inserting transaction's start time, so a row committed late can sort
+  before a cursor and be missed by a client already paging; refresh from the
+  first page when completeness matters. Endpoints that need another order
   document a fixed `sort` enum; there is no free-form ordering.
 - Filters are plain query parameters with documented values (stable
-  identifiers, e.g. `status=queued`). Unknown filter values are
-  `validation_failed`. Filters and counts always apply the caller's visibility
+  identifiers, e.g. `status=queued`). Unparsable or unknown filter
+  values are rejected with 400 `invalid_query`. Filters and counts always apply the caller's visibility
   rules in SQL, never after fetching.
 
 ## Identifiers and language
