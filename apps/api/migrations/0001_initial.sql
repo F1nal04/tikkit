@@ -16,32 +16,58 @@ END $$;
 
 CREATE TABLE accounts (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    username            text NOT NULL CHECK (btrim(username) <> ''),
-    username_normalized text GENERATED ALWAYS AS (lower(btrim(username))) STORED UNIQUE,
+    -- No whitespace or control characters anywhere, judged after NFKC folding.
+    username            text NOT NULL CHECK (username <> '' AND normalize(username, NFKC) !~ '[[:space:][:cntrl:]]'),
+    username_normalized text GENERATED ALWAYS AS (lower(normalize(btrim(username), NFKC))) STORED UNIQUE,
     display_name        text NOT NULL,
     email               text NOT NULL, -- contact only, deliberately not unique
     password_hash       text NOT NULL,
     role                account_role NOT NULL DEFAULT 'user',
     language            text NOT NULL DEFAULT 'en' CHECK (language IN ('en', 'de')),
     is_active           boolean NOT NULL DEFAULT true,
-    created_at          timestamptz NOT NULL DEFAULT now()
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    -- Targets for the role-carrying foreign keys below. Role and activation
+    -- changes cascade into memberships/teams, where CHECKs reject invalid
+    -- states. FK row locks make this safe under any isolation level.
+    UNIQUE (id, role),
+    UNIQUE (id, role, is_active)
 );
 
+CREATE FUNCTION check_account_id_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.id <> OLD.id THEN
+        RAISE EXCEPTION 'account ids are immutable' USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER accounts_id_immutable
+    BEFORE UPDATE OF id ON accounts
+    FOR EACH ROW EXECUTE FUNCTION check_account_id_immutable();
+
 CREATE TABLE teams (
-    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name           text NOT NULL UNIQUE CHECK (btrim(name) <> ''),
-    -- One team per lead account; a lead must be a member of this team (FK below).
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            text NOT NULL UNIQUE CHECK (btrim(name) <> ''),
+    -- One team per lead account (UNIQUE); the lead holds the team_lead role and
+    -- is active (FK + CHECKs) and is a member of this team (FK below). All three
+    -- lead columns are NULL together, which only an archived team may do.
     lead_account_id uuid UNIQUE,
-    archived_at    timestamptz,
-    created_at     timestamptz NOT NULL DEFAULT now(),
-    CHECK (archived_at IS NOT NULL OR lead_account_id IS NOT NULL)
+    lead_role       account_role DEFAULT 'team_lead' CHECK (lead_role = 'team_lead'),
+    lead_active     boolean DEFAULT true,
+    archived_at     timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    CHECK (archived_at IS NOT NULL OR lead_account_id IS NOT NULL),
+    CHECK (archived_at IS NOT NULL OR lead_active),
+    FOREIGN KEY (lead_account_id, lead_role, lead_active)
+        REFERENCES accounts (id, role, is_active) MATCH FULL ON UPDATE CASCADE
 );
 
 CREATE TABLE team_memberships (
-    account_id uuid PRIMARY KEY REFERENCES accounts (id), -- at most one team per account
+    account_id uuid PRIMARY KEY, -- at most one team per account
+    role       account_role NOT NULL CHECK (role <> 'admin'),
     team_id    uuid NOT NULL REFERENCES teams (id),
     created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (account_id, team_id)
+    UNIQUE (account_id, team_id),
+    FOREIGN KEY (account_id, role) REFERENCES accounts (id, role) ON UPDATE CASCADE
 );
 CREATE INDEX team_memberships_team_idx ON team_memberships (team_id);
 
@@ -62,54 +88,24 @@ CREATE INDEX team_membership_history_account_idx ON team_membership_history (acc
 CREATE TRIGGER team_membership_history_append_only
     BEFORE UPDATE OR DELETE ON team_membership_history
     FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+CREATE TRIGGER team_membership_history_no_truncate
+    BEFORE TRUNCATE ON team_membership_history
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
 
--- Row locks (FOR SHARE) serialise these checks against concurrent role changes.
-CREATE FUNCTION check_team_membership() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION record_team_membership() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    IF TG_OP <> 'INSERT' THEN
         INSERT INTO team_membership_history (account_id, team_id, action) VALUES (OLD.account_id, OLD.team_id, 'left');
     END IF;
-    IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        IF (SELECT role FROM accounts WHERE id = NEW.account_id FOR SHARE) = 'admin' THEN
-            RAISE EXCEPTION 'admin accounts cannot be team members' USING ERRCODE = 'check_violation';
-        END IF;
+    IF TG_OP <> 'DELETE' THEN
         INSERT INTO team_membership_history (account_id, team_id, action) VALUES (NEW.account_id, NEW.team_id, 'joined');
-        RETURN NEW;
     END IF;
-    RETURN OLD;
+    RETURN NULL;
 END $$;
-CREATE TRIGGER team_memberships_check
-    BEFORE INSERT OR UPDATE OR DELETE ON team_memberships
-    FOR EACH ROW EXECUTE FUNCTION check_team_membership();
-
-CREATE FUNCTION check_team_lead() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.lead_account_id IS NOT NULL
-       AND (SELECT role FROM accounts WHERE id = NEW.lead_account_id FOR SHARE) IS DISTINCT FROM 'team_lead' THEN
-        RAISE EXCEPTION 'team lead must have the team_lead role' USING ERRCODE = 'check_violation';
-    END IF;
-    RETURN NEW;
-END $$;
-CREATE TRIGGER teams_lead_check
-    BEFORE INSERT OR UPDATE OF lead_account_id ON teams
-    FOR EACH ROW EXECUTE FUNCTION check_team_lead();
-
-CREATE FUNCTION check_account_update() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.id <> OLD.id THEN
-        RAISE EXCEPTION 'account ids are immutable' USING ERRCODE = 'restrict_violation';
-    END IF;
-    IF NEW.role = 'admin' AND EXISTS (SELECT 1 FROM team_memberships WHERE account_id = NEW.id) THEN
-        RAISE EXCEPTION 'team members cannot become admins' USING ERRCODE = 'check_violation';
-    END IF;
-    IF NEW.role <> 'team_lead' AND EXISTS (SELECT 1 FROM teams WHERE lead_account_id = NEW.id) THEN
-        RAISE EXCEPTION 'a current team lead must keep the team_lead role' USING ERRCODE = 'check_violation';
-    END IF;
-    RETURN NEW;
-END $$;
-CREATE TRIGGER accounts_update_check
-    BEFORE UPDATE ON accounts
-    FOR EACH ROW EXECUTE FUNCTION check_account_update();
+-- Role cascades update only `role`, so they are not recorded as moves.
+CREATE TRIGGER team_memberships_history
+    AFTER INSERT OR DELETE OR UPDATE OF team_id ON team_memberships
+    FOR EACH ROW EXECUTE FUNCTION record_team_membership();
 
 CREATE TABLE categories (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -193,3 +189,6 @@ CREATE INDEX ticket_events_ticket_idx ON ticket_events (ticket_id, id);
 CREATE TRIGGER ticket_events_append_only
     BEFORE UPDATE OR DELETE ON ticket_events
     FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+CREATE TRIGGER ticket_events_no_truncate
+    BEFORE TRUNCATE ON ticket_events
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();

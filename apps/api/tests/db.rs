@@ -88,7 +88,7 @@ async fn team(pool: &PgPool, name: &str, lead: Uuid) -> Result<Uuid, sqlx::Error
 }
 
 async fn join(conn: &mut PgConnection, account: Uuid, team: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO team_memberships (account_id, team_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO team_memberships (account_id, role, team_id) SELECT id, role, $2 FROM accounts WHERE id = $1")
         .bind(account)
         .bind(team)
         .execute(conn)
@@ -120,10 +120,26 @@ async fn usernames_are_unique_after_normalization_but_emails_may_repeat() {
     account(&t.pool, "Alice", "admin").await;
     // Same email, different username: a separate account.
     account(&t.pool, "alice.ops", "operator").await;
-    let dup = sqlx::query("INSERT INTO accounts (username, display_name, email, password_hash) VALUES (' alice ', 'A', 'a@example.com', 'x')")
-        .execute(&t.pool)
-        .await;
-    assert_eq!(sql_state(dup), "23505");
+    let insert = |name: &'static str| {
+        sqlx::query("INSERT INTO accounts (username, display_name, email, password_hash) VALUES ($1, 'A', 'a@example.com', 'x')")
+            .bind(name)
+            .execute(&t.pool)
+    };
+    assert_eq!(sql_state(insert("ALICE").await), "23505");
+    // Whitespace (including NFKC-folded no-break space) and control characters are rejected.
+    for bad in [
+        " alice",
+        "al ice",
+        "al\u{a0}ice",
+        "al\tice",
+        "al\u{7}ice",
+        "",
+    ] {
+        assert_eq!(sql_state(insert(bad).await), "23514", "{bad:?}");
+    }
+    // Precomposed and decomposed forms are the same username.
+    insert("Jos\u{e9}").await.unwrap();
+    assert_eq!(sql_state(insert("Jose\u{301}").await), "23505");
 }
 
 #[tokio::test]
@@ -135,7 +151,7 @@ async fn admins_cannot_be_members_or_leads() {
 
     let mut conn = t.pool.acquire().await.unwrap();
     assert_eq!(sql_state(join(&mut conn, admin, team_id).await), "23514");
-    assert_eq!(sql_state(team(&t.pool, "Admins", admin).await), "23514");
+    assert_eq!(sql_state(team(&t.pool, "Admins", admin).await), "23503");
     // A member cannot be promoted to admin while in a team.
     let promote = sqlx::query("UPDATE accounts SET role = 'admin' WHERE id = $1")
         .bind(lead)
@@ -176,6 +192,10 @@ async fn an_account_belongs_to_at_most_one_team_and_history_is_kept() {
         .execute(&t.pool)
         .await;
     assert_eq!(sql_state(rewrite), "23001");
+    let truncate = sqlx::query("TRUNCATE team_membership_history")
+        .execute(&t.pool)
+        .await;
+    assert_eq!(sql_state(truncate), "23001");
 }
 
 #[tokio::test]
@@ -202,7 +222,7 @@ async fn team_leads_are_unique_members_with_the_team_lead_role() {
         .bind(team_id)
         .execute(&t.pool)
         .await;
-    assert_eq!(sql_state(set_lead), "23514");
+    assert_eq!(sql_state(set_lead), "23503");
 
     // A current lead cannot be demoted.
     let demote = sqlx::query("UPDATE accounts SET role = 'operator' WHERE id = $1")
@@ -210,6 +230,15 @@ async fn team_leads_are_unique_members_with_the_team_lead_role() {
         .execute(&t.pool)
         .await;
     assert_eq!(sql_state(demote), "23514");
+
+    // A current lead of an active team cannot be deactivated; other members can.
+    let deactivate = |id: Uuid| {
+        sqlx::query("UPDATE accounts SET is_active = false WHERE id = $1")
+            .bind(id)
+            .execute(&t.pool)
+    };
+    assert_eq!(sql_state(deactivate(lead).await), "23514");
+    deactivate(op).await.unwrap();
 
     // The lead must be a member of the same team (checked at commit).
     let other_lead = account(&t.pool, "other", "team_lead").await;
@@ -271,6 +300,12 @@ async fn tickets_keep_stable_references_events_and_foreign_keys() {
         .execute(&t.pool)
         .await;
     assert_eq!(sql_state(rewrite), "23001");
+    for truncate in ["TRUNCATE ticket_events", "TRUNCATE tickets CASCADE"] {
+        assert_eq!(
+            sql_state(sqlx::query(truncate).execute(&t.pool).await),
+            "23001"
+        );
+    }
     let bad_status = sqlx::query("UPDATE tickets SET status = 'resolved' WHERE id = $1")
         .bind(ticket)
         .execute(&t.pool)
@@ -330,4 +365,46 @@ async fn tickets_keep_stable_references_events_and_foreign_keys() {
     .await
     .unwrap();
     assert_eq!((messages, stored_reference), (0, reference));
+}
+
+#[tokio::test]
+async fn concurrent_membership_and_admin_promotion_cannot_both_commit() {
+    let Some(t) = TestDb::new().await else { return };
+    let lead = account(&t.pool, "lead", "team_lead").await;
+    let team_id = team(&t.pool, "Desk", lead).await.unwrap();
+    let op = account(&t.pool, "op", "operator").await;
+
+    // Both transactions take their REPEATABLE READ snapshot before either writes.
+    let mut joiner = t.pool.begin().await.unwrap();
+    let mut promoter = t.pool.begin().await.unwrap();
+    for tx in [&mut joiner, &mut promoter] {
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut **tx)
+            .await
+            .unwrap();
+        sqlx::query("SELECT count(*) FROM team_memberships")
+            .execute(&mut **tx)
+            .await
+            .unwrap();
+    }
+    join(&mut joiner, op, team_id).await.unwrap();
+    // The promotion blocks on the membership's key lock until the join commits.
+    let promotion = tokio::spawn(async move {
+        sqlx::query("UPDATE accounts SET role = 'admin' WHERE id = $1")
+            .bind(op)
+            .execute(&mut *promoter)
+            .await?;
+        promoter.commit().await
+    });
+    joiner.commit().await.unwrap();
+    let state = sql_state(promotion.await.unwrap());
+    assert!(["40001", "23514"].contains(&state.as_str()), "{state}");
+
+    let admin_members: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM team_memberships m JOIN accounts a ON a.id = m.account_id WHERE a.role = 'admin'",
+    )
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(admin_members, 0);
 }

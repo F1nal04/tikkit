@@ -31,18 +31,31 @@ language; translations map them to display text.
 
 Rust validates and authorizes first; these constraints are the backstop.
 
-- `accounts.username_normalized` (`lower(btrim(username))`) is unique; `email`
-  is not. Account IDs cannot be updated.
+- `accounts.username_normalized` (`lower(normalize(btrim(username), NFKC))`)
+  is unique, so `Alice`/`alice` and precomposed/decomposed `José` collide.
+  Usernames may not contain whitespace or control characters (checked after
+  NFKC folding). `email` is not unique. Account IDs cannot be updated.
 - `team_memberships.account_id` is the primary key: one team per account.
+- Role rules are declarative, so they hold under any isolation level: members
+  and leads carry a copy of the account's role (and leads its `is_active`) via
+  foreign keys to `accounts (id, role[, is_active])` with `ON UPDATE CASCADE`.
+  A role or activation change cascades into those rows, where CHECKs reject it:
+  `team_memberships.role <> 'admin'`, `teams.lead_role = 'team_lead'`, and an
+  active team's lead must be active. Foreign-key row locks make a concurrent
+  role change and membership/appointment conflict instead of both committing.
+  Insert memberships with the account's current role
+  (`INSERT ... SELECT id, role, $team FROM accounts WHERE id = $account`).
 - `teams.lead_account_id` is unique (one team per lead) and a deferred foreign
   key to `team_memberships (account_id, team_id)`, so the lead is a member of
-  that same team. An active team (`archived_at IS NULL`) must have a lead.
-- Triggers reject admins as members or leads, leads without the `team_lead`
-  role, promoting a member to admin, and demoting a current lead. Role checks
-  take row locks so concurrent role changes and appointments serialise.
+  that same team. `lead_account_id`, `lead_role` and `lead_active` are NULL
+  together (`MATCH FULL`), which only an archived team may do.
+- So: admins can be neither members nor leads; members cannot be promoted to
+  admin; a current lead cannot be demoted or deactivated. These surface as
+  `23514`/`23503` here; Rust validates first and returns friendly errors (#11).
 - Team creation is atomic: insert the team (with its lead) and the lead's
   membership in one transaction; the deferred key is checked at commit.
 - Ticket assignees are members of the ticket's team (deferred composite key)
   and never the requester.
-- `ticket_events` and `team_membership_history` are append-only (updates and
-  deletes raise `restrict_violation`). Membership history is written by trigger.
+- `ticket_events` and `team_membership_history` are append-only: UPDATE,
+  DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
+  by trigger on join, leave, and team change.

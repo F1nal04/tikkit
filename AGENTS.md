@@ -4,7 +4,7 @@ Tikkit is a self-hosted IT ticketing system (one organization per deployment) wi
 
 ## Commands
 
-Requires Bun ≥ 1.4.3, Node ≥ 22.17, Rust ≥ 1.85 (with rustfmt + clippy). Run from the repo root; Turbo fans out to `apps/*`.
+Requires Bun ≥ 1.4.3, Node ≥ 22.17, Rust ≥ 1.88 (with rustfmt + clippy). Run from the repo root; Turbo fans out to `apps/*`.
 
 ```sh
 bun install

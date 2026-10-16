@@ -45,3 +45,11 @@ or can't be fixed yet. Remove the exception when the issue closes.
 - Secrets: for a confirmed false positive, add a `.gitleaks.toml` allowlist
   entry for that exact path or pattern, with the issue link. Never allowlist a
   whole fixture directory.
+
+Current exceptions:
+
+- `RUSTSEC-2023-0071` (`rsa` 0.9, Marvin timing attack, no fix released): locked
+  only as an optional dependency of `sqlx-mysql` through `sqlx-macros-core`. It is
+  never compiled for the Postgres-only API (`cargo tree -e all -i rsa --target all`
+  is empty). Remove the exception when sqlx drops it from the lockfile or `rsa`
+  publishes a fix. No tracking issue filed yet.

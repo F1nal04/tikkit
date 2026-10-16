@@ -6,7 +6,7 @@ A Bun + Turborepo workspace with a SvelteKit frontend and Rust backend.
 
 - Bun 1.4.3 or newer
 - Node.js 22.17 or newer
-- Rust 1.85 or newer, including Cargo, rustfmt, and Clippy
+- Rust 1.88 or newer, including Cargo, rustfmt, and Clippy
 
 ## Getting started
 
