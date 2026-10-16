@@ -12,7 +12,8 @@ bun run dev                          # web on :3000, API on 127.0.0.1:3001
 bun run dev --filter=@tikkit/web     # or --filter=@tikkit/api
 bun run check                        # tsc --noEmit, cargo fmt --check, cargo clippy -D warnings
 bun run build                        # vite build (Nitro) + cargo build --release
-bun run test                         # cargo test (frontend has no tests yet)
+bun run test                         # web (Vitest) + API (cargo test) suites
+bun run test:e2e                     # Playwright browser tests; needs PostgreSQL (see below)
 bun run start                        # run production builds (build first)
 ```
 
@@ -24,6 +25,20 @@ cargo test -p tikkit-api health_returns_json_status   # single test by name
 cargo clippy --locked --all-targets -- -D warnings     # must be warning-free; CI fails otherwise
 cargo fmt --all
 ```
+
+Web tests (from `apps/web`, or prefix with `bun run --cwd apps/web`):
+
+```sh
+bun run test                                  # Vitest + Testing Library (jsdom), src/**/*.test.tsx
+bun run test -- src/components/LandingPage    # single file
+bun run test:watch
+bun run test:e2e                              # Playwright, e2e/*.spec.ts
+bun run test:e2e -- --grep smoke --headed     # filter / watch the browser
+```
+
+- Component tests use `vitest.config.ts`, which loads only the React plugin (not TanStack Start/Nitro). Render presentational components directly (keep route files thin, e.g. `routes/index.tsx` → `components/LandingPage.tsx`) and stub `fetch` with `vi.stubGlobal`.
+- `test:e2e` starts the Rust API (`cargo run --locked`) and the web dev server itself, reusing ones already running on :3001/:3000 unless `CI` is set. Each run creates a disposable database `tikkit_e2e_<timestamp>_<random>` on `E2E_DATABASE_URL` (default `postgres://tikkit:tikkit@127.0.0.1:5432/postgres`), passes it to the API as `DATABASE_URL`, and drops it in global teardown; leftovers older than 6h from crashed runs are swept on the next run. Playwright starts `webServer` before `globalSetup`, so creation happens in the API server command (`e2e/support/create-database.ts`). Failures keep a trace and screenshot in `apps/web/test-results/`; the HTML report goes to `apps/web/playwright-report/`. Browser tests never need an AI key.
+- `@playwright/test` is pinned to an exact version; install browsers with `bunx playwright install chromium` (CI: `--with-deps`). `PW_CHROMIUM_PATH` overrides the Chromium executable.
 
 Notes:
 

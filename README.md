@@ -38,9 +38,25 @@ turbo.json  Workspace tasks and caching
 bun run dev       # Run both applications
 bun run build     # Build the frontend and release API binary
 bun run check     # TypeScript, rustfmt, and Clippy
-bun run test      # Rust API tests
+bun run test      # Web component tests (Vitest) and Rust API tests
+bun run test:e2e  # Browser tests (Playwright); requires PostgreSQL
 bun run start     # Run both production builds (build first)
 ```
+
+### Browser tests
+
+`bun run test:e2e` starts the API and the web dev server (or reuses ones
+already running locally), runs the Playwright suite in `apps/web/e2e/` with
+Chromium, and stops them again. Install the browser once with
+`bunx playwright install chromium` from `apps/web`.
+
+Each run uses its own throwaway PostgreSQL database, created on the server in
+`E2E_DATABASE_URL` (default
+`postgres://tikkit:tikkit@127.0.0.1:5432/postgres`; the role needs
+`CREATEDB`) and dropped afterwards. On failure, traces and screenshots are
+written to `apps/web/test-results/` and an HTML report to
+`apps/web/playwright-report/` (`bunx playwright show-report` from
+`apps/web`). No AI provider key is needed.
 
 Use `bun run dev --filter=@tikkit/web` or `--filter=@tikkit/api` to run a
 single application. Cargo commands also work from the repository root.
