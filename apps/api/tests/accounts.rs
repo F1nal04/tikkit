@@ -355,6 +355,19 @@ async fn deactivation_ends_sessions_and_keeps_history() {
     .await
     .unwrap();
     let session = login(&app, "dave", PASSWORD).await.session();
+    let reset_link = reset_token(&t, dave, "1 hour").await;
+    // Invitations issued by an Admin who is later deactivated stop working.
+    fixtures::account(&t.pool, Role::Admin, "issuer").await;
+    let issuer = login(&app, "issuer", PASSWORD).await;
+    let issuer_id = issuer.body["id"].as_str().unwrap().to_owned();
+    let (_, orphan) = invite(&app, &issuer.session(), json!({})).await;
+    let path = format!("/api/accounts/{issuer_id}/deactivate");
+    let r = call(&app, "POST", &path, None, Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        accept(&app, accept_body(&orphan, "orphan")).await.code(),
+        "invitation_invalid"
+    );
 
     let deactivate = format!("/api/accounts/{dave}/deactivate");
     let r = call(&app, "POST", &deactivate, None, Some(&session)).await;
@@ -373,6 +386,8 @@ async fn deactivation_ends_sessions_and_keeps_history() {
         login(&app, "dave", PASSWORD).await.code(),
         "invalid_credentials"
     );
+    let r = reset(&app, &reset_link, NEW_PASSWORD).await;
+    assert_eq!(r.code(), "reset_token_invalid");
     let list = call(&app, "GET", "/api/accounts", None, Some(&admin)).await;
     let row = list.body["items"]
         .as_array()
@@ -393,12 +408,18 @@ async fn deactivation_ends_sessions_and_keeps_history() {
     let reactivate = format!("/api/accounts/{dave}/reactivate");
     let r = call(&app, "POST", &reactivate, None, Some(&admin)).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        reset(&app, &reset_link, NEW_PASSWORD).await.code(),
+        "reset_token_invalid",
+        "reactivation does not revive recovery links"
+    );
     assert_eq!(login(&app, "dave", PASSWORD).await.status, StatusCode::OK);
     let types = audit_types(&t).await;
     for kind in [
         "account_deactivated",
         "account_reactivated",
         "session_revoked",
+        "invitation_revoked",
     ] {
         assert!(types.contains(&kind.into()), "{kind}");
     }
@@ -459,5 +480,62 @@ async fn the_last_active_admin_cannot_be_deactivated_even_concurrently() {
             [StatusCode::NO_CONTENT, StatusCode::CONFLICT],
             "round {round}"
         );
+    }
+}
+
+#[tokio::test]
+async fn recovery_sends_at_most_one_link_per_cooldown() {
+    let Some(t) = TestDb::new().await else { return };
+    let app = test_app(&t.pool);
+    fixtures::account(&t.pool, Role::User, "victim").await;
+    let request = || {
+        let app = app.clone();
+        async move {
+            let body = json!({ "username": "victim" });
+            call(&app, "POST", "/api/auth/recovery", Some(body), None)
+                .await
+                .status
+        }
+    };
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM password_resets")
+            .fetch_one(&t.pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(request().await, StatusCode::ACCEPTED);
+    assert_eq!(
+        request().await,
+        StatusCode::ACCEPTED,
+        "same answer while cooling down"
+    );
+    assert_eq!(count().await, 1);
+    sqlx::query("UPDATE password_resets SET created_at = now() - interval '16 minutes'")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    request().await;
+    assert_eq!(count().await, 2);
+}
+
+#[tokio::test]
+async fn token_endpoints_are_rate_limited_per_ip() {
+    let Some(t) = TestDb::new().await else { return };
+    let app = test_app(&t.pool);
+    for (path, body) in [
+        ("/api/invitations/lookup", json!({ "token": "guess" })),
+        (
+            "/api/auth/recovery/reset",
+            json!({ "token": "guess", "new_password": NEW_PASSWORD }),
+        ),
+    ] {
+        for _ in 0..10 {
+            let r = call(&app, "POST", path, Some(body.clone()), None).await;
+            assert_eq!(r.status, StatusCode::GONE, "{path}");
+        }
+        let r = call(&app, "POST", path, Some(body.clone()), None).await;
+        assert_eq!(r.code(), "rate_limited", "{path}");
+        let r = call_from(&app, "POST", path, Some(body), None, [10, 1, 1, 1]).await;
+        assert_eq!(r.status, StatusCode::GONE, "other clients are unaffected");
     }
 }
