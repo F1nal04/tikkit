@@ -446,6 +446,80 @@
           }
         }
       },
+      "AdminAccount": {
+        "type": "object",
+        "description": "Admin view of an account. Accounts are identified by `id` and `username`;\n`email` is contact information only and may be shared by several accounts.",
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "email",
+          "role",
+          "specialization",
+          "language",
+          "status",
+          "team",
+          "createdAt",
+          "updatedAt",
+          "deactivatedAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deactivatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "specialization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display designation (Specialists). Grants no access."
+          },
+          "status": {
+            "$ref": "#/components/schemas/AccountStatus"
+          },
+          "team": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccountTeam"
+              }
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "AssignmentQueue": {
         "type": "string",
         "description": "Where a ticket currently is, as shown to its requester.",
@@ -487,6 +561,10 @@
           "conflict",
           "invalid_credentials",
           "setup_completed",
+          "last_admin",
+          "team_membership_conflict",
+          "team_lead_required",
+          "team_has_open_tickets",
           "payload_too_large",
           "rate_limited",
           "internal_error",
@@ -764,6 +842,131 @@
             "description": "`true` until the initial Admin has been created. Never becomes `true`\nagain."
           }
         }
+      },
+      "Team": {
+        "type": "object",
+        "description": "Admin view of a team with its designated lead and current members\n(ordered by username). Archived teams have no lead and no members.",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "lead",
+          "members",
+          "createdAt",
+          "archivedAt"
+        ],
+        "properties": {
+          "archivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lead": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TeamPerson"
+              }
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TeamStatus"
+          }
+        }
+      },
+      "TeamMember": {
+        "type": "object",
+        "description": "A current member (including the lead).",
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "role",
+          "specialization",
+          "status",
+          "isLead",
+          "memberSince"
+        ],
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "isLead": {
+            "type": "boolean"
+          },
+          "memberSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "specialization": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AccountStatus"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "TeamPerson": {
+        "type": "object",
+        "description": "Compact account reference (lead).",
+        "required": [
+          "id",
+          "username",
+          "displayName"
+        ],
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "TeamStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "archived"
+        ]
       }
     },
     "securitySchemes": {

@@ -20,6 +20,10 @@ use utoipa::{
 };
 
 use crate::{
+    admin::{
+        accounts::AdminAccount,
+        teams::{Team, TeamMember, TeamPerson, TeamStatus},
+    },
     auth::{
         account::{Account, AccountTeam, SessionInfo},
         handlers::{LoginRequest, SetupRequest, SetupStatus},
@@ -69,6 +73,11 @@ use crate::{
         PublicTeam,
         PublicAssignee,
         PublicTicketAssignment,
+        AdminAccount,
+        Team,
+        TeamStatus,
+        TeamPerson,
+        TeamMember,
     )),
     tags(
         (name = "system", description = "Health and API metadata"),

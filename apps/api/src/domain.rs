@@ -40,6 +40,19 @@ impl Role {
     pub fn parse(value: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|role| role.as_str() == value)
     }
+
+    /// Roles that do help-desk work (general queue access): everything but
+    /// User.
+    pub const fn is_staff(self) -> bool {
+        !matches!(self, Self::User)
+    }
+
+    /// Roles that may belong to a team and claim or be assigned team
+    /// tickets. Admins are excluded: they act through the Admin role, never
+    /// through team membership (spec "Roles and team structure").
+    pub const fn is_team_eligible(self) -> bool {
+        matches!(self, Self::Operator | Self::Specialist | Self::TeamLead)
+    }
 }
 
 impl fmt::Display for Role {

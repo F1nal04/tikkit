@@ -54,6 +54,16 @@ pub enum ErrorCode {
     InvalidCredentials,
     /// 409: first setup has already been completed; it never reopens.
     SetupCompleted,
+    /// 409: the change would leave the organization without an active Admin.
+    LastAdmin,
+    /// 409: the account's team membership conflicts with the change (it
+    /// already belongs to a team, or Admin/User roles cannot hold one).
+    TeamMembershipConflict,
+    /// 409: the account is the designated lead of an active team; appoint a
+    /// replacement (or archive the team) first.
+    TeamLeadRequired,
+    /// 409: the team still has open tickets; transfer them first.
+    TeamHasOpenTickets,
     /// 413: request body exceeds the limit.
     PayloadTooLarge,
     /// 429: too many requests.
@@ -73,7 +83,12 @@ impl ErrorCode {
             Self::Forbidden | Self::CsrfRejected => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::Conflict | Self::SetupCompleted => StatusCode::CONFLICT,
+            Self::Conflict
+            | Self::SetupCompleted
+            | Self::LastAdmin
+            | Self::TeamMembershipConflict
+            | Self::TeamLeadRequired
+            | Self::TeamHasOpenTickets => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
@@ -94,6 +109,12 @@ impl ErrorCode {
             Self::Conflict => "The request conflicts with the current state.",
             Self::InvalidCredentials => "The username or password is incorrect.",
             Self::SetupCompleted => "First setup has already been completed.",
+            Self::LastAdmin => "The last active Admin cannot be demoted or deactivated.",
+            Self::TeamMembershipConflict => {
+                "The account's team membership does not allow this change."
+            }
+            Self::TeamLeadRequired => "The account leads a team. Appoint a replacement lead first.",
+            Self::TeamHasOpenTickets => "The team still has open tickets.",
             Self::PayloadTooLarge => "The request body is too large.",
             Self::RateLimited => "Too many requests. Try again later.",
             Self::InternalError => "An unexpected error occurred.",

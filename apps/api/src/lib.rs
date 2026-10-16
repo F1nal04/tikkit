@@ -18,6 +18,10 @@ pub mod openapi;
 pub mod pagination;
 pub mod request_id;
 
+// Permissions (issue #11): pure role/permission matrix and admin directory services.
+pub mod admin;
+pub mod authz;
+
 pub use config::Config;
 pub use state::AppState;
 
