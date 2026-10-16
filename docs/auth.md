@@ -59,7 +59,8 @@ set custom headers without a CORS preflight, which the API never allows; the
 ## Abuse protection
 
 Login, setup, password change, invitation acceptance, and recovery requests allow 10 attempts per minute per client IP and
-then 5 per minute per username, else `429 rate_limited` with `Retry-After`.
+then 5 per minute per username; the token endpoints (`/api/invitations/lookup`,
+`/api/auth/recovery/reset`) allow 10 per minute per client IP, else `429 rate_limited` with `Retry-After`.
 The IP is checked first, so a blocked client creates no further keys. Counters
 are in memory (one API process) and capped at 10,000 live keys; beyond that new
 keys are refused for the window. The IP is the socket peer, or the last
@@ -95,7 +96,10 @@ After setup, accounts are created only from Admin invitations.
   `PUBLIC_ORIGIN/reset-password/<token>?lang=<account language>` goes to that
   account's stored email. Email is never used to find an account.
 - Tokens: 32 random bytes, SHA-256 stored, bound to one account ID, valid **one
-  hour**, single use. Rate limited like login (`recovery` scope).
+  hour**, single use. Rate limited like login (`recovery` scope), and at most
+  one link per account every 15 minutes: while an unused link younger than that
+  exists, further requests still answer `202` but create and send nothing. The
+  cooldown query runs for unknown usernames too, so both paths take similar time.
 - `POST /api/auth/recovery/reset {token, new_password}` sets the password, marks
   every unused recovery token of the account used, and revokes all of its
   sessions (only that account's, even when others share the email). A rejected
@@ -113,7 +117,8 @@ tokens, links, addresses, or SMTP credentials. (ponytail: no outbox or retries
 yet; the notification outbox and Admin-managed SMTP settings replace this.)
 
 The `/invite/...` and `/reset-password/...` page URLs do contain the token; keep
-reverse-proxy access logs off or path-redacted.
+reverse-proxy access logs off or path-redacted. Every web page is served with
+`Referrer-Policy: no-referrer` so the token never leaks through `Referer`.
 
 ## Profile
 
@@ -126,7 +131,10 @@ request picks one with `?lang=`.
 `POST /api/accounts/{id}/deactivate` and `.../reactivate` (Admin) flip
 `accounts.is_active`. Deactivation revokes all the account's sessions in the same
 transaction; login is refused and every request re-checks `is_active`. Tickets,
-messages, and audit history keep referring to the account. The transaction first
+messages, and audit history keep referring to the account. The same transaction
+marks the account's unused recovery tokens used (reactivation does not revive
+them) and revokes the pending invitations it issued (`invitation_revoked`,
+reason `issuer_deactivated`). The transaction first
 locks every active Admin row (`accounts::lock_active_admins`), so the last active
 Admin cannot be deactivated (`409 last_active_admin`), even by two Admins at once.
 Deactivating an active team's lead is `409 conflict`. `GET /api/accounts` (Admin)
