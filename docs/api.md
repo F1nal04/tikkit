@@ -56,6 +56,10 @@ Every non-2xx response has this body (`application/json`):
 | `invalid_credentials` | 401 | Login failed (same for unknown user, wrong password, deactivated account) |
 | `conflict` | 409 | Conflicts with current state (e.g. a concurrent update won) |
 | `setup_completed` | 409 | First setup has already been completed |
+| `last_admin` | 409 | Would demote or deactivate the last active Admin |
+| `team_membership_conflict` | 409 | Team membership conflicts with the change (second team, Admin/User with a membership) |
+| `team_lead_required` | 409 | The account is a team's designated lead; appoint a replacement first |
+| `team_has_open_tickets` | 409 | The team still has open tickets (archiving) |
 | `payload_too_large` | 413 | Body exceeds the limit |
 | `rate_limited` | 429 | Too many requests (`Retry-After` may be set) |
 | `internal_error` | 500 | Unexpected failure; details only in the log under the request id |
