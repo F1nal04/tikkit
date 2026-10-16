@@ -21,7 +21,8 @@ export const handle: Handle = ({ event, resolve }) => {
     transformPageChunk: ({ html }) => {
       if (done || !html.includes('<html')) return html
       done = true
-      return html.replace('%lang%', locale)
+      // The layout load may switch to the signed-in account's language.
+      return html.replace('%lang%', event.locals.locale)
     },
   })
 }

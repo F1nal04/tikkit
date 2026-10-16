@@ -45,4 +45,5 @@
     {#if error}<p id="login-error" class="error" role="alert">{error}</p>{/if}
     <button type="submit" disabled={busy}>{t.signIn}</button>
   </form>
+  <p><a href="/forgot-password">{t.forgotPassword}</a></p>
 </main>
