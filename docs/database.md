@@ -105,8 +105,15 @@ screenshot volume.
 | `ticket_events` | Immutable state-transition and ticket history with actor provenance. Append-only. |
 | `audit_events` | Attributable audit trail (actor, action, target, metadata, request ID). Append-only. |
 
-Sessions, invitations, conditional fields, AI attempts and notification
-outboxes are added by later migrations with their features.
+Migration 0002 adds `sessions` (issue #9): one row per login session with
+the SHA-256 digest of the current token (`token_hash`), the previous token's
+digest during the 60 s rotation grace period, `last_seen_at` (idle timeout),
+`expires_at` (absolute expiry), and `revoked_at`/`revoke_reason`. Revocation
+is final (a trigger rejects updates to revoked rows) and session ownership is
+immutable. Raw tokens are never stored.
+
+Invitations, conditional fields, AI attempts and notification outboxes are
+added by later migrations with their features.
 
 ### Ticket states and AI-solved records
 

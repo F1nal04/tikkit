@@ -26,7 +26,7 @@ Neither contains usable secrets.
 | `PUBLIC_ORIGIN` | dev: `http://localhost:3000` | **Required in production, https only.** Origin users open (no path). Used for CSRF origin checks and links. |
 | `TIKKIT_ENCRYPTION_KEY` | – | **Required in production.** Base64 of exactly 32 random bytes (`openssl rand -base64 32`). Encrypts stored AI/SMTP credentials. Placeholders and low-entropy keys are rejected. Optional in development, validated if set. |
 | `SHUTDOWN_TIMEOUT_SECS` | `20` | Drain time for in-flight requests after SIGTERM/Ctrl+C (1–300). |
-| `TRUST_PROXY_HEADERS` | `false` | Trust `X-Forwarded-*` from the reverse proxy. Only enable when clients cannot reach the API directly. |
+| `TRUST_PROXY_HEADERS` | `false` | Trust `X-Forwarded-*` from the reverse proxy (the right-most `X-Forwarded-For` entry becomes the client address for login/setup rate limits and audit metadata). Only enable when clients cannot reach the API directly. |
 | `RUST_LOG` | `info,sqlx=warn` | [`tracing` filter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html). |
 | `TEST_DATABASE_URL` | `postgres://tikkit:tikkit@127.0.0.1:5432/postgres` | Tests only: server where integration tests create disposable databases. |
 

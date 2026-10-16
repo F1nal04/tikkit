@@ -53,7 +53,9 @@ Every non-2xx response has this body (`application/json`):
 | `csrf_rejected` | 403 | Unsafe method failed the origin check |
 | `not_found` | 404 | Unknown route, malformed identifier (e.g. bad UUID), missing resource, **or a resource the caller may not see** |
 | `method_not_allowed` | 405 | Route exists, method does not (`Allow` header lists methods) |
+| `invalid_credentials` | 401 | Login failed (same for unknown user, wrong password, deactivated account) |
 | `conflict` | 409 | Conflicts with current state (e.g. a concurrent update won) |
+| `setup_completed` | 409 | First setup has already been completed |
 | `payload_too_large` | 413 | Body exceeds the limit |
 | `rate_limited` | 429 | Too many requests (`Retry-After` may be set) |
 | `internal_error` | 500 | Unexpected failure; details only in the log under the request id |
@@ -81,6 +83,112 @@ and `#[serde(rename_all = "camelCase")]`. Validation uses the `Validate`
 trait with the `FieldErrors` builder. `ApiError::internal(detail)` logs
 `detail` with the request id and returns only `internal_error`; never pass
 secrets.
+
+## Authentication and sessions
+
+Tikkit uses server-side sessions referenced by an HttpOnly cookie. There is
+no token-based or public sign-up API: the first Admin is created by first
+setup, every later account by an invitation.
+
+### Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/setup` | `{"setupRequired": bool}`. Public. |
+| `POST /api/v1/setup` | `{username, displayName, email, password, language}` → `201 SessionInfo` + cookie. One-time: afterwards `409 setup_completed`, also after restarts. Concurrent attempts: exactly one wins. |
+| `POST /api/v1/auth/login` | `{username, password}` → `200 SessionInfo` + cookie, or `401 invalid_credentials`. |
+| `POST /api/v1/auth/logout` | Revokes the presented session and clears the cookie. Always `204`. |
+| `GET /api/v1/auth/session` | `200 SessionInfo` or `401 unauthenticated`. The source of truth for the signed-in UI state (e.g. after a refresh); the UI must not persist its own copy. |
+
+`SessionInfo` is `{account: Account, expiresAt}` where `expiresAt` is the
+absolute expiry. Responses that carry session data or change the cookie
+send `Cache-Control: no-store`.
+
+- **Usernames** are trimmed, NFKC-normalized and lowercased for login and
+  uniqueness; after normalization they must be 3–32 characters of
+  `[a-z0-9._-]`. The trimmed input is kept for display. A taken username is
+  `422` with field code `already_taken`.
+- **Email** is a contact address only: not unique, never used to find or
+  merge accounts.
+- **Passwords**: 12–256 characters and not equal to the username (field
+  codes `too_short`, `too_long`, `invalid_value` with
+  `params.reason = "matches_username"`). Stored as argon2id (OWASP
+  parameters m=19 MiB, t=2, p=1).
+- **Login failures** (unknown username, wrong password, deactivated account)
+  all return the identical `401 invalid_credentials` and take comparable
+  time (unknown accounts are verified against a dummy hash).
+
+### Cookie
+
+| | Development | Production (`TIKKIT_ENV=production`) |
+|---|---|---|
+| Name | `tikkit_session` | `__Host-tikkit_session` |
+| Attributes | `HttpOnly; SameSite=Lax; Path=/; Max-Age=<remaining lifetime>` | same plus `Secure` |
+
+The value is 32 random bytes (base64url); the database stores only its
+SHA-256 digest.
+
+### Session lifetime
+
+- **Idle timeout** 12 hours without an authenticated request.
+- **Absolute lifetime** 7 days from login, whatever the activity.
+- **Rotation**: the first request at least 15 minutes after the last
+  rotation receives a new cookie. The previous token stays valid for 60
+  seconds so requests already in flight succeed; concurrent requests rotate
+  only once.
+- **Login always creates a new session.** A session cookie sent with the
+  login request is revoked (session-fixation defence). Other sessions of
+  the account (other devices) are unaffected.
+- **Revocation** is server-side and final: logout, deactivation (the
+  account is reloaded on every request, so a deactivated account's sessions
+  are rejected and revoked at once), and later password change/reset.
+  Role changes apply on the next request.
+- An expired, revoked or unknown cookie gets `401 unauthenticated` and a
+  `Set-Cookie` that clears it.
+
+### CSRF rule for API clients
+
+Every unsafe request (`POST`, `PUT`, `PATCH`, `DELETE`) under `/api/v1/`
+must send `Origin` equal to `PUBLIC_ORIGIN`; when `Origin` is absent the
+origin of `Referer` must match instead. Anything else (no header, another
+origin, `Origin: null`) is rejected with `403 csrf_rejected` before the
+handler runs. Browsers send `Origin` automatically for same-origin `fetch`;
+scripts and other non-browser clients must set it explicitly, for example
+`curl -H 'Origin: https://help.example.com' …`. `GET`/`HEAD` and the
+health probes are not checked.
+
+### Rate limits
+
+In-memory token buckets per API process (reset on restart):
+
+| Scope | Budget |
+|---|---|
+| Login, per client address | 50 per minute |
+| Login, per client address and normalized username | 10 per minute |
+| First setup, per client address | 10 per minute |
+
+Exceeding a budget returns `429 rate_limited` with `Retry-After` (seconds).
+The client address is the TCP peer, or with `TRUST_PROXY_HEADERS=true` the
+right-most `X-Forwarded-For` entry (set it only behind a reverse proxy that
+overwrites that header).
+
+### Audit events
+
+Recorded in `audit_events` (never containing passwords or tokens):
+`setup.completed`, `auth.login_succeeded`, `auth.login_failed` (anonymous
+actor; metadata holds the normalized username attempted, a reason and the
+client address), `auth.logout`, `auth.session_revoked`.
+
+### In Rust
+
+- `auth::Actor` extractor (`account_id`, `username`, `display_name`,
+  `role`, `language`, `session_id`) for handlers that require a session;
+  `Option<Actor>` for optional authentication.
+- `auth::SessionCookies` to set/clear the cookie from a handler.
+- `auth::sessions::{create, revoke_all_for_account, rotate_now}` and
+  `auth::account::load_account` for invitation acceptance, recovery and
+  password changes.
+- `crate::domain::{Role, AccountStatus}` are the shared enums.
 
 ## Pagination, ordering and filtering
 
