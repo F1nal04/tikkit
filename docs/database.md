@@ -150,7 +150,12 @@ In addition to Rust validation, the schema rejects (also under concurrency):
   current members, **checked at commit** (deferred constraint trigger). Create
   a team and its lead in one transaction; replace a lead by ending the old
   lead row and inserting the new one in one transaction;
-- rewriting or deleting membership history (rows may only be ended);
+- rewriting or deleting membership history (rows may only be ended).
+  Write membership periods with `clock_timestamp()` (`started_at` on insert,
+  `greatest(clock_timestamp(), started_at)` for `ended_at`), not `now()`:
+  `now()` is the *transaction start*, so a transaction that waited on a lock
+  (e.g. a concurrent lead replacement) would otherwise try to end a row
+  "before" it started and violate `team_memberships_period`;
 - assignees who are not current members of the ticket's team, and assigning
   a ticket to its own requester;
 - changes to submitted intake (`subject`, `description`, requested priority,

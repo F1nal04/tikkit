@@ -194,6 +194,29 @@ client address), `auth.logout`, `auth.session_revoked`.
   password changes.
 - `crate::domain::{Role, AccountStatus}` are the shared enums.
 
+## Administration (Admin only)
+
+Every endpoint requires a session (`401 unauthenticated`) and the Admin role
+(`403 forbidden`). The actor is reloaded per request, so a demoted Admin
+loses access with its next request. Rules and error codes:
+[permissions.md](permissions.md).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/admin/accounts?role&status&q&limit&cursor` | `Page<AdminAccount>`, ordered by normalized username. Invalid `role`/`status` → 422. |
+| `GET /api/v1/admin/accounts/{id}` | `AdminAccount` |
+| `PATCH /api/v1/admin/accounts/{id}/role` | `{role, specialization?, replacementLeadId?}` → `AdminAccount`. Unknown roles → 400. `409 last_admin` / `team_membership_conflict` / `team_lead_required`. |
+| `GET /api/v1/admin/teams?includeArchived` | `Team[]` (not paginated) |
+| `POST /api/v1/admin/teams` | `{name, leadAccountId}` → `201 Team` (team and lead atomically) |
+| `GET /api/v1/admin/teams/{id}` | `Team` |
+| `PATCH /api/v1/admin/teams/{id}` | `{name}` → `Team` |
+| `POST /api/v1/admin/teams/{id}/lead` | `{accountId, previousLead?: "keep_as_member" (default) \| "remove_from_team"}` → `Team` |
+| `POST /api/v1/admin/teams/{id}/members` | `{accountId}` → `Team` |
+| `DELETE /api/v1/admin/teams/{id}/members/{accountId}` | → `Team`; the lead cannot be removed (`409 team_lead_required`) |
+| `POST /api/v1/admin/teams/{id}/archive` | → `Team`; `409 team_has_open_tickets` while open tickets remain |
+
+Deactivation/reactivation and invitations are separate endpoints (#10).
+
 ## Pagination, ordering and filtering
 
 - Query parameters: `limit` (integer 1–100, default 25) and `cursor` (opaque

@@ -18,10 +18,11 @@ take effect right away.
   its events or its exports. Staff list, search, count and export queries must
   apply `authz::staff_ticket_scope` in SQL before pagination. A test checks
   that this scope matches `can_view_ticket_as_staff` row by row.
-- The `/api/v1/admin/...` HTTP endpoints get wired once the `Actor` extractor
-  from #9 lands. They call `authz::can_manage_org` and then the
-  `admin::accounts` / `admin::teams` services. Each service checks again,
-  inside its own transaction, that the actor is an active Admin.
+- The `/api/v1/admin/...` endpoints (`admin::http`, listed in
+  [api.md](api.md#administration-admin-only)) take the `Actor` extractor,
+  call `authz::can_manage_org` and then the `admin::accounts` /
+  `admin::teams` services. Each service checks again, inside its own
+  transaction, that the actor is an active Admin.
 - Denials map to HTTP like this:
 
   | `Denial`        | HTTP | code                | Meaning                                                      |
