@@ -192,6 +192,29 @@ export interface components {
             name: string;
         };
         /**
+         * @description Admin view of an account. Accounts are identified by `id` and `username`;
+         *     `email` is contact information only and may be shared by several accounts.
+         */
+        AdminAccount: {
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            deactivatedAt: string | null;
+            displayName: string;
+            email: string;
+            /** Format: uuid */
+            id: string;
+            language: components["schemas"]["Language"];
+            role: components["schemas"]["Role"];
+            /** @description Display designation (Specialists). Grants no access. */
+            specialization: string | null;
+            status: components["schemas"]["AccountStatus"];
+            team: null | components["schemas"]["AccountTeam"];
+            /** Format: date-time */
+            updatedAt: string;
+            username: string;
+        };
+        /**
          * @description Where a ticket currently is, as shown to its requester.
          * @enum {string}
          */
@@ -211,7 +234,7 @@ export interface components {
          *     `apps/web/src/api/errors.ts` (the TypeScript build fails until you do).
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "validation_failed" | "unauthenticated" | "forbidden" | "csrf_rejected" | "not_found" | "method_not_allowed" | "conflict" | "invalid_credentials" | "setup_completed" | "payload_too_large" | "rate_limited" | "internal_error" | "service_unavailable";
+        ErrorCode: "invalid_request" | "validation_failed" | "unauthenticated" | "forbidden" | "csrf_rejected" | "not_found" | "method_not_allowed" | "conflict" | "invalid_credentials" | "setup_completed" | "last_admin" | "team_membership_conflict" | "team_lead_required" | "team_has_open_tickets" | "payload_too_large" | "rate_limited" | "internal_error" | "service_unavailable";
         ErrorDetail: {
             code: components["schemas"]["ErrorCode"];
             fields?: components["schemas"]["FieldError"][];
@@ -321,6 +344,44 @@ export interface components {
              */
             setupRequired: boolean;
         };
+        /**
+         * @description Admin view of a team with its designated lead and current members
+         *     (ordered by username). Archived teams have no lead and no members.
+         */
+        Team: {
+            /** Format: date-time */
+            archivedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            id: string;
+            lead: null | components["schemas"]["TeamPerson"];
+            members: components["schemas"]["TeamMember"][];
+            name: string;
+            status: components["schemas"]["TeamStatus"];
+        };
+        /** @description A current member (including the lead). */
+        TeamMember: {
+            displayName: string;
+            /** Format: uuid */
+            id: string;
+            isLead: boolean;
+            /** Format: date-time */
+            memberSince: string;
+            role: components["schemas"]["Role"];
+            specialization: string | null;
+            status: components["schemas"]["AccountStatus"];
+            username: string;
+        };
+        /** @description Compact account reference (lead). */
+        TeamPerson: {
+            displayName: string;
+            /** Format: uuid */
+            id: string;
+            username: string;
+        };
+        /** @enum {string} */
+        TeamStatus: "active" | "archived";
     };
     responses: never;
     parameters: never;
