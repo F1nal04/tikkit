@@ -277,6 +277,11 @@ impl From<sqlx::Error> for ApiError {
         if constraint == Some("last_active_admin") {
             return Self::LastActiveAdmin;
         }
+        // Serialization failure / deadlock: a concurrent change won; the client may retry.
+        let code = error.as_database_error().and_then(|db| db.code());
+        if matches!(code.as_deref(), Some("40001" | "40P01")) {
+            return Self::Conflict;
+        }
         tracing::error!(%error, "database error");
         Self::Internal
     }
