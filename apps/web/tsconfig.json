@@ -4,6 +4,6 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src", "*"],
+  "include": ["src", "e2e", "*"],
   "exclude": ["src/service-worker"]
 }

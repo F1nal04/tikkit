@@ -76,7 +76,8 @@ turbo.json  Workspace tasks and caching
 bun run dev       # Run both applications
 bun run build     # Build the frontend and release API binary
 bun run check     # svelte-check, rustfmt, and Clippy
-bun run test      # Vitest component tests and Rust API tests
+bun run test      # Vitest and Rust API tests (see docs/testing.md)
+bun run test:e2e  # Playwright browser tests
 bun run start     # Run both production builds (build first)
 ```
 
