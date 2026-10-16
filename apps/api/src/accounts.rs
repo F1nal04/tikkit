@@ -22,6 +22,7 @@ use crate::{
         create_session, end_presented_session, hash_password, ident, ident_str, load_account,
         new_token, revoke_all_sessions, signed_in, token_hash, unique_violation, valid_email,
     },
+    authz::{Permission, require_permission},
 };
 
 const INVITATION_DEFAULT_HOURS: u32 = 168;
@@ -29,14 +30,6 @@ const INVITATION_MAX_HOURS: u32 = 720;
 const RESET_TTL: &str = "interval '1 hour'";
 /// At most one recovery email per account in this window, whatever the rate limits allow.
 const RESET_COOLDOWN: &str = "interval '15 minutes'";
-
-// ponytail: ad-hoc Admin gate; replace with #11's shared role helpers.
-fn require_admin(user: &CurrentUser) -> Result<(), ApiError> {
-    match user.role() {
-        Role::Admin => Ok(()),
-        _ => Err(ApiError::Forbidden),
-    }
-}
 
 fn field_error(field: &str, code: &'static str) -> ApiError {
     ApiError::Validation(FieldErrors::from([(field.into(), vec![code])]))
@@ -124,7 +117,7 @@ pub async fn create_invitation(
     user: CurrentUser,
     Json(body): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
-    require_admin(&user)?;
+    require_permission(&user, Permission::ManageAccounts)?;
     let role = body.role.unwrap_or(Role::User);
     let language = body.language.unwrap_or(Language::En);
     let hours = body.expires_in_hours.unwrap_or(INVITATION_DEFAULT_HOURS);
@@ -220,7 +213,7 @@ pub async fn list_invitations(
     user: CurrentUser,
     Query(page): Query<Pagination>,
 ) -> Result<Json<Page<Invitation>>, ApiError> {
-    require_admin(&user)?;
+    require_permission(&user, Permission::ManageAccounts)?;
     let cursor = page.cursor()?;
     let rows: Vec<InvitationRow> = sqlx::query_as(&format!(
         "SELECT {INVITATION_COLUMNS} FROM invitations
@@ -259,7 +252,7 @@ pub async fn revoke_invitation(
     user: CurrentUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(&user)?;
+    require_permission(&user, Permission::ManageAccounts)?;
     let mut tx = state.pool.begin().await?;
     let revoked = sqlx::query(
         "UPDATE invitations SET revoked_at = now()
@@ -668,7 +661,7 @@ pub async fn list_accounts(
     user: CurrentUser,
     Query(page): Query<Pagination>,
 ) -> Result<Json<Page<AccountSummary>>, ApiError> {
-    require_admin(&user)?;
+    require_permission(&user, Permission::ManageAccounts)?;
     let cursor = page.cursor()?;
     type Row = (
         Uuid,
@@ -713,17 +706,6 @@ pub async fn list_accounts(
     })))
 }
 
-/// Locks every active Admin row and returns their IDs. Call inside the
-/// transaction that deactivates or demotes an account: concurrent callers
-/// serialize here, so two racing changes cannot both remove "another" Admin.
-pub async fn lock_active_admins(tx: &mut sqlx::PgConnection) -> Result<Vec<Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT id FROM accounts WHERE role = 'admin' AND is_active ORDER BY id FOR UPDATE",
-    )
-    .fetch_all(tx)
-    .await
-}
-
 /// Deactivates an account (Admin only): login is refused and all its sessions
 /// end immediately. Tickets and audit history are kept. The last active Admin
 /// cannot be deactivated.
@@ -734,7 +716,7 @@ pub async fn lock_active_admins(tx: &mut sqlx::PgConnection) -> Result<Vec<Uuid>
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden` (not an Admin)", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
-        (status = 409, description = "`last_active_admin`, or `conflict` (the account leads an active team)", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`last_active_admin`, `active_team_lead`, or `conflict` (concurrent change)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn deactivate_account(
     State(state): State<AppState>,
@@ -767,24 +749,16 @@ async fn set_active(
     id: Uuid,
     active: bool,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(user)?;
+    require_permission(user, Permission::ManageAccounts)?;
     let mut tx = state.pool.begin().await?;
-    if !active && lock_active_admins(&mut tx).await? == [id] {
-        return Err(ApiError::LastActiveAdmin);
-    }
+    // The last-admin and team-lead rules are database constraints that `?` maps
+    // to `last_active_admin` / `active_team_lead`. Do not pre-lock Admin rows here.
     let changed =
         sqlx::query("UPDATE accounts SET is_active = $2 WHERE id = $1 AND is_active <> $2")
             .bind(id)
             .bind(active)
             .execute(&mut *tx)
-            .await
-            .map_err(|e| match &e {
-                // ponytail: an active team's lead; #11 adds a specific error for this.
-                sqlx::Error::Database(d) if d.code().as_deref() == Some("23514") => {
-                    ApiError::Conflict
-                }
-                _ => e.into(),
-            })?
+            .await?
             .rows_affected();
     if changed == 0 {
         let exists: bool =
