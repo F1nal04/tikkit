@@ -66,6 +66,8 @@ const SERVER_CODES: Record<ServerErrorCode, true> = {
   not_found: true,
   method_not_allowed: true,
   conflict: true,
+  invalid_credentials: true,
+  setup_completed: true,
   payload_too_large: true,
   rate_limited: true,
   internal_error: true,
