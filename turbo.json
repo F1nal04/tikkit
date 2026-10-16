@@ -9,7 +9,10 @@
     "check": {},
     "test": {},
     "start": { "cache": false, "persistent": true },
-    "@tikkit/web#check": { "dependsOn": ["build"] },
+    "@tikkit/web#check": {
+      "dependsOn": ["build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/api/openapi.json"]
+    },
     "test:e2e": {
       "cache": false,
       "passThroughEnv": ["CI", "E2E_DATABASE_URL", "PW_CHROMIUM_PATH", "PLAYWRIGHT_*", "CARGO_*", "RUSTUP_*"]

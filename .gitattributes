@@ -1,0 +1,5 @@
+# Generated API contract files: collapsed in diffs, excluded from language stats.
+# Regenerate instead of editing (see docs/api.md).
+apps/api/openapi.json linguist-generated=true
+apps/web/src/api/schema.gen.ts linguist-generated=true
+apps/web/src/routeTree.gen.ts linguist-generated=true

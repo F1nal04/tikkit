@@ -1,0 +1,10 @@
+{
+  "name": "tikkit-api-codegen",
+  "private": true,
+  "type": "module",
+  "description": "Isolated install for openapi-typescript, which needs the TypeScript 6 JS API while the app uses TypeScript 7. Deliberately not a workspace member so its tsc binary cannot shadow the app's.",
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "6.0.3"
+  }
+}

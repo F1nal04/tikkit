@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { LandingPage } from './LandingPage'
 
@@ -16,6 +16,13 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 const never = () => new Promise<Response>(() => {})
+
+// The typed client calls fetch with a Request object.
+function requestOf(fetchMock: ReturnType<typeof stubFetch>, index = 0) {
+  const [input, init] = fetchMock.mock.calls[index] ?? []
+  if (input instanceof Request) return { url: input.url, signal: input.signal }
+  return { url: String(input), signal: init?.signal ?? undefined }
+}
 
 describe('LandingPage', () => {
   it('shows a pending status while the health check is in flight', () => {
@@ -36,7 +43,9 @@ describe('LandingPage', () => {
       'connected',
     )
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/health')
+    expect(new URL(requestOf(fetchMock).url, 'http://localhost').pathname).toBe(
+      '/api/health',
+    )
   })
 
   it('reports the API as unavailable on a non-2xx response', async () => {
@@ -64,11 +73,12 @@ describe('LandingPage', () => {
     expect(await screen.findByText('Rust API unavailable')).toBeInTheDocument()
   })
 
-  it('aborts the health check when unmounted', () => {
+  it('aborts the health check when unmounted', async () => {
     const fetchMock = stubFetch(never)
     const { unmount } = render(<LandingPage />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
 
-    const signal = fetchMock.mock.calls[0]?.[1]?.signal
+    const { signal } = requestOf(fetchMock)
     expect(signal?.aborted).toBe(false)
     unmount()
     expect(signal?.aborted).toBe(true)

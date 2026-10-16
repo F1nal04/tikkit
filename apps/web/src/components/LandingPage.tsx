@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { api, unwrap } from '../api/client'
 
 export type ApiHealth = 'checking' | 'connected' | 'unavailable'
 
@@ -6,15 +7,6 @@ const statusText: Record<ApiHealth, string> = {
   checking: 'Checking API…',
   connected: 'Rust API connected',
   unavailable: 'Rust API unavailable',
-}
-
-function isHealthy(data: unknown): boolean {
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    'status' in data &&
-    data.status === 'ok'
-  )
 }
 
 export function useApiHealth(): ApiHealth {
@@ -25,12 +17,10 @@ export function useApiHealth(): ApiHealth {
 
     async function checkHealth() {
       try {
-        const response = await fetch('/api/health', {
-          signal: controller.signal,
-        })
-        if (!response.ok) throw new Error('Health check failed')
-        const data: unknown = await response.json()
-        setHealth(isHealthy(data) ? 'connected' : 'unavailable')
+        const data = await unwrap(
+          api.GET('/api/health', { signal: controller.signal }),
+        )
+        setHealth(data.status === 'ok' ? 'connected' : 'unavailable')
       } catch {
         if (!controller.signal.aborted) setHealth('unavailable')
       }

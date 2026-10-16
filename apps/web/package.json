@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite --port 3000 --strictPort",
     "build": "vite build",
-    "check": "tsc --noEmit",
+    "check": "bun run check:api && tsc --noEmit",
+    "generate:api": "bun install --cwd tools/api-codegen --frozen-lockfile --silent && node tools/api-codegen/generate.mjs",
+    "check:api": "bun install --cwd tools/api-codegen --frozen-lockfile --silent && node tools/api-codegen/generate.mjs --check",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -14,6 +16,7 @@
   "dependencies": {
     "@tanstack/react-router": "^1.169.2",
     "@tanstack/react-start": "^1.169.2",
+    "openapi-fetch": "^0.17.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
