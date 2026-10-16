@@ -27,7 +27,11 @@ language; translations map them to display text.
 - `attachments.mime_type`: `image/png`, `image/jpeg`, `image/webp`
 - `team_membership_history.action`: `joined`, `left`
 - `audit_events.event_type`: `setup_completed`, `login_succeeded`,
-  `login_failed`, `logout`, `password_changed`, `session_revoked`
+  `login_failed`, `logout`, `password_changed`, `session_revoked`,
+  `invitation_created`, `invitation_revoked`, `invitation_accepted`,
+  `recovery_requested`, `recovery_completed`, `profile_updated`,
+  `account_deactivated`, `account_reactivated`
+- `invitations.role`: an `account_role`; `invitations.language`: `en`, `de`
 
 ## Invariants enforced by the database
 
@@ -61,6 +65,9 @@ Rust validates and authorizes first; these constraints are the backstop.
 - `organization` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`);
   `setup_completed_at` closes first-admin setup.
 - `sessions.token_hash` (SHA-256 of the cookie token) is unique; tokens are never stored.
+  The same holds for `invitations.token_hash` and `password_resets.token_hash`.
+- An invitation is accepted (`accepted_at` and the created `account_id`, unique,
+  set together) or revoked, never both.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change.

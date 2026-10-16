@@ -48,7 +48,10 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | State-changing request without `X-Requested-With: tikkit` | 403 | `csrf_rejected` |
 | Too many login/setup attempts (`Retry-After` header set) | 429 | `rate_limited` |
 | First-admin setup already done | 409 | `setup_already_completed` |
-| Signed in, action not allowed on a visible resource | 403 | `forbidden` |
+| Invitation token unknown, expired, revoked, or used | 410 | `invitation_invalid` |
+| Password reset token unknown, expired, or used | 410 | `reset_token_invalid` |
+| Change would leave no active Admin | 409 | `last_active_admin` |
+| Signed in, action not allowed on a visible resource (including Admin-only endpoints) | 403 | `forbidden` |
 | Unknown route, or a resource the caller may not see | 404 | `not_found` |
 | Wrong method | 405 | `method_not_allowed` |
 | Stale or concurrent update lost | 409 | `conflict` |

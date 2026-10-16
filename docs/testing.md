@@ -44,8 +44,11 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
   one email on purpose and sign in with `fixtures::PASSWORD`
   (stored as the precomputed Argon2id `fixtures::PASSWORD_HASH`)
 - `fixtures::bootstrap_admin(&pool)` (first-setup Admin; also marks setup
-  complete) and `fixtures::invited_account(&pool, role, "name")` (a plain
-  insert until the invitation flow exists)
+  complete) and `fixtures::invited_account(&pool, role, "name")` (accepts a real
+  invitation over HTTP; needs an active Admin first, e.g. `bootstrap_admin`)
+- `call(&app, method, path, body, cookie) -> Reply` (`status`, `cookie`, `body`,
+  `.code()`, `.session()`), `call_from(..., ip)` for another client IP, and
+  `login(&app, username, password)`
 - `fixtures::team(&pool, "Name", lead) -> Result<Uuid>`: team plus lead
   membership in one transaction; `fixtures::member(&pool, team, account)`
 
