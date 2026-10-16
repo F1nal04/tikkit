@@ -95,6 +95,10 @@ async fn the_last_active_admin_cannot_be_demoted_or_deactivated() {
         let err = exec(pool, sql, first).await.unwrap_err();
         assert!(matches!(ApiError::from(err), ApiError::LastActiveAdmin));
     }
+    let err = exec(pool, "DELETE FROM accounts WHERE id = $1", first)
+        .await
+        .unwrap_err();
+    assert!(matches!(ApiError::from(err), ApiError::LastActiveAdmin));
     // Other updates of the last Admin are fine.
     exec(
         pool,
@@ -169,7 +173,8 @@ async fn concurrent_removal_of_the_last_two_admins_has_one_winner() {
         });
         // Wait until the second transaction is blocked behind the first.
         while !sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted)",
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted AND locktype = 'advisory'
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))",
         )
         .fetch_one(pool)
         .await
