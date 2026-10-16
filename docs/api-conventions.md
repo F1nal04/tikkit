@@ -55,6 +55,7 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Unknown route, or a resource the caller may not see | 404 | `not_found` |
 | Wrong method | 405 | `method_not_allowed` |
 | Stale or concurrent update lost | 409 | `conflict` |
+| Demoting or deactivating the last active Admin | 409 | `last_active_admin` |
 | Anything unexpected (logged with the request ID) | 500 | `internal` |
 
 **Denied access does not reveal existence.** When the caller may not see a
@@ -62,7 +63,9 @@ resource at all (another requester's ticket, a ticket dispatched to another
 team, an AI-solved record for operators), respond `not_found`, identical to a
 missing resource. Use `forbidden` only when the caller can already see the
 resource but may not perform the action (e.g. a read-only team member replying
-to a claimed ticket).
+to a claimed ticket). Capability denials (a role that can never do this, e.g. a
+User calling an Admin endpoint) are `forbidden` too. The matrix and helpers are
+in [authorization.md](authorization.md).
 
 In Rust: return `api::ApiError`, extract with `api::Json`, `api::Path`,
 `api::Query` (not the raw axum extractors) so rejections use the envelope.
