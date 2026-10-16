@@ -9,7 +9,7 @@ use axum::{
     extract::{FromRequest, FromRequestParts, Request, rejection::BytesRejection},
     http::{
         HeaderMap, StatusCode,
-        header::{CONTENT_LENGTH, CONTENT_TYPE},
+        header::{CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER},
     },
     middleware::Next,
     response::{IntoResponse, Response},
@@ -35,6 +35,13 @@ pub enum ApiError {
     BadRequest,
     UnsupportedMediaType,
     Unauthorized,
+    /// Unknown username, wrong password, or deactivated account: deliberately indistinguishable.
+    InvalidCredentials,
+    /// State-changing request without the `X-Requested-With: tikkit` header.
+    CsrfRejected,
+    /// Too many attempts; retry after this many seconds.
+    RateLimited(u64),
+    SetupAlreadyCompleted,
     /// Only where the resource's existence is already known to the caller;
     /// otherwise deny with `NotFound` so existence does not leak.
     Forbidden,
@@ -57,6 +64,10 @@ pub enum ErrorCode {
     BadRequest,
     UnsupportedMediaType,
     Unauthorized,
+    InvalidCredentials,
+    CsrfRejected,
+    RateLimited,
+    SetupAlreadyCompleted,
     Forbidden,
     NotFound,
     MethodNotAllowed,
@@ -131,6 +142,26 @@ impl ApiError {
                 ErrorCode::Unauthorized,
                 "Sign in to continue.",
             ),
+            InvalidCredentials => (
+                StatusCode::UNAUTHORIZED,
+                ErrorCode::InvalidCredentials,
+                "The username or password is incorrect.",
+            ),
+            CsrfRejected => (
+                StatusCode::FORBIDDEN,
+                ErrorCode::CsrfRejected,
+                "Missing the X-Requested-With: tikkit header.",
+            ),
+            RateLimited(_) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorCode::RateLimited,
+                "Too many attempts; try again later.",
+            ),
+            SetupAlreadyCompleted => (
+                StatusCode::CONFLICT,
+                ErrorCode::SetupAlreadyCompleted,
+                "Setup has already been completed.",
+            ),
             Forbidden => (
                 StatusCode::FORBIDDEN,
                 ErrorCode::Forbidden,
@@ -198,7 +229,12 @@ impl ApiError {
             message: message.into(),
             details,
         };
-        (status, axum::Json(ErrorEnvelope { error, request_id })).into_response()
+        let mut response =
+            (status, axum::Json(ErrorEnvelope { error, request_id })).into_response();
+        if let Self::RateLimited(secs) = self {
+            response.headers_mut().insert(RETRY_AFTER, (*secs).into());
+        }
+        response
     }
 }
 
@@ -442,6 +478,12 @@ pub enum Role {
     Specialist,
     TeamLead,
     Admin,
+}
+
+impl Role {
+    pub fn is_staff(self) -> bool {
+        self != Self::User
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

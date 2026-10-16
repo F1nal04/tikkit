@@ -8,3 +8,10 @@ rust-version = "1.88"
 version = "0.1.0"
 publish = false
 license = "Apache-2.0"
+
+# Argon2 is unusably slow unoptimized; keep debug builds and tests fast.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
