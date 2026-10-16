@@ -1,0 +1,10 @@
+# cargo-audit exceptions. Policy: docs/security-scanning.md.
+[advisories]
+ignore = [
+    # rsa 0.9 Marvin timing attack, no fixed release. It is only in Cargo.lock as an
+    # optional dependency of sqlx-mysql (via sqlx-macros-core); neither is ever
+    # compiled for this Postgres-only build (`cargo tree -e all -i rsa --target all`
+    # prints nothing). Remove when sqlx stops locking it or rsa ships a fix.
+    # https://rustsec.org/advisories/RUSTSEC-2023-0071
+    "RUSTSEC-2023-0071",
+]
