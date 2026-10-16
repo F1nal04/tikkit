@@ -12,7 +12,8 @@ bun run dev                          # web on :3000, API on 127.0.0.1:3001
 bun run dev --filter=@tikkit/web     # or --filter=@tikkit/api
 bun run check                        # svelte-kit sync + svelte-check, cargo fmt --check, cargo clippy -D warnings
 bun run build                        # vite build (adapter-node) + cargo build --release
-bun run test                         # vitest (web) + cargo test
+bun run test                         # vitest (web, api-client) + cargo test
+bun run test:e2e                     # Playwright browser tests (builds first; separate from test)
 bun run start                        # run production builds (build first)
 ```
 
@@ -41,7 +42,7 @@ Notes:
 - Migrations are `apps/api/migrations/NNNN_*.sql`, embedded via `sqlx::migrate!` and applied at API startup. Never edit an applied migration. Use runtime `sqlx::query`/`query_as`, not the compile-time `query!` macros.
 - Runtime config is validated in `apps/api/src/config.rs` (all errors at once, values never printed); document new variables in `docs/configuration.md` and `.env.example`. `/api/health` is liveness, `/api/ready` checks DB + migrations.
 - API conventions (error envelope, extractors, pagination, OpenAPI): `docs/api-conventions.md`. Use `api::{Json, Path, Query, ApiError}`, not raw axum extractors. After changing routes/schemas run `cargo run --locked -p tikkit-api --bin openapi > apps/api/openapi.json` and `bun run --cwd packages/api-client generate`; tests/checks fail on drift.
-- DB integration tests live in `apps/api/tests/`; each test gets its own database and is skipped (passes) without `TEST_DATABASE_URL`/`DATABASE_URL`.
+- Testing layers, commands, and fixtures: `docs/testing.md`. DB integration tests live in `apps/api/tests/`; use `mod support;` for `TestDb` (own database per test, skipped without `TEST_DATABASE_URL`/`DATABASE_URL`), `test_app`, and the five-role `fixtures`. First-time browser setup: `cd apps/web && bunx playwright install --with-deps chromium`.
 - The dev server does not hot-reload Rust. Restart `bun run dev` (or just the api filter) after backend changes.
 
 ## Architecture
