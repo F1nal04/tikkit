@@ -63,6 +63,14 @@ single application. Cargo commands also work from the repository root.
 `check` builds the frontend first so route types are generated on a fresh clone.
 Turbo caches frontend builds; Cargo manages Rust compilation caching.
 
+## CI
+
+`.github/workflows/ci.yml` runs one `checks` job on every pull request to
+`main` and every push to `main`: `bun install --frozen-lockfile`, then
+`bun run check`, `bun run build`, and `bun run test` against a PostgreSQL 16
+service, then the browser tests. `checks` is the required status check. See
+[`docs/ci.md`](docs/ci.md) for pinned versions and branch-protection setup.
+
 ## Production
 
 The frontend runs with Node.js from `apps/web/.output/server/index.mjs`

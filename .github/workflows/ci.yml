@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Rust toolchain used by CI. Bump deliberately (Dependabot does not track it).
+  RUST_TOOLCHAIN: 1.97.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The job id `checks` is the required status check. Do not rename it
+  # without updating branch protection (see docs/ci.md).
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tikkit
+          POSTGRES_PASSWORD: tikkit
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tikkit -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          # Reads the root package.json `packageManager` field (bun@x.y.z).
+          bun-version-file: package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Must satisfy root package.json engines.node (>=22.12.0).
+          node-version: 22.22.0
+          package-manager-cache: false
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check
+        run: bun run check
+
+      - name: Build
+        run: bun run build
+
+      - name: Test
+        run: bun run test
+        env:
+          TEST_DATABASE_URL: postgres://tikkit:tikkit@127.0.0.1:5432/postgres
+
+      - name: Install Playwright browser
+        working-directory: apps/web
+        run: bunx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: bun run test:e2e
+        env:
+          E2E_DATABASE_URL: postgres://tikkit:tikkit@127.0.0.1:5432/postgres
+
+      - name: Upload browser test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-results
+          path: |
+            apps/web/test-results/
+            apps/web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
