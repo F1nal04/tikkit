@@ -27,7 +27,7 @@
 //! but gains no lead authority (authorization uses the leadership flag), so
 //! there is still exactly one lead; the Admin may later change its role.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use time::OffsetDateTime;
@@ -100,7 +100,8 @@ pub struct Team {
 }
 
 /// What happens to the previous lead when leadership is handed over.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum PreviousLead {
     /// Stays on the team as a plain member.
     #[default]

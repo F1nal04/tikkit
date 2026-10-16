@@ -1,7 +1,7 @@
 //! Admin directory services (issue #11): accounts/roles and teams/leadership.
 //!
-//! These are database-backed services without HTTP wiring; the `/api/v1/admin`
-//! endpoints call them once the authenticated `Actor` extractor (#9) exists.
+//! Database-backed services; [`http`] exposes them under `/api/v1/admin`
+//! (Admin only, via the `Actor` extractor).
 //! Each mutation:
 //!
 //! - runs in one transaction and re-checks inside it that `actor_id` is an
@@ -19,6 +19,7 @@
 
 pub mod accounts;
 pub mod audit;
+pub mod http;
 pub mod teams;
 
 use sqlx::PgConnection;

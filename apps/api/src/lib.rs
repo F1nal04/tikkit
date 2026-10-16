@@ -32,6 +32,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/health/ready", get(health::ready))
         .route("/api/openapi.json", get(openapi::serve))
         .merge(auth::handlers::routes())
+        .merge(admin::http::router())
         // Session cookie slot (innermost), then the CSRF origin check, so a
         // rejected request never touches sessions.
         .layer(middleware::from_fn_with_state(

@@ -22,7 +22,11 @@ use utoipa::{
 use crate::{
     admin::{
         accounts::AdminAccount,
-        teams::{Team, TeamMember, TeamPerson, TeamStatus},
+        http::{
+            AddMemberRequest, ChangeRoleRequest, CreateTeamRequest, RenameTeamRequest,
+            ReplaceLeadRequest,
+        },
+        teams::{PreviousLead, Team, TeamMember, TeamPerson, TeamStatus},
     },
     auth::{
         account::{Account, AccountTeam, SessionInfo},
@@ -52,6 +56,17 @@ use crate::{
         crate::auth::handlers::login,
         crate::auth::handlers::logout,
         crate::auth::handlers::current_session,
+        crate::admin::http::list_accounts,
+        crate::admin::http::get_account,
+        crate::admin::http::change_role,
+        crate::admin::http::list_teams,
+        crate::admin::http::create_team,
+        crate::admin::http::get_team,
+        crate::admin::http::rename_team,
+        crate::admin::http::replace_lead,
+        crate::admin::http::add_member,
+        crate::admin::http::remove_member,
+        crate::admin::http::archive_team,
     ),
     modifiers(&SessionCookieScheme),
     components(schemas(
@@ -75,6 +90,12 @@ use crate::{
         PublicTicketAssignment,
         AdminAccount,
         Team,
+        PreviousLead,
+        ChangeRoleRequest,
+        CreateTeamRequest,
+        RenameTeamRequest,
+        ReplaceLeadRequest,
+        AddMemberRequest,
         TeamStatus,
         TeamPerson,
         TeamMember,
@@ -82,6 +103,7 @@ use crate::{
     tags(
         (name = "system", description = "Health and API metadata"),
         (name = "setup", description = "One-time first setup (initial Admin)"),
+        (name = "admin", description = "Organization administration (Admin only): account directory, roles, teams and leadership."),
         (name = "auth", description = "Login, logout and the current session. Unsafe requests need `Origin: <PUBLIC_ORIGIN>`."),
     )
 )]
