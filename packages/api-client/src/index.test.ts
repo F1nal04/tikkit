@@ -60,7 +60,7 @@ test("network failures become ApiError with status 0", async () => {
 });
 
 test("sends the CSRF header on every request", async () => {
-  const { calls, fetch } = stub(204, "");
+  const { calls, fetch } = stub(200, "{}");
   await createClient({ fetch }).request("post", "/api/auth/logout");
   expect((calls[0].init.headers as Record<string, string>)["x-requested-with"]).toBe("tikkit");
 });

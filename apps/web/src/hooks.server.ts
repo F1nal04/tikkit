@@ -31,10 +31,15 @@ export const handleFetch: HandleFetch = async ({ event, request, fetch }) => {
   const url = new URL(request.url)
   if (url.origin !== event.url.origin || !url.pathname.startsWith('/api/')) return fetch(request)
   request = new Request(new URL(url.pathname + url.search, API_ORIGIN), request)
-  for (const name of ['cookie', 'accept-language', 'x-forwarded-for']) {
+  for (const name of ['accept-language', 'x-forwarded-for']) {
     const value = event.request.headers.get(name)
     if (value) request.headers.set(name, value)
   }
+  // Only the session cookie, read through `event.cookies` so fetches later in the
+  // same render use a token rotated (and relayed below) by an earlier one.
+  const session = event.cookies.get('tikkit_session')
+  if (session) request.headers.set('cookie', `tikkit_session=${session}`)
+  else request.headers.delete('cookie')
   const response = await fetch(request)
   // SvelteKit drops Set-Cookie from cross-origin fetches; relay a rotated session to the browser.
   for (const header of response.headers.getSetCookie()) relaySessionCookie(event.cookies, header)
