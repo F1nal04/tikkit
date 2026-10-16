@@ -14,6 +14,9 @@ END $$;
 
 CREATE FUNCTION check_last_active_admin() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.role = 'admin' AND NEW.is_active THEN
+        RETURN NEW;
+    END IF;
     PERFORM 1 FROM accounts
         WHERE role = 'admin' AND is_active AND id <> OLD.id
         FOR UPDATE;
@@ -21,15 +24,20 @@ BEGIN
         RAISE EXCEPTION 'the last active admin cannot be demoted or deactivated'
             USING ERRCODE = 'check_violation', CONSTRAINT = 'last_active_admin';
     END IF;
-    RETURN NEW;
+    RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END;
 END $$;
 
 CREATE TRIGGER accounts_lock_admin_set
-    BEFORE UPDATE OF role, is_active ON accounts
+    BEFORE UPDATE OF role, is_active OR DELETE ON accounts
     FOR EACH STATEMENT EXECUTE FUNCTION lock_admin_set();
 
 CREATE TRIGGER accounts_last_active_admin
-    BEFORE UPDATE OF role, is_active ON accounts
+    BEFORE UPDATE OF role, is_active OR DELETE ON accounts
     FOR EACH ROW
-    WHEN (OLD.role = 'admin' AND OLD.is_active AND NOT (NEW.role = 'admin' AND NEW.is_active))
+    WHEN (OLD.role = 'admin' AND OLD.is_active)
     EXECUTE FUNCTION check_last_active_admin();
+
+-- Team members are staff: Users and Admins cannot join (extends the admin-only CHECK).
+-- Role changes cascade here, so demoting a member to User requires leaving the team first.
+ALTER TABLE team_memberships ADD CONSTRAINT team_memberships_role_staff
+    CHECK (role NOT IN ('admin', 'user'));

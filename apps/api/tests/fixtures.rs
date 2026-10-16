@@ -49,7 +49,7 @@ async fn fixtures_cover_all_roles_teams_and_entry_paths() {
             .unwrap();
     assert_eq!(members, 3);
     assert!(fixtures::member(pool, team, admin).await.is_err());
-    assert!(fixtures::member(pool, team, user).await.is_ok());
+    assert!(fixtures::member(pool, team, user).await.is_err());
     assert_ne!(invited, user);
 }
 
