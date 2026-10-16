@@ -62,6 +62,9 @@ Rust validates and authorizes first; these constraints are the backstop.
   membership in one transaction; the deferred key is checked at commit.
 - Ticket assignees are members of the ticket's team (deferred composite key)
   and never the requester.
+- At least one active Admin remains: a trigger rejects demoting or deactivating
+  the last one (constraint `last_active_admin`, `23514`), serialized by an advisory
+  lock so concurrent changes cannot both pass (see [authorization.md](authorization.md)).
 - `organization` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`);
   `setup_completed_at` closes first-admin setup.
 - `sessions.token_hash` (SHA-256 of the cookie token) is unique; tokens are never stored.
