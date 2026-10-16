@@ -7,7 +7,8 @@ CREATE TABLE organization (
 );
 INSERT INTO organization DEFAULT VALUES;
 
--- Only the SHA-256 of the cookie token is stored. Rotation revokes a row and inserts a new one.
+-- Only the SHA-256 of the cookie token is stored. Rotation marks a row rotated_at
+-- (valid for a short grace period) and inserts its successor (rotated_from).
 CREATE TABLE sessions (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id   uuid NOT NULL REFERENCES accounts (id),
@@ -16,11 +17,14 @@ CREATE TABLE sessions (
     expires_at   timestamptz NOT NULL,
     last_seen_at timestamptz NOT NULL DEFAULT now(),
     revoked_at   timestamptz,
+    rotated_at   timestamptz,
+    rotated_from uuid REFERENCES sessions (id),
     user_agent   text,
     ip           text
 );
 CREATE INDEX sessions_account_idx ON sessions (account_id);
 CREATE INDEX sessions_expires_idx ON sessions (expires_at);
+CREATE INDEX sessions_rotated_from_idx ON sessions (rotated_from) WHERE rotated_from IS NOT NULL;
 
 CREATE TABLE audit_events (
     id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

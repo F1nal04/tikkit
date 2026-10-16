@@ -9,12 +9,15 @@ use axum::{
     http::{Request, StatusCode},
 };
 use serde_json::{Value, json};
-use tikkit_api::{AppState, app_with, auth::Settings};
+use tikkit_api::auth::{Settings, verify_password};
 use tower::ServiceExt;
 
-use support::TestDb;
-
-const PASSWORD: &str = "correct horse battery";
+mod support;
+use support::{
+    TestDb,
+    fixtures::{self, PASSWORD, Role},
+    test_app, test_app_with,
+};
 
 struct Reply {
     status: StatusCode,
@@ -32,15 +35,6 @@ impl Reply {
         let cookie = self.cookie.as_deref().expect("set-cookie");
         cookie.split(';').next().unwrap().to_owned()
     }
-}
-
-fn router(t: &TestDb, settings: Settings) -> Router {
-    app_with(
-        AppState {
-            pool: t.pool.clone(),
-        },
-        settings,
-    )
 }
 
 async fn call(
@@ -106,18 +100,8 @@ async fn login(app: &Router, username: &str, password: &str) -> Reply {
     call(app, "POST", "/api/auth/login", Some(body), None).await
 }
 
-async fn account(t: &TestDb, username: &str, email: &str, role: &str) -> uuid::Uuid {
-    sqlx::query_scalar(
-        "INSERT INTO accounts (username, display_name, email, password_hash, role)
-         VALUES ($1, $1, $2, $3, $4) RETURNING id",
-    )
-    .bind(username)
-    .bind(email)
-    .bind(tikkit_api::auth::hash_password(PASSWORD))
-    .bind(role)
-    .fetch_one(&t.pool)
-    .await
-    .unwrap()
+async fn account(t: &TestDb, username: &str, role: Role) -> uuid::Uuid {
+    fixtures::account(&t.pool, role, username).await
 }
 
 async fn audit_types(t: &TestDb) -> Vec<String> {
@@ -130,7 +114,7 @@ async fn audit_types(t: &TestDb) -> Vec<String> {
 #[tokio::test]
 async fn setup_is_one_time_and_signs_in_the_first_admin() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
+    let app = test_app(&t.pool);
     let r = call(&app, "GET", "/api/setup", None, None).await;
     assert_eq!(r.body, json!({ "setup_required": true }));
 
@@ -161,7 +145,7 @@ async fn setup_is_one_time_and_signs_in_the_first_admin() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_setup_creates_exactly_one_admin() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
+    let app = test_app(&t.pool);
     let attempts = (0..20u8).map(|i| {
         let app = app.clone();
         tokio::spawn(async move {
@@ -193,8 +177,8 @@ async fn concurrent_setup_creates_exactly_one_admin() {
 #[tokio::test]
 async fn login_sets_a_hardened_cookie_and_normalizes_usernames() {
     let Some(t) = TestDb::new().await else { return };
-    account(&t, "alice", "a@example.com", "operator").await;
-    let r = login(&router(&t, Settings::default()), "  ALICE ", PASSWORD).await;
+    account(&t, "alice", Role::Operator).await;
+    let r = login(&test_app(&t.pool), "  ALICE ", PASSWORD).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.body["username"], "alice");
     assert_eq!(r.body["role"], "operator");
@@ -209,7 +193,7 @@ async fn login_sets_a_hardened_cookie_and_normalizes_usernames() {
         secure_cookie: true,
         ..Settings::default()
     };
-    let r = login(&router(&t, production), "alice", PASSWORD).await;
+    let r = login(&test_app_with(&t.pool, production), "alice", PASSWORD).await;
     assert!(r.cookie.unwrap().ends_with("; Secure"));
     // Only 32-byte SHA-256 hashes are stored, never the token.
     let stored: i64 =
@@ -223,9 +207,9 @@ async fn login_sets_a_hardened_cookie_and_normalizes_usernames() {
 #[tokio::test]
 async fn login_failures_are_indistinguishable() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
-    let id = account(&t, "bob", "b@example.com", "user").await;
-    account(&t, "carol", "c@example.com", "user").await;
+    let app = test_app(&t.pool);
+    let id = account(&t, "bob", Role::User).await;
+    account(&t, "carol", Role::User).await;
     sqlx::query("UPDATE accounts SET is_active = false WHERE username = 'carol'")
         .execute(&t.pool)
         .await
@@ -253,17 +237,19 @@ async fn login_failures_are_indistinguishable() {
     assert_eq!(failed.len(), 3);
     assert_eq!(failed[1].0, Some(id));
     assert_eq!(failed[1].1["reason"], "wrong_password");
+    assert_eq!(failed[0].0, None);
+    // Neither passwords nor typed usernames (possibly a misplaced password) are kept.
+    let all = failed.iter().map(|f| f.1.to_string()).collect::<String>();
     assert!(
-        !failed
-            .iter()
-            .any(|f| f.1.to_string().contains("wrong password"))
+        !all.contains("wrong password") && !all.contains("nobody"),
+        "{all}"
     );
 }
 
 #[tokio::test]
 async fn me_logout_and_deactivation() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
+    let app = test_app(&t.pool);
     let r = call(&app, "GET", "/api/auth/me", None, None).await;
     assert_eq!(
         (r.status, r.code()),
@@ -279,7 +265,7 @@ async fn me_logout_and_deactivation() {
     .await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
 
-    account(&t, "dave", "d@example.com", "user").await;
+    account(&t, "dave", Role::User).await;
     let first = login(&app, "dave", PASSWORD).await.session();
     let second = login(&app, "dave", PASSWORD).await.session();
     assert_ne!(first, second, "every login issues a new session");
@@ -314,8 +300,8 @@ async fn me_logout_and_deactivation() {
 #[tokio::test]
 async fn expired_sessions_are_rejected_and_old_sessions_rotate() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
-    account(&t, "erin", "e@example.com", "user").await;
+    let app = test_app(&t.pool);
+    account(&t, "erin", Role::User).await;
     let expired = login(&app, "erin", PASSWORD).await.session();
     sqlx::query("UPDATE sessions SET expires_at = now() - interval '1 second'")
         .execute(&t.pool)
@@ -327,30 +313,131 @@ async fn expired_sessions_are_rejected_and_old_sessions_rotate() {
     let old = login(&app, "erin", PASSWORD).await.session();
     let r = call(&app, "GET", "/api/auth/me", None, Some(&old)).await;
     assert!(r.cookie.is_none(), "young sessions are not rotated");
-    sqlx::query("UPDATE sessions SET created_at = now() - interval '25 hours' WHERE revoked_at IS NULL AND expires_at > now()")
-        .execute(&t.pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE sessions SET created_at = now() - interval '25 hours' WHERE expires_at > now()",
+    )
+    .execute(&t.pool)
+    .await
+    .unwrap();
     let r = call(&app, "GET", "/api/auth/me", None, Some(&old)).await;
     assert_eq!(r.status, StatusCode::OK);
     let new = r.session();
     assert_ne!(new, old);
     assert!(r.cookie.unwrap().contains("HttpOnly"));
+    let r = call(&app, "GET", "/api/auth/me", None, Some(&new)).await;
+    assert_eq!((r.status, r.cookie), (StatusCode::OK, None));
+
+    // In-flight requests still carrying the old token keep working briefly,
+    // without rotating again...
+    let r = call(&app, "GET", "/api/auth/me", None, Some(&old)).await;
+    assert_eq!((r.status, r.cookie), (StatusCode::OK, None));
+    // ...until the grace window has passed.
+    age_rotation(&t, "2 minutes").await;
+    let r = call(&app, "GET", "/api/auth/me", None, Some(&old)).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     assert_eq!(
-        call(&app, "GET", "/api/auth/me", None, Some(&old))
+        call(&app, "GET", "/api/auth/me", None, Some(&new))
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+async fn make_old(t: &TestDb) {
+    sqlx::query("UPDATE sessions SET created_at = now() - interval '25 hours' WHERE revoked_at IS NULL AND rotated_at IS NULL")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+}
+
+async fn age_rotation(t: &TestDb, by: &str) {
+    sqlx::query(&format!(
+        "UPDATE sessions SET rotated_at = rotated_at - interval '{by}' WHERE rotated_at IS NOT NULL"
+    ))
+    .execute(&t.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn signing_out_with_a_rotated_token_ends_both_tokens() {
+    let Some(t) = TestDb::new().await else { return };
+    let app = test_app(&t.pool);
+    account(&t, "ivan", Role::User).await;
+    let old = login(&app, "ivan", PASSWORD).await.session();
+    make_old(&t).await;
+    let new = call(&app, "GET", "/api/auth/me", None, Some(&old))
+        .await
+        .session();
+    let r = call(&app, "POST", "/api/auth/logout", None, Some(&old)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    for token in [&old, &new] {
+        assert_eq!(
+            call(&app, "GET", "/api/auth/me", None, Some(token))
+                .await
+                .status,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_rotated_cookie_survives_an_error_response() {
+    let Some(t) = TestDb::new().await else { return };
+    let app = test_app(&t.pool);
+    account(&t, "judy", Role::User).await;
+    let old = login(&app, "judy", PASSWORD).await.session();
+    make_old(&t).await;
+    let wrong =
+        json!({ "current_password": "not my password", "new_password": "a brand new secret" });
+    let r = call(&app, "POST", "/api/auth/password", Some(wrong), Some(&old)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let new = r.session();
+    assert_ne!(new, old);
+    age_rotation(&t, "2 minutes").await;
+    assert_eq!(
+        call(&app, "GET", "/api/auth/me", None, Some(&new))
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn signing_in_again_ends_the_presented_session() {
+    let Some(t) = TestDb::new().await else { return };
+    let app = test_app(&t.pool);
+    account(&t, "kim", Role::User).await;
+    let first = login(&app, "kim", PASSWORD).await.session();
+    let body = json!({ "username": "kim", "password": PASSWORD });
+    let second = call(&app, "POST", "/api/auth/login", Some(body), Some(&first))
+        .await
+        .session();
+    assert_ne!(first, second);
+    assert_eq!(
+        call(&app, "GET", "/api/auth/me", None, Some(&first))
             .await
             .status,
         StatusCode::UNAUTHORIZED
     );
-    let r = call(&app, "GET", "/api/auth/me", None, Some(&new)).await;
-    assert_eq!((r.status, r.cookie), (StatusCode::OK, None));
+    assert_eq!(
+        call(&app, "GET", "/api/auth/me", None, Some(&second))
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+#[test]
+fn fixture_password_hash_matches_the_documented_password() {
+    assert!(verify_password(PASSWORD, fixtures::PASSWORD_HASH));
 }
 
 #[tokio::test]
 async fn password_change_revokes_every_other_session() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
-    account(&t, "frank", "f@example.com", "specialist").await;
+    let app = test_app(&t.pool);
+    account(&t, "frank", Role::Specialist).await;
     let current = login(&app, "frank", PASSWORD).await.session();
     let other = login(&app, "frank", PASSWORD).await.session();
 
@@ -418,7 +505,7 @@ async fn password_change_revokes_every_other_session() {
 #[tokio::test]
 async fn state_changes_require_the_csrf_header() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
+    let app = test_app(&t.pool);
     let request = Request::post("/api/auth/login")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"username":"x","password":"y"}"#))
@@ -439,7 +526,7 @@ async fn state_changes_require_the_csrf_header() {
 #[tokio::test]
 async fn login_is_rate_limited_per_username_and_ip() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
+    let app = test_app(&t.pool);
     for _ in 0..5 {
         assert_eq!(
             login(&app, "grace", "nope nope nope").await.status,
@@ -477,9 +564,9 @@ async fn login_is_rate_limited_per_username_and_ip() {
 #[tokio::test]
 async fn accounts_sharing_an_email_stay_separate() {
     let Some(t) = TestDb::new().await else { return };
-    let app = router(&t, Settings::default());
-    let ops = account(&t, "heidi", "shared@example.com", "operator").await;
-    let admin = account(&t, "heidi.admin", "shared@example.com", "admin").await;
+    let app = test_app(&t.pool);
+    let ops = account(&t, "heidi", Role::Operator).await;
+    let admin = account(&t, "heidi.admin", Role::Admin).await;
     let a = login(&app, "heidi", PASSWORD).await.session();
     let b = login(&app, "heidi.admin", PASSWORD).await.session();
     let me_a = call(&app, "GET", "/api/auth/me", None, Some(&a)).await.body;
@@ -505,77 +592,12 @@ async fn accounts_sharing_an_email_stay_separate() {
 #[tokio::test]
 async fn audit_events_are_append_only() {
     let Some(t) = TestDb::new().await else { return };
-    login(&router(&t, Settings::default()), "nobody", PASSWORD).await;
+    login(&test_app(&t.pool), "nobody", PASSWORD).await;
     for statement in [
         "UPDATE audit_events SET event_type = 'x'",
         "DELETE FROM audit_events",
     ] {
         let err = sqlx::query(statement).execute(&t.pool).await.unwrap_err();
         assert_eq!(err.as_database_error().unwrap().code().unwrap(), "23001");
-    }
-}
-
-// Copy of the disposable-database helper from tests/db.rs; deduplicate once tests/support exists.
-mod support {
-    use std::str::FromStr;
-
-    use sqlx::{
-        Connection, Executor, PgConnection, PgPool,
-        postgres::{PgConnectOptions, PgPoolOptions},
-    };
-    use tikkit_api::db;
-    use uuid::Uuid;
-
-    pub struct TestDb {
-        pub pool: PgPool,
-        admin: PgConnectOptions,
-        name: String,
-    }
-
-    impl TestDb {
-        pub async fn new() -> Option<Self> {
-            dotenvy::dotenv().ok();
-            let Ok(url) =
-                std::env::var("TEST_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL"))
-            else {
-                eprintln!("skipping: set TEST_DATABASE_URL to run PostgreSQL integration tests");
-                return None;
-            };
-            let admin = PgConnectOptions::from_str(&url).expect("valid TEST_DATABASE_URL");
-            let name = format!("tikkit_test_{}", Uuid::new_v4().simple());
-            let mut conn = PgConnection::connect_with(&admin).await.unwrap();
-            conn.execute(format!("CREATE DATABASE {name}").as_str())
-                .await
-                .unwrap();
-            let pool = PgPoolOptions::new()
-                .max_connections(30)
-                .connect_with(admin.clone().database(&name))
-                .await
-                .unwrap();
-            db::migrate(&pool).await.unwrap();
-            Some(Self { pool, admin, name })
-        }
-    }
-
-    impl Drop for TestDb {
-        fn drop(&mut self) {
-            let (admin, name) = (self.admin.clone(), self.name.clone());
-            std::thread::spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async {
-                        let mut conn = PgConnection::connect_with(&admin).await.unwrap();
-                        conn.execute(
-                            format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str(),
-                        )
-                        .await
-                        .unwrap();
-                    })
-            })
-            .join()
-            .unwrap();
-        }
     }
 }
