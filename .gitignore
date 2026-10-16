@@ -16,3 +16,4 @@ blob-report/
 *.pem
 *-debug.log*
 .vercel/
+deploy/compose.env
