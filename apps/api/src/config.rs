@@ -155,7 +155,7 @@ impl Config {
 /// Hex if the value is entirely hex digits of even length, otherwise standard base64.
 fn decode_secret(value: &str) -> Option<Vec<u8>> {
     let value = value.trim();
-    if value.len() % 2 == 0 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if value.len().is_multiple_of(2) && value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return (0..value.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&value[i..i + 2], 16).ok())

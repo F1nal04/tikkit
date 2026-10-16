@@ -1,4 +1,4 @@
-use std::future::IntoFuture;
+use std::{future::IntoFuture, time::Duration};
 
 use anyhow::Context;
 use tikkit_api::{AppState, app, config::Config, db};
@@ -6,8 +6,11 @@ use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Development convenience: load ./.env (or a parent's) without overriding real env vars.
-    dotenvy::dotenv().ok();
+    // Development convenience: load ./.env (or a parent's) without overriding real
+    // env vars. Production reads only the real environment.
+    if std::env::var("ENVIRONMENT").as_deref() != Ok("production") {
+        dotenvy::dotenv().ok();
+    }
     let config = Config::from_env()?;
 
     let pool = db::connect(&config.database_url).await?;
@@ -38,7 +41,13 @@ async fn main() -> anyhow::Result<()> {
         result = server => result?,
         () = deadline => eprintln!("Drain timeout reached; aborting remaining requests"),
     }
-    pool.close().await;
+    // Bounded so a stuck connection cannot hold the process past the drain window.
+    if tokio::time::timeout(Duration::from_secs(5), pool.close())
+        .await
+        .is_err()
+    {
+        eprintln!("Timed out closing database connections");
+    }
     println!("Tikkit API stopped");
     Ok(())
 }

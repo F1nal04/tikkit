@@ -1,7 +1,9 @@
 # Configuration
 
-The API reads environment variables at startup (in development also from a
-git-ignored `.env`, see `.env.example`). It validates everything before
+The API reads environment variables at startup. Unless `ENVIRONMENT=production`
+it also loads a git-ignored `.env` (see `.env.example`) from the working
+directory or a parent, without overriding variables already set; production
+reads only the real environment. It validates everything before
 connecting, prints **all** problems at once, and exits non-zero. Error messages
 name the variable and the fix but never echo values.
 
@@ -27,7 +29,8 @@ serves the full service desk without them.
   its applied migrations match this build; otherwise `503` with
   `{"status":"unavailable","checks":{"database":"ok|unavailable","migrations":"ok|pending|incompatible|unknown"}}`.
 - On SIGTERM or Ctrl+C the API stops accepting connections, drains in-flight
-  requests for up to `SHUTDOWN_TIMEOUT_SECS`, closes the database pool, and exits.
+  requests for up to `SHUTDOWN_TIMEOUT_SECS`, closes the database pool (at most
+  5 more seconds), and exits.
 
 ## Production
 

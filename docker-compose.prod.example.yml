@@ -21,7 +21,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST, e.g. help.example.com}
-      API_INTERNAL_URL: http://api:3001 # server-side rendering calls the API directly
+      API_ORIGIN: http://api:3001 # server-side rendering calls the API directly
     networks: [edge]
 
   api:
@@ -34,7 +34,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (openssl rand -base64 32)}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY (openssl rand -base64 32)}
       SHUTDOWN_TIMEOUT_SECS: 20
-    stop_grace_period: 30s # longer than SHUTDOWN_TIMEOUT_SECS
+    stop_grace_period: 30s # longer than SHUTDOWN_TIMEOUT_SECS + 5s pool close
     networks: [edge, internal]
     depends_on:
       postgres: { condition: service_healthy }
