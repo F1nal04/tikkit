@@ -13,8 +13,15 @@ export const handle: Handle = ({ event, resolve }) => {
     event.cookies.set('lang', locale, { path: '/', sameSite: 'lax', maxAge: 31536000 })
   }
   event.locals.locale = locale
+  // Pages are rendered per user and per language; never let caches share them.
+  event.setHeaders({ 'cache-control': 'private, no-store', vary: 'Cookie, Accept-Language' })
+  let done = false
   return resolve(event, {
-    transformPageChunk: ({ html }) => html.replace('%lang%', locale),
+    transformPageChunk: ({ html }) => {
+      if (done || !html.includes('<html')) return html
+      done = true
+      return html.replace('%lang%', locale)
+    },
   })
 }
 
@@ -23,8 +30,10 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
   const url = new URL(request.url)
   if (url.origin === event.url.origin && url.pathname.startsWith('/api/')) {
     request = new Request(new URL(url.pathname + url.search, API_ORIGIN), request)
-    const cookie = event.request.headers.get('cookie')
-    if (cookie) request.headers.set('cookie', cookie)
+    for (const name of ['cookie', 'accept-language', 'x-forwarded-for']) {
+      const value = event.request.headers.get(name)
+      if (value) request.headers.set(name, value)
+    }
   }
   return fetch(request)
 }

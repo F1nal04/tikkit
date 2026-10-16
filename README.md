@@ -53,6 +53,9 @@ The frontend runs with Node.js from `apps/web/build/index.js`
 (SvelteKit adapter-node). It listens on `0.0.0.0:3000` by default; set `HOST`
 and `PORT` as needed. During server-side rendering it calls the API directly
 at `API_ORIGIN` (default `http://127.0.0.1:3001`).
+Behind a reverse proxy, set `ORIGIN` to the public portal origin (for example
+`https://help.example.com`). SvelteKit needs it for its CSRF/origin checks. Use
+`PROTOCOL_HEADER`/`HOST_HEADER`/`XFF_DEPTH` only if you can't set `ORIGIN`.
 The backend executable is `target/release/tikkit-api`. Set `API_ADDR` to
 change its listen address, for example `API_ADDR=0.0.0.0:3001` in a container.
 

@@ -15,9 +15,14 @@ export function resolveLocale(
 ): Locale {
   if (isLocale(query)) return query
   if (isLocale(cookie)) return cookie
-  for (const part of (acceptLanguage ?? '').split(',')) {
-    const tag = part.split(';')[0].trim().slice(0, 2).toLowerCase()
-    if (isLocale(tag)) return tag
-  }
-  return 'en'
+  const ranked = (acceptLanguage ?? '')
+    .split(',')
+    .map((part) => {
+      const [tag, ...params] = part.split(';')
+      const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='))
+      return { tag: tag.trim().slice(0, 2).toLowerCase(), q: q ? Number(q.slice(2)) || 0 : 1 }
+    })
+    .filter(({ q }) => q > 0)
+    .sort((a, b) => b.q - a.q)
+  return ranked.map(({ tag }) => tag).find(isLocale) ?? 'en'
 }

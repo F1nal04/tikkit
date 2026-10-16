@@ -19,4 +19,6 @@ test('resolves locale from query, cookie, then Accept-Language', () => {
   expect(resolveLocale('fr', 'de', 'en')).toBe('de')
   expect(resolveLocale(null, undefined, 'fr-FR,de-DE;q=0.8')).toBe('de')
   expect(resolveLocale(null, undefined, null)).toBe('en')
+  expect(resolveLocale(null, undefined, 'en;q=0.1, de;q=0.9')).toBe('de')
+  expect(resolveLocale(null, undefined, 'de;q=0, en')).toBe('en')
 })
