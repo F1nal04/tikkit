@@ -24,13 +24,11 @@ async fn fixtures_cover_all_roles_teams_and_entry_paths() {
     fixtures::member(pool, team, operator).await.unwrap();
     fixtures::member(pool, team, specialist).await.unwrap();
 
-    let roles: Vec<(String, String)> = sqlx::query_as(
-        "SELECT username, role FROM accounts WHERE password_hash = $1 ORDER BY username",
-    )
-    .bind(fixtures::PASSWORD_HASH)
-    .fetch_all(pool)
-    .await
-    .unwrap();
+    let roles: Vec<(String, String)> =
+        sqlx::query_as("SELECT username, role FROM accounts ORDER BY username")
+            .fetch_all(pool)
+            .await
+            .unwrap();
     let expected = [
         ("admin", "admin"),
         ("invited", "user"),
