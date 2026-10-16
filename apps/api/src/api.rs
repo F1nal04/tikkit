@@ -184,7 +184,7 @@ impl ApiError {
             LastActiveAdmin => (
                 StatusCode::CONFLICT,
                 ErrorCode::LastActiveAdmin,
-                "The last active administrator cannot be deactivated.",
+                "At least one active administrator must remain.",
             ),
             Forbidden => (
                 StatusCode::FORBIDDEN,
@@ -273,6 +273,10 @@ impl IntoResponse for ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(error: sqlx::Error) -> Self {
+        let constraint = error.as_database_error().and_then(|db| db.constraint());
+        if constraint == Some("last_active_admin") {
+            return Self::LastActiveAdmin;
+        }
         tracing::error!(%error, "database error");
         Self::Internal
     }
