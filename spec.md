@@ -1,14 +1,24 @@
 # Tikkit product specification
 
 Status: agreed product requirements; implementation is tracked separately in GitHub.
-Last updated: 2026-10-15.
+Last updated: 2026-10-16.
 Roadmap: [F1nal04/tikkit#2](https://github.com/F1nal04/tikkit/issues/2).
 
 ## Product and architecture
 
 Tikkit is a full IT ticketing system for **one organization per deployment**. It provides a requester portal, a shared help-desk intake queue, team-based support, administration, and optional AI assistance before human support.
 
-The repository uses Bun and Turborepo, a TanStack Start frontend, and a Rust backend. PostgreSQL is the default database, with one supported migration path. The first release targets self-hosting on one host with Docker Compose, persistent database and screenshot storage, and same-origin web/API routing.
+The target stack is Bun and Turborepo, a **SvelteKit frontend using Svelte and TypeScript**, and a **Rust/Axum backend**. Migrate the existing frontend scaffold to SvelteKit before building further frontend features. PostgreSQL is the default database, with one supported migration path. The first release targets self-hosting on one host with Docker Compose, persistent database and screenshot storage, and same-origin web/API routing.
+
+SvelteKit owns page rendering, routing, and frontend interaction. Rust remains authoritative for authentication, authorization, validation, persistence, and business logic under `/api/*`; do not duplicate these responsibilities in SvelteKit server endpoints or form actions. Preserve the typed API contract and existing backend behavior during migration.
+
+Use SvelteKit server rendering for initial pages where it improves loading, followed by client navigation. Do not globally disable SSR as a performance shortcut. Use the supported Node adapter for the self-hosted frontend server; replace the previous frontend-specific build and runtime assumptions as part of migration.
+
+### Performance
+
+Fast initial loading, responsive ticket workflows, and efficient self-hosting are product priorities. Keep initial JavaScript small through route-level loading, avoid unnecessary dependencies and request waterfalls, paginate queues/search, and use bounded indexed database queries. Keep external AI and email delivery off the normal request path through durable processing.
+
+Measure production builds on documented hardware and network conditions: transferred JavaScript, initial content loading, interaction responsiveness, navigation, and API latency under realistic ticket volumes. Record a baseline and regression budgets rather than assuming a framework or Rust alone guarantees end-to-end speed. Performance work must preserve accessibility, localization, authorization, and data integrity.
 
 The service desk must work without AI credentials or outbound email configuration. AI assistance is an optional organization capability using an Admin-managed bring-your-own-key (BYOK) credential.
 
@@ -241,7 +251,7 @@ Provide explicit retention for drafts, screenshots, ticket content, AI data, and
 
 Take inspiration from `../bookr/.github/workflows/ci.yml`: one Ubuntu `checks` job, pull requests and main pushes, read-only permissions, concurrency cancellation, and root-level commands.
 
-Adapt the backend tooling to Rust and install the required Bun, Node, and Rust versions. Pin action SHAs. Run frozen dependency installation, then root `check`, `build`, and `test` tasks with locked Cargo dependencies. All PRs, including automation PRs, receive checks. Document/configure the stable required check where repository permissions allow it.
+Adapt the backend tooling to Rust and install the required Bun, Node, and Rust versions. Pin action SHAs. Run frozen dependency installation, then root `check`, `build`, and `test` tasks with locked Cargo dependencies. Frontend checks generate SvelteKit types and run Svelte-aware TypeScript/component diagnostics; component tests use Svelte tooling and browser tests exercise the production rendering/navigation behavior. All PRs, including automation PRs, receive checks. Document/configure the stable required check where repository permissions allow it.
 
 Add grouped dependency updates and vulnerability checks. Keep the workflow small; extra jobs, matrices, and caches require a demonstrated need.
 
@@ -263,7 +273,7 @@ Verify complete requester/staff/Admin workflows, role/team isolation, shared-ema
 
 ## Release milestones
 
-1. [Foundation and CI](https://github.com/F1nal04/tikkit/milestone/1): checks, test tooling, persistence, API contracts, runtime configuration, onboarding, and permissions.
+1. [Foundation and CI](https://github.com/F1nal04/tikkit/milestone/1): SvelteKit frontend migration, checks, test tooling, persistence, API contracts, runtime configuration, onboarding, and permissions.
 2. [Core service desk](https://github.com/F1nal04/tikkit/milestone/2): a complete no-AI requester/staff workflow, administration, screenshots, team dispatch/assignment, conversations, notifications/SMTP, and resolution-confirmation auto-close.
 3. [Optional BYOK AI assistance](https://github.com/F1nal04/tikkit/milestone/3): three initial providers, multimodal single-solution assistance, requester decisions, reliable escalation, and usage/privacy safeguards. Establish safeguards before enabling generation.
 4. [Production readiness](https://github.com/F1nal04/tikkit/milestone/4): complete Admin reporting/audit views, security/accessibility verification, production deployment, backups, documentation, and release validation.
