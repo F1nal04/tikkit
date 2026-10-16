@@ -130,5 +130,7 @@ export const load = async ({ fetch }) => {
 };
 ```
 
-Requests always use `credentials: "include"`. Failures throw `ApiError` with
-`status`, `code`, `fields`, and `requestId`.
+Requests always use `credentials: "include"` and send `X-Requested-With: tikkit`.
+Failures throw `ApiError` with `status`, `code`, `fields`, and `requestId`.
+When no envelope arrives (network failure: `status` 0, or a non-JSON body such
+as a proxy's HTML 502) `code` is the client-side `unavailable`.

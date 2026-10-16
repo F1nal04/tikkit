@@ -9,6 +9,13 @@ export type Schemas = components["schemas"];
 export type ErrorEnvelope = Schemas["ErrorEnvelope"];
 export type ErrorCode = Schemas["ErrorCode"];
 export type Language = Schemas["Language"];
+export type Account = Schemas["Account"];
+/** API error codes plus `unavailable`, synthesized when the API could not be
+ * reached or answered without an error envelope (e.g. a proxy's HTML 502). */
+export type ClientErrorCode = ErrorCode | "unavailable";
+
+/** Sent on every request; the API rejects state-changing requests without it (CSRF). */
+export const CSRF_HEADER = { "x-requested-with": "tikkit" } as const;
 
 type Method = "get" | "post" | "put" | "patch" | "delete";
 type MethodsOf<P extends keyof paths> = {
@@ -49,7 +56,8 @@ export type ClientOptions = {
   language?: Language;
 };
 
-/** A non-2xx response. `body` is the error envelope when the API produced one. */
+/** A failed request. `body` is the error envelope when the API produced one;
+ * `status` is 0 when no response arrived. */
 export class ApiError extends Error {
   readonly status: number;
   readonly body: ErrorEnvelope | null;
@@ -62,8 +70,8 @@ export class ApiError extends Error {
   }
 
   /** Stable machine-readable code; translate this rather than `message`. */
-  get code(): ErrorCode | null {
-    return this.body?.error.code ?? null;
+  get code(): ClientErrorCode {
+    return this.body?.error.code ?? "unavailable";
   }
 
   get requestId(): string | null {
@@ -102,21 +110,37 @@ export function createClient(options: ClientOptions = {}) {
     }
     if (query.size) url += `?${query}`;
 
-    const headers: Record<string, string> = { accept: "application/json", ...options.headers };
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      ...CSRF_HEADER,
+      ...options.headers,
+    };
     if (options.language) headers["accept-language"] = options.language;
     if (init.body !== undefined) headers["content-type"] = "application/json";
     Object.assign(headers, init.headers);
 
-    const response = await fetchImpl(url, {
-      method: method.toUpperCase(),
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      credentials: "include",
-      signal: init.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: method.toUpperCase(),
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        credentials: "include",
+        signal: init.signal,
+      });
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      throw new ApiError(0, null);
+    }
     if (response.status === 204) return undefined as Success<Operation<P, M>>;
     const text = await response.text();
-    const data: unknown = text ? JSON.parse(text) : undefined;
+    let data: unknown;
+    try {
+      data = text ? JSON.parse(text) : undefined;
+    } catch {
+      // Not JSON, e.g. a reverse proxy's HTML error page.
+      throw new ApiError(response.status, null);
+    }
     if (!response.ok) throw new ApiError(response.status, isEnvelope(data) ? data : null);
     return data as Success<Operation<P, M>>;
   }
