@@ -22,6 +22,30 @@ Open <http://localhost:3000>. The page checks the Rust API through Vite's
 The frontend reloads automatically. Restart `bun run dev` after Rust changes.
 Cargo downloads and compiles Rust dependencies on the first run.
 
+## Database
+
+The API needs PostgreSQL 17. For development, start the pinned container and
+copy the example environment (the API loads `.env` from the repository root):
+
+```sh
+docker compose -f docker-compose.dev.yml up -d --wait
+cp .env.example .env
+```
+
+The API applies migrations from `apps/api/migrations/` on startup, so
+`bun run dev` or `cargo run -p tikkit-api` migrates a fresh database; it exits
+with an error if `DATABASE_URL` is missing, the database is unreachable, or the
+schema is newer than the build. Integration tests create and drop a throwaway
+database per test through `TEST_DATABASE_URL` and are skipped when it is unset:
+
+```sh
+TEST_DATABASE_URL=postgres://tikkit:tikkit@127.0.0.1:5432/tikkit cargo test --locked -p tikkit-api
+```
+
+Stop with `docker compose -f docker-compose.dev.yml down` (add `-v` to delete
+the data volume). See [docs/schema.md](docs/schema.md) for identifiers and
+database-enforced invariants.
+
 ## Layout
 
 ```text

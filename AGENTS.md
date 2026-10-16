@@ -25,11 +25,21 @@ cargo clippy --locked --all-targets -- -D warnings     # must be warning-free; C
 cargo fmt --all
 ```
 
+Database (PostgreSQL 17, see `docs/schema.md`):
+
+```sh
+docker compose -f docker-compose.dev.yml up -d --wait   # dev Postgres on 127.0.0.1:5432
+cp .env.example .env                                     # API and tests load .env
+TEST_DATABASE_URL=postgres://tikkit:tikkit@127.0.0.1:5432/tikkit cargo test --locked -p tikkit-api
+```
+
 Notes:
 
 - Always use `--locked` with Cargo (the package.json scripts do); don't let Cargo rewrite `Cargo.lock` silently.
 - `.svelte-kit/` holds generated types and build output; `check` runs `svelte-kit sync` first, so it doesn't depend on `build`. Don't hand-edit it.
 - SvelteKit 3 conventions: config is passed to `sveltekit(...)` in `vite.config.ts` (no `svelte.config.js`), `src/lib` is imported as `#lib/...` (package.json subpath imports, explicit `.ts` extension), and env vars are declared in `src/env.ts` and read from `$app/env/private`.
+- Migrations are `apps/api/migrations/NNNN_*.sql`, embedded via `sqlx::migrate!` and applied at API startup. Never edit an applied migration. Use runtime `sqlx::query`/`query_as`, not the compile-time `query!` macros.
+- DB integration tests live in `apps/api/tests/`; each test gets its own database and is skipped (passes) without `TEST_DATABASE_URL`/`DATABASE_URL`.
 - The dev server does not hot-reload Rust. Restart `bun run dev` (or just the api filter) after backend changes.
 
 ## Architecture

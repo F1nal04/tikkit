@@ -1,16 +1,26 @@
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
+use sqlx::PgPool;
+
+pub mod db;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: PgPool,
+}
 
 #[derive(Serialize)]
 struct Health {
     status: &'static str,
 }
 
-pub fn app() -> Router {
-    Router::new().route(
-        "/api/health",
-        get(|| async { Json(Health { status: "ok" }) }),
-    )
+pub fn app(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/api/health",
+            get(|| async { Json(Health { status: "ok" }) }),
+        )
+        .with_state(state)
 }
 
 #[cfg(test)]
@@ -19,11 +29,20 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
+    use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
+
+    pub fn lazy_state() -> super::AppState {
+        // Never connects unless a handler touches the database.
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
+            .unwrap();
+        super::AppState { pool }
+    }
 
     #[tokio::test]
     async fn health_returns_json_status() {
-        let response = super::app()
+        let response = super::app(lazy_state())
             .oneshot(Request::get("/api/health").body(Body::empty()).unwrap())
             .await
             .unwrap();
