@@ -16,4 +16,5 @@
   <h1>Tikkit</h1>
   <p>{t.tagline}</p>
   <p class="status" role="status">{data.healthy ? t.apiHealthy : t.apiUnavailable}</p>
+  <a href="/about">{t.about}</a>
 </main>

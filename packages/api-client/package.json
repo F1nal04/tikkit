@@ -8,10 +8,12 @@
   "scripts": {
     "generate": "openapi-typescript ../../apps/api/openapi.json -o src/schema.d.ts",
     "check:client": "openapi-typescript ../../apps/api/openapi.json -o src/schema.d.ts --check",
-    "check": "bun run check:client && tsc --noEmit"
+    "check": "bun run check:client && tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "openapi-typescript": "^7.13.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
   }
 }
