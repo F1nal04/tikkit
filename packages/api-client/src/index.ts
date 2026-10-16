@@ -10,6 +10,9 @@ export type ErrorEnvelope = Schemas["ErrorEnvelope"];
 export type ErrorCode = Schemas["ErrorCode"];
 export type Language = Schemas["Language"];
 export type Account = Schemas["Account"];
+export type Role = Schemas["Role"];
+export type AccountSummary = Schemas["AccountSummary"];
+export type Invitation = Schemas["Invitation"];
 /** API error codes plus `unavailable`, synthesized when the API could not be
  * reached or answered without an error envelope (e.g. a proxy's HTML 502). */
 export type ClientErrorCode = ErrorCode | "unavailable";

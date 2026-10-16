@@ -6,6 +6,10 @@
 
   let { children, data } = $props()
   let t = $derived(messages[data.locale])
+  // SSR sets <html lang>; keep it right when the language changes client-side.
+  $effect(() => {
+    document.documentElement.lang = data.locale
+  })
 
   async function logout() {
     // Idempotent on the server; leave the page either way.
@@ -19,6 +23,8 @@
 <header class="topbar">
   <a href="/" class="brand">Tikkit</a>
   {#if data.user}
+    {#if data.user.role === 'admin'}<a href="/admin/accounts">{t.admin}</a>{/if}
+    <a href="/profile">{t.profile}</a>
     <span>{t.signedInAs} <strong>{data.user.username}</strong></span>
     <button type="button" onclick={logout}>{t.signOut}</button>
   {:else}
