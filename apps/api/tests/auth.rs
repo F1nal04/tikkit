@@ -1,11 +1,7 @@
 //! Authentication integration tests against real PostgreSQL (skipped without TEST_DATABASE_URL).
 
-use std::net::SocketAddr;
-
 use axum::{
-    Router,
     body::{Body, to_bytes},
-    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use serde_json::{Value, json};
@@ -14,90 +10,13 @@ use tower::ServiceExt;
 
 mod support;
 use support::{
-    TestDb,
+    TestDb, call, call_from,
     fixtures::{self, PASSWORD, Role},
-    test_app, test_app_with,
+    login, test_app, test_app_with,
 };
-
-struct Reply {
-    status: StatusCode,
-    cookie: Option<String>,
-    retry_after: Option<String>,
-    body: Value,
-}
-
-impl Reply {
-    fn code(&self) -> &str {
-        self.body["error"]["code"].as_str().unwrap_or_default()
-    }
-    /// `name=value` part of the session cookie.
-    fn session(&self) -> String {
-        let cookie = self.cookie.as_deref().expect("set-cookie");
-        cookie.split(';').next().unwrap().to_owned()
-    }
-}
-
-async fn call(
-    app: &Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    cookie: Option<&str>,
-) -> Reply {
-    call_from(app, method, path, body, cookie, [127, 0, 0, 1]).await
-}
-
-async fn call_from(
-    app: &Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    cookie: Option<&str>,
-    ip: [u8; 4],
-) -> Reply {
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("x-requested-with", "tikkit");
-    if let Some(cookie) = cookie {
-        request = request.header("cookie", cookie);
-    }
-    let mut request = match body {
-        Some(body) => request
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_string())),
-        None => request.body(Body::empty()),
-    }
-    .unwrap();
-    request
-        .extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from((ip, 1234))));
-    let response = app.clone().oneshot(request).await.unwrap();
-    let (parts, body) = response.into_parts();
-    let header = |name| {
-        parts
-            .headers
-            .get(name)
-            .map(|v: &axum::http::HeaderValue| v.to_str().unwrap().to_owned())
-    };
-    let (cookie, retry_after) = (header("set-cookie"), header("retry-after"));
-    let status = parts.status;
-    let bytes = to_bytes(body, usize::MAX).await.unwrap();
-    Reply {
-        status,
-        cookie,
-        retry_after,
-        body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    }
-}
 
 fn setup_body(username: &str) -> Value {
     json!({ "username": username, "email": "admin@example.com", "password": PASSWORD, "language": "de" })
-}
-
-async fn login(app: &Router, username: &str, password: &str) -> Reply {
-    let body = json!({ "username": username, "password": password });
-    call(app, "POST", "/api/auth/login", Some(body), None).await
 }
 
 async fn account(t: &TestDb, username: &str, role: Role) -> uuid::Uuid {
