@@ -1,11 +1,11 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
-    Router,
+    Extension, Router,
     extract::{DefaultBodyLimit, State},
     http::{Request, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -17,6 +17,7 @@ use tower_http::{
 use utoipa::{OpenApi, ToSchema};
 
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod db;
 
@@ -33,9 +34,21 @@ pub struct AppState {
         title = "Tikkit API",
         version = "1",
         description = "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; \
-                       lists use `limit`/`cursor` and return a Page."
+                       lists use `limit`/`cursor` and return a Page. Authentication is the \
+                       HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send \
+                       `X-Requested-With: tikkit` or is rejected with 403 `csrf_rejected` (docs/auth.md)."
     ),
-    paths(health, ready, openapi_json),
+    paths(
+        health,
+        ready,
+        openapi_json,
+        auth::setup_status,
+        auth::setup,
+        auth::login,
+        auth::logout,
+        auth::me,
+        auth::change_password,
+    ),
     components(schemas(
         api::ErrorEnvelope,
         api::Page<api::TicketAssignmentView>,
@@ -124,11 +137,27 @@ async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi())
 }
 
+/// The API with development auth settings; `main` uses [`app_with`].
 pub fn app(state: AppState) -> Router {
+    app_with(state, auth::Settings::default())
+}
+
+pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
     let routes = Router::new()
         .route("/api/health", get(health))
         .route("/api/ready", get(ready))
         .route("/api/openapi.json", get(openapi_json))
+        .route("/api/setup", get(auth::setup_status).post(auth::setup))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/password", post(auth::change_password))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::session,
+        ))
+        .layer(axum::middleware::from_fn(auth::csrf))
+        .layer(Extension(Arc::new(auth::Auth::new(settings))))
         .with_state(state);
     with_conventions(routes)
 }
@@ -281,8 +310,8 @@ mod tests {
         let (response, body) = send(Request::get("/api/nope").body(Body::empty()).unwrap()).await;
         assert_error(&response, &body, StatusCode::NOT_FOUND, "not_found");
         assert_eq!(response.headers()["content-type"], "application/json");
-        let (response, body) =
-            send(Request::delete("/api/health").body(Body::empty()).unwrap()).await;
+        let request = Request::delete("/api/health").header("x-requested-with", "tikkit");
+        let (response, body) = send(request.body(Body::empty()).unwrap()).await;
         assert_error(
             &response,
             &body,

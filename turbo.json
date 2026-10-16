@@ -23,6 +23,9 @@
         "SESSION_SECRET",
         "ENCRYPTION_KEY",
         "SHUTDOWN_TIMEOUT_SECS",
+        "SESSION_TTL_HOURS",
+        "SESSION_ROTATE_HOURS",
+        "TRUST_PROXY_HEADERS",
         "ENVIRONMENT",
         "RUST_LOG"
       ]
@@ -46,6 +49,9 @@
         "SESSION_SECRET",
         "ENCRYPTION_KEY",
         "SHUTDOWN_TIMEOUT_SECS",
+        "SESSION_TTL_HOURS",
+        "SESSION_ROTATE_HOURS",
+        "TRUST_PROXY_HEADERS",
         "ENVIRONMENT",
         "RUST_LOG"
       ]

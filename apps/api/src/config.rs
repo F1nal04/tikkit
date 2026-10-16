@@ -19,6 +19,12 @@ pub struct Config {
     pub encryption_key: [u8; 32],
     pub shutdown_timeout: Duration,
     pub environment: Environment,
+    /// Absolute session lifetime.
+    pub session_ttl: Duration,
+    /// Session age after which the token is rotated.
+    pub session_rotate: Duration,
+    /// Take the client IP from `X-Forwarded-For` (only behind a trusted reverse proxy).
+    pub trust_proxy_headers: bool,
 }
 
 /// Every configuration problem found, one actionable line each. Never contains values.
@@ -44,6 +50,9 @@ impl fmt::Debug for Config {
             .field("encryption_key", &"<redacted>")
             .field("shutdown_timeout", &self.shutdown_timeout)
             .field("environment", &self.environment)
+            .field("session_ttl", &self.session_ttl)
+            .field("session_rotate", &self.session_rotate)
+            .field("trust_proxy_headers", &self.trust_proxy_headers)
             .finish()
     }
 }
@@ -132,6 +141,26 @@ impl Config {
                 Duration::from_secs(20)
             }
         };
+        let mut hours = |name: &str, default: u64, max: u64| match var(name).map(|v| v.parse()) {
+            None => Duration::from_secs(default * 3600),
+            Some(Ok(h)) if (1..=max).contains(&h) => Duration::from_secs(h * 3600),
+            Some(_) => {
+                fail(&format!(
+                    "{name} must be a whole number of hours between 1 and {max}"
+                ));
+                Duration::from_secs(default * 3600)
+            }
+        };
+        let session_ttl = hours("SESSION_TTL_HOURS", 24 * 14, 24 * 365);
+        let session_rotate = hours("SESSION_ROTATE_HOURS", 24, 24 * 365);
+        let trust_proxy_headers = match var("TRUST_PROXY_HEADERS").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => {
+                fail("TRUST_PROXY_HEADERS must be `true` or `false`");
+                false
+            }
+        };
 
         match (public_origin, session_secret, encryption_key) {
             (Some(public_origin), Some(session_secret), Some(encryption_key))
@@ -145,6 +174,9 @@ impl Config {
                     encryption_key,
                     shutdown_timeout,
                     environment,
+                    session_ttl,
+                    session_rotate,
+                    trust_proxy_headers,
                 })
             }
             _ => Err(ConfigError(errors)),
@@ -196,6 +228,9 @@ mod tests {
         assert_eq!(c.environment, Environment::Development);
         assert_eq!(c.encryption_key[31], 31);
         assert_eq!(c.session_secret.len(), 32);
+        assert_eq!(c.session_ttl, Duration::from_secs(14 * 24 * 3600));
+        assert_eq!(c.session_rotate, Duration::from_secs(24 * 3600));
+        assert!(!c.trust_proxy_headers);
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
     }
@@ -210,9 +245,12 @@ mod tests {
             ("ENCRYPTION_KEY", "CHANGE_ME_openssl_rand_base64_32"),
             ("SHUTDOWN_TIMEOUT_SECS", "0"),
             ("ENVIRONMENT", "staging"),
+            ("SESSION_TTL_HOURS", "0"),
+            ("SESSION_ROTATE_HOURS", "soon"),
+            ("TRUST_PROXY_HEADERS", "yes"),
         ])
         .unwrap_err();
-        assert_eq!(err.0.len(), 7, "{err}");
+        assert_eq!(err.0.len(), 10, "{err}");
         let text = err.to_string();
         assert!(!text.contains("hunter2") && !text.contains("c2hvcnQ="));
     }

@@ -1,7 +1,7 @@
-use std::{future::IntoFuture, time::Duration};
+use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
-use tikkit_api::{AppState, app, config::Config, db};
+use tikkit_api::{AppState, app_with, auth, config::Config, db};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
@@ -29,16 +29,23 @@ async fn main() -> anyhow::Result<()> {
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
-    let server = axum::serve(listener, app(AppState { pool: pool.clone() }))
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            tracing::info!(
-                "Shutting down; draining requests for up to {:?}",
-                config.shutdown_timeout
-            );
-            stopping.send_replace(true);
-        })
-        .into_future();
+    let app = app_with(
+        AppState { pool: pool.clone() },
+        auth::Settings::from(&config),
+    );
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        tracing::info!(
+            "Shutting down; draining requests for up to {:?}",
+            config.shutdown_timeout
+        );
+        stopping.send_replace(true);
+    })
+    .into_future();
     let deadline = async {
         let _ = stopped.wait_for(|stop| *stop).await;
         tokio::time::sleep(config.shutdown_timeout).await;

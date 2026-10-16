@@ -26,6 +26,8 @@ language; translations map them to display text.
 - `ticket_messages.kind`: `public_reply`, `internal_note`
 - `attachments.mime_type`: `image/png`, `image/jpeg`, `image/webp`
 - `team_membership_history.action`: `joined`, `left`
+- `audit_events.event_type`: `setup_completed`, `login_succeeded`,
+  `login_failed`, `logout`, `password_changed`, `session_revoked`
 
 ## Invariants enforced by the database
 
@@ -56,6 +58,9 @@ Rust validates and authorizes first; these constraints are the backstop.
   membership in one transaction; the deferred key is checked at commit.
 - Ticket assignees are members of the ticket's team (deferred composite key)
   and never the requester.
-- `ticket_events` and `team_membership_history` are append-only: UPDATE,
+- `organization` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`);
+  `setup_completed_at` closes first-admin setup.
+- `sessions.token_hash` (SHA-256 of the cookie token) is unique; tokens are never stored.
+- `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change.
