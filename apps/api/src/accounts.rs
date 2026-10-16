@@ -27,6 +27,8 @@ use crate::{
 const INVITATION_DEFAULT_HOURS: u32 = 168;
 const INVITATION_MAX_HOURS: u32 = 720;
 const RESET_TTL: &str = "interval '1 hour'";
+/// At most one recovery email per account in this window, whatever the rate limits allow.
+const RESET_COOLDOWN: &str = "interval '15 minutes'";
 
 // ponytail: ad-hoc Admin gate; replace with #11's shared role helpers.
 fn require_admin(user: &CurrentUser) -> Result<(), ApiError> {
@@ -307,11 +309,15 @@ pub struct InvitationPreview {
     responses(
         (status = 200, body = InvitationPreview),
         (status = 410, description = "`invitation_invalid`", body = crate::api::ErrorEnvelope),
+        (status = 429, description = "`rate_limited`", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn lookup_invitation(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
+    client: Client,
     Json(body): Json<TokenRequest>,
 ) -> Result<Json<InvitationPreview>, ApiError> {
+    auth.limit_ip("invitation", &client)?;
     let row: InvitationRow = sqlx::query_as(&format!(
         "SELECT {INVITATION_COLUMNS} FROM invitations WHERE token_hash = $1 AND {PENDING}"
     ))
@@ -452,6 +458,16 @@ pub async fn request_recovery(
     .await?;
     let mut tx = state.pool.begin().await?;
     let token = new_token();
+    // Runs for unknown usernames too (nil ID), so both paths do the same work.
+    // ponytail: two simultaneous requests can both pass; the rate limit bounds that.
+    let cooling: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM password_resets WHERE account_id = $1 AND used_at IS NULL
+           AND expires_at > now() AND created_at > now() - {RESET_COOLDOWN})"
+    ))
+    .bind(found.as_ref().map_or(Uuid::nil(), |f| f.0))
+    .fetch_one(&mut *tx)
+    .await?;
+    let found = found.filter(|_| !cooling);
     if let Some((id, ..)) = &found {
         sqlx::query(&format!(
             "INSERT INTO password_resets (account_id, token_hash, expires_at)
@@ -463,7 +479,8 @@ pub async fn request_recovery(
         .await?;
     }
     let subject = found.as_ref().map(|f| f.0);
-    let metadata = json!({ "ip": client.ip, "matched": found.is_some() });
+    let metadata =
+        json!({ "ip": client.ip, "matched": found.is_some() || cooling, "cooldown": cooling });
     audit(&mut *tx, "recovery_requested", None, subject, metadata).await?;
     tx.commit().await?;
 
@@ -523,11 +540,15 @@ pub struct ResetPasswordRequest {
         (status = 204, description = "Password changed; all sessions revoked"),
         (status = 410, description = "`reset_token_invalid`", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`new_password`)", body = crate::api::ErrorEnvelope),
+        (status = 429, description = "`rate_limited`", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn reset_password(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
+    client: Client,
     Json(body): Json<ResetPasswordRequest>,
 ) -> Result<StatusCode, ApiError> {
+    auth.limit_ip("reset", &client)?;
     let mut tx = state.pool.begin().await?;
     let (account_id, username): (Uuid, String) = sqlx::query_as(
         "SELECT a.id, a.username FROM password_resets r JOIN accounts a ON a.id = r.account_id
@@ -782,9 +803,28 @@ async fn set_active(
         audit(&mut *tx, "account_reactivated", actor, Some(id), json!({})).await?;
     } else {
         let revoked = revoke_all_sessions(&mut *tx, id).await?;
+        // Its recovery links and, for an Admin, the invitations it issued die with it.
+        sqlx::query(
+            "UPDATE password_resets SET used_at = now() WHERE account_id = $1 AND used_at IS NULL",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        let invitations = sqlx::query(
+            "UPDATE invitations SET revoked_at = now()
+             WHERE created_by = $1 AND accepted_at IS NULL AND revoked_at IS NULL",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         audit(&mut *tx, "account_deactivated", actor, Some(id), json!({})).await?;
         let metadata = json!({ "reason": "account_deactivated", "count": revoked });
         audit(&mut *tx, "session_revoked", actor, Some(id), metadata).await?;
+        if invitations > 0 {
+            let metadata = json!({ "reason": "issuer_deactivated", "count": invitations });
+            audit(&mut *tx, "invitation_revoked", actor, Some(id), metadata).await?;
+        }
     }
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
