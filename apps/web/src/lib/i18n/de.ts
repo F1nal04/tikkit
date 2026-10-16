@@ -77,10 +77,10 @@ export default {
     invitation_invalid:
       'Dieser Einladungslink ist ungültig, abgelaufen, widerrufen oder bereits verwendet. Bitten Sie eine Administratorin oder einen Administrator um einen neuen.',
     reset_token_invalid: 'Dieser Link ist ungültig, abgelaufen oder bereits verwendet.',
-    last_active_admin: 'Der letzte aktive Administrator kann nicht deaktiviert werden.',
+    last_active_admin: 'Mindestens ein aktiver Administrator muss erhalten bleiben.',
     forbidden: 'Das dürfen Sie nicht.',
     conflict: 'Diese Änderung widerspricht dem aktuellen Stand, z. B. weil das Konto ein Team leitet.',
-    not_found: 'Nicht gefunden.',
+    not_found: 'Diese Seite oder dieser Eintrag existiert nicht oder ist für Sie nicht verfügbar.',
     invalid_credentials: 'Benutzername oder Passwort ist falsch.',
     rate_limited: 'Zu viele Versuche. Bitte warten Sie eine Minute und versuchen Sie es erneut.',
     setup_already_completed: 'Die Einrichtung ist bereits abgeschlossen. Bitte melden Sie sich an.',
