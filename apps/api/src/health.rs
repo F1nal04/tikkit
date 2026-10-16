@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use axum::{Json, extract::State, http::StatusCode};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::{
     db::{self, SchemaProblem},
@@ -19,23 +20,45 @@ use crate::{
 /// Upper bound for each readiness check.
 pub const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct Health {
+    /// Always `ok` while the process serves requests.
+    #[schema(example = "ok")]
     pub status: &'static str,
 }
 
+/// Liveness probe.
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    tag = "system",
+    operation_id = "getHealth",
+    responses((status = 200, description = "The API process is up", body = Health))
+)]
 pub async fn live() -> Json<Health> {
     Json(Health { status: "ok" })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// Liveness probe (explicit path for orchestrators).
+#[utoipa::path(
+    get,
+    path = "/api/health/live",
+    tag = "system",
+    operation_id = "getHealthLive",
+    responses((status = 200, description = "The API process is up", body = Health))
+)]
+pub async fn live_alias() -> Json<Health> {
+    live().await
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseCheck {
     Ok,
     Unavailable,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SchemaCheck {
     Ok,
@@ -45,21 +68,35 @@ pub enum SchemaCheck {
     Unknown,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadinessChecks {
     pub database: DatabaseCheck,
     pub schema: SchemaCheck,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Readiness {
     /// `ready` or `not_ready`.
+    #[schema(example = "ready")]
     pub status: &'static str,
     pub checks: ReadinessChecks,
 }
 
+/// Readiness probe. Unlike other endpoints, a 503 here carries the
+/// `Readiness` body (not `ErrorBody`) so orchestrators and operators can see
+/// which check failed.
+#[utoipa::path(
+    get,
+    path = "/api/health/ready",
+    tag = "system",
+    operation_id = "getHealthReady",
+    responses(
+        (status = 200, description = "Database reachable and schema compatible", body = Readiness),
+        (status = 503, description = "A required dependency is not ready", body = Readiness)
+    )
+)]
 pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     let checks = check(&state).await;
     let is_ready = checks.database == DatabaseCheck::Ok && checks.schema == SchemaCheck::Ok;

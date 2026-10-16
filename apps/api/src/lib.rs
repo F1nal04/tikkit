@@ -6,15 +6,29 @@ pub mod health;
 pub mod server;
 pub mod state;
 
+// HTTP contract modules (issue #7): errors, extractors, pagination, request
+// ids, OpenAPI, shared DTOs. See docs/api.md.
+pub mod dto;
+pub mod error;
+pub mod extract;
+pub mod http;
+pub mod openapi;
+pub mod pagination;
+pub mod request_id;
+
 pub use config::Config;
 pub use state::AppState;
 
 pub fn app(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/api/health", get(health::live))
-        .route("/api/health/live", get(health::live))
+        .route("/api/health/live", get(health::live_alias))
         .route("/api/health/ready", get(health::ready))
-        .with_state(state)
+        .route("/api/openapi.json", get(openapi::serve))
+        .with_state(state);
+    // Shared HTTP contract (fallbacks, body limit, request ids). Keep this
+    // the last step after all routes are added, whatever the router state.
+    http::apply_api_layers(router)
 }
 
 #[cfg(test)]
@@ -51,5 +65,25 @@ mod tests {
             let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(payload, serde_json::json!({ "status": "ok" }));
         }
+    }
+
+    #[tokio::test]
+    async fn serves_openapi_document() {
+        let response = super::app(offline_state())
+            .oneshot(
+                Request::get("/api/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-request-id"));
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let served: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let generated: serde_json::Value =
+            serde_json::from_str(&crate::openapi::spec_json()).unwrap();
+        assert_eq!(served, generated);
     }
 }
