@@ -13,12 +13,13 @@ argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 dotenvy = "0.15"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "migrate", "macros", "json"] }
-time = "0.3"
+time = { version = "0.3", features = ["serde-well-known"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tower-http = { version = "0.7", features = ["request-id", "trace", "catch-panic", "util"] }
 tracing = "0.1"

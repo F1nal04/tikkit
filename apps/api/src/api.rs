@@ -42,6 +42,12 @@ pub enum ApiError {
     /// Too many attempts; retry after this many seconds.
     RateLimited(u64),
     SetupAlreadyCompleted,
+    /// Invitation token unknown, expired, revoked, or already used.
+    InvitationInvalid,
+    /// Password reset token unknown, expired, or already used.
+    ResetTokenInvalid,
+    /// The change would leave no active Admin.
+    LastActiveAdmin,
     /// Only where the resource's existence is already known to the caller;
     /// otherwise deny with `NotFound` so existence does not leak.
     Forbidden,
@@ -68,6 +74,9 @@ pub enum ErrorCode {
     CsrfRejected,
     RateLimited,
     SetupAlreadyCompleted,
+    InvitationInvalid,
+    ResetTokenInvalid,
+    LastActiveAdmin,
     Forbidden,
     NotFound,
     MethodNotAllowed,
@@ -161,6 +170,21 @@ impl ApiError {
                 StatusCode::CONFLICT,
                 ErrorCode::SetupAlreadyCompleted,
                 "Setup has already been completed.",
+            ),
+            InvitationInvalid => (
+                StatusCode::GONE,
+                ErrorCode::InvitationInvalid,
+                "This invitation link is invalid, expired, revoked, or already used.",
+            ),
+            ResetTokenInvalid => (
+                StatusCode::GONE,
+                ErrorCode::ResetTokenInvalid,
+                "This password reset link is invalid, expired, or already used.",
+            ),
+            LastActiveAdmin => (
+                StatusCode::CONFLICT,
+                ErrorCode::LastActiveAdmin,
+                "The last active administrator cannot be deactivated.",
             ),
             Forbidden => (
                 StatusCode::FORBIDDEN,
