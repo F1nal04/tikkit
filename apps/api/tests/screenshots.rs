@@ -267,6 +267,7 @@ async fn each_supported_format_is_decoded_reencoded_and_served_safely() {
         )
         .await;
         assert_eq!(r.json(), meta);
+        assert_eq!(r.header("cache-control"), "private, no-store");
         for (endpoint, disposition) in [("preview", "inline"), ("download", "attachment")] {
             let r = raw(
                 &w.app,
@@ -499,6 +500,22 @@ async fn pending_uploads_are_capped_per_account() {
     let r = upload(&w.app, &w.requester, "x.png", "image/png", png()).await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(r.field("file"), "too_many");
+    sqlx::query("DELETE FROM screenshots WHERE id = (SELECT id FROM screenshots LIMIT 1)")
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    let (first, second) = tokio::join!(
+        upload(&w.app, &w.requester, "a.png", "image/png", png()),
+        upload(&w.app, &w.requester, "b.png", "image/png", png()),
+    );
+    let mut statuses = [first.status.as_u16(), second.status.as_u16()];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [201, 422],
+        "concurrent uploads must not overshoot the per-account limit"
+    );
+    assert_eq!(count(&w).await, 50);
 }
 
 #[tokio::test]
@@ -722,20 +739,22 @@ async fn attached_screenshots_follow_current_ticket_visibility() {
 
     let check = async |label: &str, allowed: &[&str]| {
         for (name, cookie) in &cookies {
-            let r = raw(
-                &w.app,
-                "GET",
-                &format!("/api/screenshots/{id}/preview"),
-                cookie,
-                None,
-            )
-            .await;
-            let expected = if allowed.contains(name) {
-                StatusCode::OK
-            } else {
-                StatusCode::NOT_FOUND
-            };
-            assert_eq!(r.status, expected, "{label}: {name}");
+            for suffix in ["", "/preview", "/download"] {
+                let r = raw(
+                    &w.app,
+                    "GET",
+                    &format!("/api/screenshots/{id}{suffix}"),
+                    cookie,
+                    None,
+                )
+                .await;
+                let expected = if allowed.contains(name) {
+                    StatusCode::OK
+                } else {
+                    StatusCode::NOT_FOUND
+                };
+                assert_eq!(r.status, expected, "{label}: {name} {suffix}");
+            }
         }
     };
     // General queue: every staff role, never other requesters.
@@ -909,4 +928,142 @@ async fn storage_failures_leave_no_misleading_records() {
     .await;
     assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(r.json()["error"]["code"], "internal");
+}
+
+#[tokio::test]
+async fn saving_a_draft_wins_against_waiting_delete_and_cleanup() {
+    let Some(w) = world().await else { return };
+    let id = upload_png(&w, &w.requester).await;
+    let owner: Uuid =
+        sqlx::query_scalar("SELECT uploader_account_id FROM screenshots WHERE id = $1")
+            .bind(id)
+            .fetch_one(&w.db.pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE screenshots SET touched_at = now() - interval '25 hours' WHERE id = $1")
+        .bind(id)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    let mut saving = w.db.pool.begin().await.unwrap();
+    screenshots::keep_pending(&mut saving, owner, &[id])
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ticket_drafts (requester_account_id, intake) VALUES ($1, $2)")
+        .bind(owner)
+        .bind(json!({"screenshot_ids": [id]}))
+        .execute(&mut *saving)
+        .await
+        .unwrap();
+    let pool = w.db.pool.clone();
+    let dir = screenshot_dir(&pool);
+    let cleanup = tokio::spawn(async move { screenshots::cleanup(&pool, &dir).await });
+    let app = w.app.clone();
+    let cookie = w.requester.clone();
+    let deletion = tokio::spawn(async move {
+        raw(
+            &app,
+            "DELETE",
+            &format!("/api/screenshots/{id}"),
+            &cookie,
+            None,
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0",
+            )
+            .fetch_one(&w.db.pool)
+            .await
+            .unwrap();
+            if waiting == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("delete and cleanup must both contend with the draft save");
+    saving.commit().await.unwrap();
+    assert_eq!(deletion.await.unwrap().status, StatusCode::CONFLICT);
+    assert!(cleanup.await.unwrap().unwrap().is_empty());
+    assert_eq!(count(&w).await, 1);
+    assert!(screenshot_dir(&w.db.pool).join(id.to_string()).exists());
+}
+
+#[tokio::test]
+async fn deletion_racing_submission_cannot_leave_an_attached_missing_file() {
+    let Some(w) = world().await else { return };
+    let id = upload_png(&w, &w.requester).await;
+    let body = json!({"idempotency_key": Uuid::new_v4(), "intake": {
+        "category_id": w.category, "priority_id": w.priority,
+        "subject": "Crash", "description": "Help", "screenshot_ids": [id]}});
+    let path = format!("/api/screenshots/{id}");
+    let (submission, deletion) = tokio::join!(
+        call(
+            &w.app,
+            "POST",
+            "/api/tickets",
+            Some(body),
+            Some(&w.requester)
+        ),
+        raw(&w.app, "DELETE", &path, &w.requester, None),
+    );
+    match submission.status {
+        StatusCode::CREATED => {
+            assert_eq!(deletion.status, StatusCode::CONFLICT);
+            let attached: bool =
+                sqlx::query_scalar("SELECT ticket_id IS NOT NULL FROM screenshots WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&w.db.pool)
+                    .await
+                    .unwrap();
+            assert!(attached);
+            assert!(screenshot_dir(&w.db.pool).join(id.to_string()).exists());
+        }
+        StatusCode::UNPROCESSABLE_ENTITY => {
+            assert_eq!(deletion.status, StatusCode::NO_CONTENT);
+            assert_eq!(count(&w).await, 0);
+            let tickets: i64 = sqlx::query_scalar("SELECT count(*) FROM tickets")
+                .fetch_one(&w.db.pool)
+                .await
+                .unwrap();
+            assert_eq!(tickets, 0);
+        }
+        status => panic!(
+            "unexpected submission outcome {status}: {}",
+            submission.body
+        ),
+    }
+}
+
+#[tokio::test]
+async fn database_commit_failure_leaves_files_for_safe_reconciliation() {
+    let Some(w) = world().await else { return };
+    for statement in [
+        "CREATE FUNCTION reject_screenshot_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit rejected'; END $$",
+        "CREATE CONSTRAINT TRIGGER reject_screenshot_commit AFTER INSERT ON screenshots DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_screenshot_commit()",
+    ] {
+        sqlx::query(statement).execute(&w.db.pool).await.unwrap();
+    }
+    let response = upload(&w.app, &w.requester, "a.png", "image/png", png()).await;
+    assert_eq!(response.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(count(&w).await, 0);
+    let files = stored_files(&w);
+    assert_eq!(
+        files.len(),
+        1,
+        "a commit error must leave the file for reconciliation instead of risking a committed row"
+    );
+    let path = screenshot_dir(&w.db.pool).join(&files[0]);
+    std::fs::File::open(&path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(25 * 3600))
+        .unwrap();
+    screenshots::cleanup(&w.db.pool, &screenshot_dir(&w.db.pool))
+        .await
+        .unwrap();
+    assert!(!path.exists(), "the unreferenced file is eventually swept");
 }

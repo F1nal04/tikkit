@@ -22,7 +22,14 @@ The upload is untrusted. In order:
 3. Animated PNG (APNG) and animated WebP are `file: animated`.
 4. Header dimensions are checked before any pixels are allocated: each side at
    most 16,384 and at most 40 megapixels (`file: dimensions_too_large`). The
-   decoder also runs under matching allocation limits, two decodes at a time.
+   decoder also runs under matching allocation limits. PNG construction has a
+   separate 16 MiB internal allocation budget, bounding compressed ICC metadata
+   before any pixel allocation; profiles exceeding it are dropped by the decoder.
+   WebP chunk lengths must fit the received bytes before the decoder sees them.
+   Two uploads at a time may buffer, decode, or write files per API process;
+   requests wait in FIFO order before buffering, and cancelled requests retain
+   their capacity until their blocking work actually finishes. Body reads time
+   out after 30 seconds (`400 bad_request`) so stalled uploads release capacity.
 5. The image is fully decoded (`file: corrupt` on failure), the EXIF orientation
    applied, and re-encoded in the same format (JPEG at quality 90, WebP
    lossless). Only pixels and the ICC colour profile survive: EXIF/GPS, text
@@ -31,12 +38,14 @@ The upload is untrusted. In order:
 6. The filename keeps only its base name, letters, digits, space, `-_.()`
    (others become `_`), at most 100 characters, plus the canonical extension
    (`png`, `jpg`, `webp`); an empty name becomes `screenshot`.
-7. An account may hold 50 unattached uploads (`file: too_many`).
+7. An account may hold 50 unattached uploads (`file: too_many`). A per-account
+   database lock serializes the count and insert across API processes.
 
-Storage writes a temp file, fsyncs, and renames it to `SCREENSHOT_DIR/<id>`
-before the metadata row commits. A failed write is `500 internal` with no row; a
-failed insert removes the file. Rows never point at partial files. Uploads and
-deletions record `screenshot_uploaded` / `screenshot_deleted` audit events (ID,
+Storage writes a temp file, fsyncs it, renames it to `SCREENSHOT_DIR/<id>`,
+and fsyncs the parent directory before the metadata row commits. A failed write
+is `500 internal` with no row; a failed database write leaves an unreferenced file for the expiry sweep. A lost
+commit acknowledgement never causes deletion of a possibly committed file.
+Rows never point at partial files. Uploads and deletions record `screenshot_uploaded` / `screenshot_deleted` audit events (ID,
 type, size; no filename or bytes).
 
 ## Pending uploads, drafts, and submission
@@ -72,7 +81,7 @@ save keeps. Several API processes may run it at once.
 
 ## Reading
 
-- `GET /api/screenshots/{id}`: metadata.
+- `GET /api/screenshots/{id}`: metadata (`Cache-Control: private, no-store`).
 - `GET /api/screenshots/{id}/preview`: the bytes inline, for `<img>`.
 - `GET /api/screenshots/{id}/download`: the same bytes as an attachment.
 

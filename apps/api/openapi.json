@@ -1817,6 +1817,16 @@
               }
             }
           },
+          "400": {
+            "description": "`bad_request` (incomplete upload or body read exceeded 30 seconds)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "401": {
             "description": "`unauthorized`",
             "content": {
@@ -1848,7 +1858,7 @@
             }
           },
           "500": {
-            "description": "`internal` (storage failure; nothing was recorded)",
+            "description": "`internal` (storage or database failure; a commit acknowledgement may be lost)",
             "content": {
               "application/json": {
                 "schema": {
