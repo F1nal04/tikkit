@@ -126,6 +126,7 @@ export default {
     teams: 'Teams',
     settings: 'Organisationseinstellungen',
     email: 'Ausgehende E-Mail',
+    catalog: 'Ticketkatalog',
   },
   myTicketsTitle: 'Meine Tickets',
   myTicketsEmpty: 'Sie haben noch keine Tickets eingereicht.',
@@ -193,7 +194,6 @@ export default {
   smtpLastTestOk: 'Der letzte Test war erfolgreich.',
   smtpLastTestFailed: 'Der letzte Test ist fehlgeschlagen.',
   catalog: {
-    nav: 'Katalog',
     title: 'Ticketkatalog',
     intro:
       'Alle Kategorien nutzen dasselbe Ticketformular: Kategorie, Betreff, Beschreibung, Priorität und optionale Screenshots. Bedingte Felder ergänzen Angaben für die gewählten Kategorien. Eine Kategorie wählt nie ein Support-Team aus.',

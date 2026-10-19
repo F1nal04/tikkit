@@ -123,6 +123,7 @@ export default {
     teams: 'Teams',
     settings: 'Organization settings',
     email: 'Outbound email',
+    catalog: 'Ticket catalog',
   },
   myTicketsTitle: 'My tickets',
   myTicketsEmpty: 'You have not submitted any tickets yet.',
@@ -187,7 +188,6 @@ export default {
   smtpLastTestOk: 'The last test succeeded.',
   smtpLastTestFailed: 'The last test failed.',
   catalog: {
-    nav: 'Catalog',
     title: 'Ticket catalog',
     intro:
       'Every category uses the same ticket form: category, subject, description, priority, and optional screenshots. Conditional fields add context for the categories you choose. A category never selects a support team.',

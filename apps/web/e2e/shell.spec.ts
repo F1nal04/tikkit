@@ -43,7 +43,7 @@ test('a Team Lead gets team tools, an Admin gets administration', async ({ page 
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page).not.toHaveURL(/\/login/)
   await openMenu(page)
-  await expect(navLinks(page)).toHaveText(['My tickets', 'New ticket', 'General queue', 'Overview', 'Accounts', 'Teams', 'Organization settings', 'Outbound email'])
+  await expect(navLinks(page)).toHaveText(['My tickets', 'New ticket', 'General queue', 'Overview', 'Accounts', 'Teams', 'Organization settings', 'Outbound email', 'Ticket catalog'])
   await page.getByRole('link', { name: 'Accounts' }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Accounts')
   await expect(page.getByRole('article', { name: 'operator', exact: true })).toBeVisible()
