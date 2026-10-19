@@ -527,7 +527,7 @@ struct StateRow {
 /// The actor as of this transaction. Share locks make a concurrent role,
 /// activation, membership, or leadership change wait until this transition
 /// commits, so a revoked writer can never commit after the revocation.
-async fn lock_actor(conn: &mut PgConnection, id: Uuid) -> Result<Actor, ApiError> {
+pub(crate) async fn lock_actor(conn: &mut PgConnection, id: Uuid) -> Result<Actor, ApiError> {
     let role: Option<String> =
         sqlx::query_scalar("SELECT role::text FROM accounts WHERE id = $1 AND is_active FOR SHARE")
             .bind(id)

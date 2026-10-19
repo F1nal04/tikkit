@@ -3353,6 +3353,271 @@
           }
         }
       }
+    },
+    "/api/tickets/{id}/messages": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Conversation oldest first, with private rows excluded in SQL before pagination.\n`cursor` is an opaque sequence position, not the default timestamp cursor.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing or invisible ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/notes": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Add a private internal note. Author, staff role, and visibility come from\nthe server's current ticket policy, never client-supplied fields.",
+        "operationId": "note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Committed private note (same receipt on identical retry)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff writer denied (including self-handling)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing or invisible ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key reused with different input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid body or screenshots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/replies": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Send a public reply. Ownership takes precedence over staff role: the ticket's\nsubmitting account always speaks as requester. No AI work is scheduled.",
+        "operationId": "reply",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Committed message (same receipt on identical retry)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff writer denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing or invisible ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Requester ticket not open, or key reused with different input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid body or screenshots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3509,6 +3774,13 @@
             "description": "The choice label or the typed text."
           }
         }
+      },
+      "AuthorKind": {
+        "type": "string",
+        "enum": [
+          "requester",
+          "staff"
+        ]
       },
       "CancellationPolicy": {
         "type": "string",
@@ -4222,6 +4494,76 @@
         },
         "additionalProperties": false
       },
+      "Message": {
+        "type": "object",
+        "required": [
+          "id",
+          "sequence",
+          "kind",
+          "author_kind",
+          "author_account_id",
+          "author_display_name",
+          "body",
+          "body_html",
+          "screenshot_ids",
+          "created_at"
+        ],
+        "properties": {
+          "author_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Immutable account identity for staff consumers; null in requester responses."
+          },
+          "author_display_name": {
+            "type": "string",
+            "description": "User-authored plain text; render as text, never HTML."
+          },
+          "author_kind": {
+            "$ref": "#/components/schemas/AuthorKind"
+          },
+          "body": {
+            "type": "string",
+            "description": "Original plain text; render as text, never HTML or Markdown."
+          },
+          "body_html": {
+            "type": "string",
+            "description": "HTML-escaped text for renderers; no tags, links, or embedded attachments.\nPreserve newlines with CSS `white-space: pre-wrap`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MessageKind"
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable ascending order; gaps are valid. Never order by transaction timestamps."
+          }
+        }
+      },
+      "MessageKind": {
+        "type": "string",
+        "enum": [
+          "public_reply",
+          "internal_note"
+        ]
+      },
       "NewCategory": {
         "type": "object",
         "required": [
@@ -4562,6 +4904,88 @@
                     "string",
                     "null"
                   ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Message": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "sequence",
+                "kind",
+                "author_kind",
+                "author_account_id",
+                "author_display_name",
+                "body",
+                "body_html",
+                "screenshot_ids",
+                "created_at"
+              ],
+              "properties": {
+                "author_account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "Immutable account identity for staff consumers; null in requester responses."
+                },
+                "author_display_name": {
+                  "type": "string",
+                  "description": "User-authored plain text; render as text, never HTML."
+                },
+                "author_kind": {
+                  "$ref": "#/components/schemas/AuthorKind"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Original plain text; render as text, never HTML or Markdown."
+                },
+                "body_html": {
+                  "type": "string",
+                  "description": "HTML-escaped text for renderers; no tags, links, or embedded attachments.\nPreserve newlines with CSS `white-space: pre-wrap`."
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/MessageKind"
+                },
+                "screenshot_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "sequence": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Stable ascending order; gaps are valid. Never order by transaction timestamps."
                 }
               }
             }
@@ -5070,6 +5494,33 @@
             "format": "int32"
           }
         }
+      },
+      "SendMessage": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Plain text, 1–10,000 characters, nonblank. HTML and Markdown are not interpreted."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "New UUID per send. Reuse the UUID and exact input to retry safely."
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Own pending screenshot uploads (at most 10, distinct)."
+          }
+        },
+        "additionalProperties": false
       },
       "SetupRequest": {
         "type": "object",

@@ -466,6 +466,7 @@ struct AccessRow {
     team_id: Option<Uuid>,
     assignee_account_id: Option<Uuid>,
     status: Option<String>,
+    message_kind: Option<String>,
 }
 
 /// The screenshot if the caller may read it now: a pending upload only by its
@@ -473,26 +474,36 @@ struct AccessRow {
 /// isolation, AI-solved records for the requester and Admins only). Authorship
 /// grants nothing once attached. Otherwise `404`, same as a missing ID.
 async fn readable(pool: &PgPool, user: &CurrentUser, id: Uuid) -> Result<Screenshot, ApiError> {
+    // Scope and current membership must agree, even across a concurrent transfer.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
     let row: AccessRow = sqlx::query_as(&format!(
         "SELECT {COLUMNS}, s.uploader_account_id, s.ticket_id, t.requester_account_id, t.team_id,
-                t.assignee_account_id, t.status::text AS status
-         FROM screenshots s LEFT JOIN tickets t ON t.id = s.ticket_id WHERE s.id = $1"
+                t.assignee_account_id, t.status::text AS status, m.kind AS message_kind
+         FROM screenshots s LEFT JOIN tickets t ON t.id = s.ticket_id
+         LEFT JOIN ticket_messages m ON m.id = s.message_id WHERE s.id = $1"
     ))
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
     let allowed = match (row.ticket_id, row.requester_account_id, row.status) {
         (None, ..) => row.uploader_account_id == user.account_id(),
         (Some(_), Some(requester_account_id), Some(status)) => {
-            let actor = Actor::load(pool, user).await?;
+            let actor = Actor::load(&mut *tx, user).await?;
             let scope = TicketScope {
                 requester_account_id,
                 team_id: row.team_id,
                 assignee_account_id: row.assignee_account_id,
                 status: ident(status)?,
             };
-            authz::ticket_view(&actor, &scope).is_some()
+            if row.message_kind.as_deref() == Some("internal_note") {
+                crate::messages::can_read_notes(&actor, &scope)
+            } else {
+                authz::ticket_view(&actor, &scope).is_some()
+            }
         }
         _ => false,
     };
@@ -711,6 +722,28 @@ pub async fn attach(
     ids: &[Uuid],
     ticket_id: Uuid,
 ) -> Result<(), ApiError> {
+    attach_with_message(db, uploader, ids, ticket_id, None).await
+}
+
+/// Bind a message and its screenshots atomically, before the rows are frozen.
+/// The caller has authorized and inserted the message in this transaction.
+pub async fn attach_message(
+    db: &mut PgConnection,
+    uploader: Uuid,
+    ids: &[Uuid],
+    ticket_id: Uuid,
+    message_id: Uuid,
+) -> Result<(), ApiError> {
+    attach_with_message(db, uploader, ids, ticket_id, Some(message_id)).await
+}
+
+async fn attach_with_message(
+    db: &mut PgConnection,
+    uploader: Uuid,
+    ids: &[Uuid],
+    ticket_id: Uuid,
+    message_id: Option<Uuid>,
+) -> Result<(), ApiError> {
     if ids.is_empty() {
         return Ok(());
     }
@@ -718,12 +751,13 @@ pub async fn attach(
         return Err(invalid_ids());
     }
     let attached = sqlx::query(
-        "UPDATE screenshots SET ticket_id = $3, attached_at = now()
+        "UPDATE screenshots SET ticket_id = $3, message_id = $4, attached_at = now()
          WHERE id = ANY($1) AND uploader_account_id = $2 AND ticket_id IS NULL",
     )
     .bind(ids)
     .bind(uploader)
     .bind(ticket_id)
+    .bind(message_id)
     .execute(db)
     .await?
     .rows_affected();

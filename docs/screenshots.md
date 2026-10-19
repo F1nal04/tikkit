@@ -86,12 +86,16 @@ save keeps. Several API processes may run it at once.
 - `GET /api/screenshots/{id}/download`: the same bytes as an attachment.
 
 Every request rechecks access, so stale URLs stop working when access ends.
-Pending: the uploader only. Attached: exactly `authz::ticket_view` of the
-ticket right now: its requester; staff on general-queue tickets; after
+Pending: the uploader only. Attached public screenshots: exactly
+`authz::ticket_view` of the ticket right now: its requester; staff on general-queue tickets; after
 dispatch only current members of the destination team and Admins (previous
 dispatchers, transferred-away teams, and removed members get `404`); AI-stage
-and AI-solved tickets only the requester and Admins. Uploading an image grants
-nothing once it is attached. Anything else is `404`, identical to a missing ID.
+and AI-solved tickets only the requester and Admins. Internal-note screenshots
+additionally require the staff representation and a current destination team (or Admin); the requester never gets them, even
+with a staff role. Metadata, previews, and downloads share this rule. Notes
+on a ticket returned to general intake remain Admin-only until dispatch.
+Uploading an image grants nothing once it is attached. Anything else is `404`,
+identical to a missing ID.
 
 Responses carry the stored, validated type (never the client's),
 `X-Content-Type-Options: nosniff`, `Content-Disposition: inline|attachment;
@@ -103,15 +107,14 @@ fails with `500 internal` and is logged.
 Files are never published under a public URL, including for AI providers: the
 later AI integration reads authorized intake bytes through the backend.
 
-## Later additions
+## Message screenshots
 
-Requester public replies and staff internal notes (#21) reuse the same upload
-endpoint and `screenshots::attach(db, uploader, ids, ticket_id)` in their own
-transaction after their own permission checks (open status, reply/note
-permission, assignee/Team Lead/Admin on claimed tickets, AI-solved and
-closed records accept nothing). Message visibility for internal-note images
-belongs to that work; until then every attached screenshot is intake and
-follows the public ticket view.
+Public replies and internal notes reuse the upload endpoint. Their transaction
+calls `screenshots::attach_message(db, uploader, ids, ticket_id, message_id)`,
+which shares the `screenshots::attach` implementation and atomically freezes
+both associations. `screenshots.message_id` identifies message screenshots;
+NULL identifies intake. The caller checks open status, ownership or staff
+write permissions before attachment. See [conversations.md](conversations.md).
 
 ## Storage, backup, and restore
 
