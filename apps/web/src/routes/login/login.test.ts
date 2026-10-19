@@ -16,7 +16,7 @@ afterEach(() => {
 async function signIn(locale: 'en' | 'de', response: Response) {
   const fetch = vi.fn().mockResolvedValue(response)
   vi.stubGlobal('fetch', fetch)
-  render(Page, { props: { data: { locale, user: null }, params: {} } })
+  render(Page, { props: { data: { locale, user: null, next: null }, params: {} } })
   await fireEvent.input(screen.getByLabelText(locale === 'en' ? 'Username' : 'Benutzername'), {
     target: { value: 'Alice' },
   })
@@ -51,4 +51,10 @@ test('shows one generic message for failed logins', async () => {
 test('explains rate limiting', async () => {
   await signIn('en', json(429, { error: { code: 'rate_limited', message: 'x' }, request_id: 'r' }))
   expect((await screen.findByRole('alert')).textContent).toContain('Too many attempts')
+})
+
+test('keeps the entered password when a temporary outage prevents sign-in', async () => {
+  await signIn('en', json(503, { error: { code: 'unavailable', message: 'x' }, request_id: 'r' }))
+  await screen.findByRole('alert')
+  expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('correct horse battery')
 })

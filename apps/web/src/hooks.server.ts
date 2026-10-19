@@ -11,7 +11,8 @@ export const handle: Handle = ({ event, resolve }) => {
     event.request.headers.get('accept-language'),
   )
   if (query === locale) {
-    event.cookies.set('lang', locale, { path: '/', sameSite: 'lax', maxAge: 31536000 })
+    // The browser language selector updates this preference cookie.
+    event.cookies.set('lang', locale, { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 31536000 })
   }
   event.locals.locale = locale
   // Pages are rendered per user and per language; never let caches share them.
