@@ -164,6 +164,25 @@ async fn private_notes_and_their_images_never_reach_any_requester_response() {
         Value::Null,
         "hidden notes must not create extra pages"
     );
+    // A global counter would let requesters count hidden notes from its gaps.
+    assert!(page.body["items"][0].get("sequence").is_none());
+    // A hidden note's ID as cursor behaves like an unknown one, revealing no position.
+    let r = w.send(ticket, "replies", &op, body("Later answer")).await;
+    assert_eq!(r.status, 201, "{}", r.body);
+    let forged = tikkit_api::api::Cursor {
+        created_at: time::OffsetDateTime::now_utc(),
+        id: note_id.parse().unwrap(),
+    };
+    let r = call(
+        &w.app,
+        "GET",
+        &format!("/api/tickets/{ticket}/messages?cursor={}", forged.encode()),
+        None,
+        Some(&requester),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["items"], json!([]));
     for uri in [
         format!("/api/tickets/{ticket}/messages"),
         format!("/api/tickets/{ticket}"),
@@ -191,7 +210,7 @@ async fn private_notes_and_their_images_never_reach_any_requester_response() {
     .fetch_all(&w.db.pool)
     .await
     .unwrap();
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 3);
     assert_eq!(events[0].0, "public_reply_added");
     assert_eq!(events[1].0, "internal_note_added");
     assert!(
@@ -316,12 +335,9 @@ async fn plain_text_is_escaped_and_messages_and_images_are_append_only() {
     let r = w.send(ticket, "replies", &cookie, input).await;
     assert_eq!(r.status, 201, "{}", r.body);
     assert_eq!(r.body["body"], xss);
-    let html = r.body["body_html"].as_str().unwrap();
-    assert!(!html.contains('<'));
-    assert!(html.contains("&lt;script&gt;"));
-    assert!(html.contains("&amp;"));
-    assert!(html.contains("&quot;quoted&quot;"));
-    assert!(!html.contains("<a"));
+    // Plain text only: no server-rendered HTML representation to inject into a page.
+    let fields: Vec<&String> = r.body.as_object().unwrap().keys().collect();
+    assert!(!fields.iter().any(|k| k.contains("html")), "{fields:?}");
     let stored: String = sqlx::query_scalar("SELECT body FROM ticket_messages WHERE ticket_id=$1")
         .bind(ticket)
         .fetch_one(&w.db.pool)
@@ -411,24 +427,28 @@ async fn retries_are_atomic_concurrent_sends_have_commit_order_and_pages_never_s
     }
     let mut uri = format!("/api/tickets/{ticket}/messages?limit=2");
     let mut ids = Vec::new();
-    let mut last = 0;
     loop {
         let r = call(&w.app, "GET", &uri, None, Some(&cookie)).await;
         assert_eq!(r.status, 200, "{}", r.body);
         for m in r.body["items"].as_array().unwrap() {
-            let seq = m["sequence"].as_i64().unwrap();
-            assert!(seq > last);
-            last = seq;
-            ids.push(m["id"].as_str().unwrap().to_owned());
+            ids.push(m["id"].as_str().unwrap().parse::<Uuid>().unwrap());
         }
         match r.body["next_cursor"].as_str() {
             Some(c) => uri = format!("/api/tickets/{ticket}/messages?limit=2&cursor={c}"),
             None => break,
         }
     }
-    ids.sort();
-    ids.dedup();
-    assert_eq!(ids.len(), 13);
+    let committed: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM ticket_messages WHERE ticket_id=$1 ORDER BY sequence")
+            .bind(ticket)
+            .fetch_all(&w.db.pool)
+            .await
+            .unwrap();
+    assert_eq!(committed.len(), 13);
+    assert_eq!(
+        ids, committed,
+        "pages follow commit order without gaps or repeats"
+    );
     let transitions: i64=sqlx::query_scalar("SELECT count(*) FROM ticket_events WHERE ticket_id=$1 AND event_type='requester_responded'").bind(ticket).fetch_one(&w.db.pool).await.unwrap();
     assert_eq!(transitions, 1);
     let events: i64 = sqlx::query_scalar(

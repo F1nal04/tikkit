@@ -1,6 +1,5 @@
 //! Append-only public replies and private notes. See docs/conversations.md.
 use axum::{extract::State, http::StatusCode};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -11,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    api::{ApiError, FieldErrors, Json, Page, Pagination, Path, Query, Role, TicketStatus},
+    api::{ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, Role, TicketStatus},
     auth::{CurrentUser, ident},
     authz::{self, Actor, Permission, TicketScope, TicketView},
     lifecycle::{self, By, Transition},
@@ -49,8 +48,6 @@ pub struct SendMessage {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Message {
     pub id: Uuid,
-    /// Stable ascending order; gaps are valid. Never order by transaction timestamps.
-    pub sequence: i64,
     pub kind: MessageKind,
     pub author_kind: AuthorKind,
     /// Immutable account identity for staff consumers; null in requester responses.
@@ -60,9 +57,6 @@ pub struct Message {
     pub author_display_name: String,
     /// Original plain text; render as text, never HTML or Markdown.
     pub body: String,
-    /// HTML-escaped text for renderers; no tags, links, or embedded attachments.
-    /// Preserve newlines with CSS `white-space: pre-wrap`.
-    pub body_html: String,
     pub screenshot_ids: Vec<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
@@ -72,7 +66,6 @@ pub struct Message {
 #[derive(sqlx::FromRow)]
 struct MessageRow {
     id: Uuid,
-    sequence: i64,
     kind: String,
     author_kind: String,
     author_account_id: Uuid,
@@ -86,12 +79,10 @@ impl MessageRow {
     fn visible(self, view: TicketView) -> Result<Message, ApiError> {
         Ok(Message {
             id: self.id,
-            sequence: self.sequence,
             kind: ident(self.kind)?,
             author_kind: ident(self.author_kind)?,
             author_account_id: (view == TicketView::Staff).then_some(self.author_account_id),
             author_display_name: self.author_display_name,
-            body_html: escape(&self.body),
             body: self.body,
             screenshot_ids: self.screenshot_ids,
             created_at: self.created_at,
@@ -99,25 +90,10 @@ impl MessageRow {
     }
 }
 
-const SELECT: &str = "SELECT m.id, m.sequence, m.kind, m.author_kind, m.author_account_id,
+const SELECT: &str = "SELECT m.id, m.kind, m.author_kind, m.author_account_id,
     a.display_name AS author_display_name, m.body, m.created_at,
     ARRAY(SELECT s.id FROM screenshots s WHERE s.message_id = m.id ORDER BY s.id) AS screenshot_ids
     FROM ticket_messages m JOIN accounts a ON a.id = m.author_account_id";
-
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
 
 /// Private notes require the staff representation AND a destination team (or
 /// Admin). Returning a ticket to general intake must not publish its notes.
@@ -150,7 +126,8 @@ async fn scope(db: &mut PgConnection, id: Uuid, lock: bool) -> Result<TicketScop
 }
 
 /// Conversation oldest first, with private rows excluded in SQL before pagination.
-/// `cursor` is an opaque sequence position, not the default timestamp cursor.
+/// Ordered by commit sequence (never exposed: its gaps would count hidden notes);
+/// the cursor names the last message, and one the caller cannot see ends the list.
 #[utoipa::path(get, path = "/api/tickets/{id}/messages", tag = "tickets",
     params(("id" = Uuid, Path), Pagination),
     responses((status = 200, body = Page<Message>),
@@ -163,21 +140,7 @@ pub async fn list(
     Path(id): Path<Uuid>,
     Query(page): Query<Pagination>,
 ) -> Result<Json<Page<Message>>, ApiError> {
-    let after = match &page.cursor {
-        None => 0,
-        Some(raw) => URL_SAFE_NO_PAD
-            .decode(raw)
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .and_then(|s| s.parse::<i64>().ok())
-            .filter(|n| *n > 0)
-            .ok_or_else(|| {
-                ApiError::Validation(FieldErrors::from([(
-                    "cursor".into(),
-                    vec!["invalid_cursor"],
-                )]))
-            })?,
-    };
+    let after = page.cursor()?.map(|c| c.id);
     let mut tx = state.pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -185,9 +148,11 @@ pub async fn list(
     let actor = Actor::load(&mut *tx, &user).await?;
     let scope = scope(&mut tx, id, false).await?;
     let view = authz::ticket_view(&actor, &scope).ok_or(ApiError::NotFound)?;
-    let mut rows: Vec<MessageRow> = sqlx::query_as(&format!(
+    let rows: Vec<MessageRow> = sqlx::query_as(&format!(
         "{SELECT}
-        WHERE m.ticket_id = $1 AND m.sequence > $2 AND (m.kind = 'public_reply' OR $3)
+        WHERE m.ticket_id = $1 AND (m.kind = 'public_reply' OR $3)
+          AND ($2::uuid IS NULL OR m.sequence > (SELECT c.sequence FROM ticket_messages c
+              WHERE c.id = $2 AND c.ticket_id = $1 AND (c.kind = 'public_reply' OR $3)))
         ORDER BY m.sequence LIMIT $4"
     ))
     .bind(id)
@@ -196,17 +161,18 @@ pub async fn list(
     .bind(page.limit() + 1)
     .fetch_all(&mut *tx)
     .await?;
-    let more = rows.len() as i64 > page.limit();
-    rows.truncate(page.limit() as usize);
-    let next_cursor = rows
-        .last()
-        .filter(|_| more)
-        .map(|r| URL_SAFE_NO_PAD.encode(r.sequence.to_string()));
-    let items = rows
-        .into_iter()
-        .map(|r| r.visible(view))
-        .collect::<Result<_, _>>()?;
-    Ok(Json(Page { items, next_cursor }))
+    let page = Page::from_rows(rows, page.limit(), |r| Cursor {
+        created_at: r.created_at,
+        id: r.id,
+    });
+    Ok(Json(Page {
+        items: page
+            .items
+            .into_iter()
+            .map(|r| r.visible(view))
+            .collect::<Result<_, _>>()?,
+        next_cursor: page.next_cursor,
+    }))
 }
 
 /// Send a public reply. Ownership takes precedence over staff role: the ticket's

@@ -3359,7 +3359,7 @@
         "tags": [
           "tickets"
         ],
-        "summary": "Conversation oldest first, with private rows excluded in SQL before pagination.\n`cursor` is an opaque sequence position, not the default timestamp cursor.",
+        "summary": "Conversation oldest first, with private rows excluded in SQL before pagination.\nOrdered by commit sequence (never exposed: its gaps would count hidden notes);\nthe cursor names the last message, and one the caller cannot see ends the list.",
         "operationId": "list",
         "parameters": [
           {
@@ -4498,13 +4498,11 @@
         "type": "object",
         "required": [
           "id",
-          "sequence",
           "kind",
           "author_kind",
           "author_account_id",
           "author_display_name",
           "body",
-          "body_html",
           "screenshot_ids",
           "created_at"
         ],
@@ -4528,10 +4526,6 @@
             "type": "string",
             "description": "Original plain text; render as text, never HTML or Markdown."
           },
-          "body_html": {
-            "type": "string",
-            "description": "HTML-escaped text for renderers; no tags, links, or embedded attachments.\nPreserve newlines with CSS `white-space: pre-wrap`."
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -4549,11 +4543,6 @@
               "type": "string",
               "format": "uuid"
             }
-          },
-          "sequence": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Stable ascending order; gaps are valid. Never order by transaction timestamps."
           }
         }
       },
@@ -4930,13 +4919,11 @@
               "type": "object",
               "required": [
                 "id",
-                "sequence",
                 "kind",
                 "author_kind",
                 "author_account_id",
                 "author_display_name",
                 "body",
-                "body_html",
                 "screenshot_ids",
                 "created_at"
               ],
@@ -4960,10 +4947,6 @@
                   "type": "string",
                   "description": "Original plain text; render as text, never HTML or Markdown."
                 },
-                "body_html": {
-                  "type": "string",
-                  "description": "HTML-escaped text for renderers; no tags, links, or embedded attachments.\nPreserve newlines with CSS `white-space: pre-wrap`."
-                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -4981,11 +4964,6 @@
                     "type": "string",
                     "format": "uuid"
                   }
-                },
-                "sequence": {
-                  "type": "integer",
-                  "format": "int64",
-                  "description": "Stable ascending order; gaps are valid. Never order by transaction timestamps."
                 }
               }
             }

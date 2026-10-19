@@ -219,7 +219,7 @@ new columns: queue membership is derived from `status`, `team_id`, and
 
 Migration `0012_ticket_messages.sql` extends the existing `ticket_messages`
 table (it does not duplicate it): immutable identity `sequence` for stable
-per-ticket commit ordering, server-derived `author_kind` (`requester`,
+per-ticket commit ordering (internal; never returned by the API), server-derived `author_kind` (`requester`,
 `staff`), optional UUID `idempotency_key` and SHA-256 `request_hash` (null only
 for legacy rows). `(ticket_id, author_account_id, idempotency_key)` is unique.
 Bodies are nonempty plain text, at most 10,000 characters; internal notes have

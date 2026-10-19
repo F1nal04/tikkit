@@ -32,24 +32,26 @@ pending and lifecycle state unchanged. The server derives author account,
 
 ## Reads and rendering
 
-`Message` includes its UUID, ordering `sequence`, kind, author kind, display
-name, timestamp, body, `body_html`, and screenshot IDs. Author account IDs are
+`Message` includes its UUID, kind, author kind, display name, timestamp,
+body, and screenshot IDs. Author account IDs are
 available only in the staff representation; they are null for requesters.
 Display names are current account display names, not an identity key.
 
-Render `body` and `author_display_name` as escaped text (Svelte interpolation),
-never raw HTML or Markdown. Alternatively, `body_html` is server-escaped text
-with no tags, automatic links, or embedded attachments; preserve line breaks
-with `white-space: pre-wrap`. URLs and Markdown are literal text. Retrieve
+The API returns plain text only, never HTML. Render `body` and
+`author_display_name` as escaped text (Svelte interpolation), never raw HTML
+or Markdown; preserve line breaks with `white-space: pre-wrap`. URLs and
+Markdown are literal text. Retrieve
 images only through the existing authorized screenshot endpoints, using IDs
 returned by the API. Never interpret user-authored attachment URLs or HTML.
 
-The conversation is oldest first by immutable database `sequence`, with
-`limit` defaulting to 25 and clamped to 1–100. Its opaque cursor encodes a
-sequence, unlike the default timestamp cursor. Sends lock the ticket before
+The conversation is oldest first by an internal database commit `sequence`,
+with `limit` defaulting to 25 and clamped to 1–100. The sequence is global, so
+it is never returned: its gaps would let requesters count hidden notes. The
+opaque cursor names the last message of the page; a cursor naming a message the
+caller cannot see (or another ticket's) yields an empty page, like an unknown
+one. Sends lock the ticket before
 allocating a sequence and hold that lock through commit, so concurrently
-committed messages cannot appear behind an already paged position. Sequence
-gaps are normal; they are not message counts. There is no total count.
+committed messages cannot appear behind an already paged position. There is no total count.
 Private rows are excluded in SQL **before** the limit and cursor are computed.
 Refresh from the first page to discover new messages after the last page.
 

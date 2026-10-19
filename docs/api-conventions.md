@@ -98,8 +98,8 @@ Handlers take `auth::CurrentUser` to require a session (`401 unauthorized` other
   before a cursor and be missed by a client already paging; refresh from the
   first page when completeness matters. Endpoints that need another order
   document a fixed `sort` enum; there is no free-form ordering.
-- Conversation messages use ascending commit sequence and an opaque sequence
-  cursor instead of the default timestamp order; see [conversations.md](conversations.md).
+- Conversation messages are ordered oldest first by internal commit sequence
+  instead of the default timestamp order; see [conversations.md](conversations.md).
 - Filters are plain query parameters with documented values (stable
   identifiers, e.g. `status=queued`). Unparsable or unknown filter
   values are rejected with 400 `invalid_query`. Filters and counts always apply the caller's visibility
