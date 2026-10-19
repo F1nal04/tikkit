@@ -25,15 +25,15 @@ name the variable and the fix but never echo values.
 AI providers are not environment configuration: they are optional, disabled by
 default, and configured by an Admin at runtime. Outbound SMTP is optional too
 and is **not** an environment variable. An Admin saves the host, port, sender,
-username, and password in the app (`/admin/email`). The password is encrypted
-with `ENCRYPTION_KEY` (AES-256-GCM) and is write-only: it is never returned,
-logged, or written into audit events. Losing `ENCRYPTION_KEY` makes the stored
-password unreadable; enter it again. Transport security is either required
+username, and password in the app (`/admin/email`). Username and password are
+encrypted with `ENCRYPTION_KEY` (AES-256-GCM) and are write-only: never returned,
+logged, or written into audit events. Losing `ENCRYPTION_KEY` makes them
+unreadable; enter them again. Transport security is either required
 STARTTLS or implicit TLS, and the server certificate is always verified. Without
 a saved, enabled connection, Admins copy invitation links and recovery emails
 are not sent (see [auth.md](auth.md#email-delivery)). The API starts and serves
-the full service desk either way. Each delivery attempt is limited to 15 seconds
-and transient failures are tried at most 3 times.
+the full service desk either way. Each delivery attempt is limited to 15 seconds.
+Background sends try transient failures at most 3 times; the Admin test sends once.
 
 ## Probes and shutdown
 

@@ -25,7 +25,7 @@ pub struct SmtpSettings {
     pub connection: Option<SmtpConnection>,
 }
 
-/// Masked connection. The password is never included.
+/// Masked connection. The username and password are never included.
 #[derive(Serialize, ToSchema)]
 pub struct SmtpConnection {
     pub host: String,
@@ -33,8 +33,8 @@ pub struct SmtpConnection {
     pub security: SmtpSecurity,
     pub sender_name: String,
     pub sender_address: String,
-    pub username: String,
-    /// Always true when a connection exists. The value itself is not returned.
+    /// Always true when a connection exists: a username and password are stored.
+    /// Neither value is returned.
     pub password_set: bool,
     pub enabled: bool,
     #[serde(with = "time::serde::rfc3339")]
@@ -61,8 +61,11 @@ pub struct SmtpSettingsWrite {
     pub security: SmtpSecurity,
     pub sender_name: String,
     pub sender_address: String,
-    pub username: String,
-    /// Required when creating the connection. Omit to keep the stored password.
+    /// Required when creating the connection or changing the host, so stored
+    /// credentials are never sent to a new server. Omit to keep the stored value.
+    #[serde(default)]
+    pub username: Option<String>,
+    /// Same rule as `username`.
     #[serde(default)]
     pub password: Option<String>,
     pub enabled: bool,
@@ -87,7 +90,6 @@ struct ConnectionRow {
     security: String,
     sender_name: String,
     sender_address: String,
-    username: String,
     enabled: bool,
     updated_at: OffsetDateTime,
     last_delivery_error: Option<String>,
@@ -96,7 +98,7 @@ struct ConnectionRow {
     last_test_error: Option<String>,
 }
 
-const COLUMNS: &str = "host, port, security, sender_name, sender_address, username, enabled,
+const COLUMNS: &str = "host, port, security, sender_name, sender_address, enabled,
     updated_at, last_delivery_error, last_delivery_error_at, last_test_at, last_test_error";
 
 fn view(row: ConnectionRow) -> Result<SmtpConnection, ApiError> {
@@ -112,7 +114,6 @@ fn view(row: ConnectionRow) -> Result<SmtpConnection, ApiError> {
         security,
         sender_name: row.sender_name,
         sender_address: row.sender_address,
-        username: row.username,
         password_set: true,
         enabled: row.enabled,
         updated_at: row.updated_at,
@@ -173,20 +174,26 @@ pub async fn put_smtp(
 ) -> Result<Json<SmtpSettings>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
     let mut tx = state.pool.begin().await?;
-    let existing: Option<Vec<u8>> =
-        sqlx::query_scalar("SELECT password_ciphertext FROM smtp_connection FOR UPDATE")
-            .fetch_optional(&mut *tx)
-            .await?;
-    let write = validate(&body, existing.is_some())?;
+    let existing: Option<(String, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+        "SELECT host, username_ciphertext, password_ciphertext FROM smtp_connection FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let write = validate(&body, existing.as_ref().map(|(host, ..)| host.as_str()))?;
     let created = existing.is_none();
-    let ciphertext = if let Some(password) = &body.password {
-        mail::seal(&auth.settings.encryption_key, password)
-    } else {
-        existing.ok_or(ApiError::Internal)?
+    let key = &auth.settings.encryption_key;
+    // validate() requires both credentials unless a connection to the same host exists.
+    let (username, password) = match (&write.username, &body.password, existing) {
+        (Some(u), Some(p), _) => (mail::seal(key, u), mail::seal(key, p)),
+        (u, p, Some((_, stored_u, stored_p))) => (
+            u.as_deref().map_or(stored_u, |u| mail::seal(key, u)),
+            p.as_deref().map_or(stored_p, |p| mail::seal(key, p)),
+        ),
+        _ => return Err(ApiError::Internal),
     };
     let row: ConnectionRow = sqlx::query_as(&format!(
         "INSERT INTO smtp_connection
-            (host, port, security, sender_name, sender_address, username,
+            (host, port, security, sender_name, sender_address, username_ciphertext,
              password_ciphertext, enabled, updated_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (id) DO UPDATE SET
@@ -195,7 +202,7 @@ pub async fn put_smtp(
             security = EXCLUDED.security,
             sender_name = EXCLUDED.sender_name,
             sender_address = EXCLUDED.sender_address,
-            username = EXCLUDED.username,
+            username_ciphertext = EXCLUDED.username_ciphertext,
             password_ciphertext = EXCLUDED.password_ciphertext,
             enabled = EXCLUDED.enabled,
             updated_by = EXCLUDED.updated_by,
@@ -207,8 +214,8 @@ pub async fn put_smtp(
     .bind(security_name(write.security))
     .bind(&write.sender_name)
     .bind(&write.sender_address)
-    .bind(&write.username)
-    .bind(&ciphertext)
+    .bind(&username)
+    .bind(&password)
     .bind(write.enabled)
     .bind(user.account_id())
     .fetch_one(&mut *tx)
@@ -228,6 +235,7 @@ pub async fn put_smtp(
             "security": security_name(write.security),
             "sender_address": write.sender_address,
             "enabled": write.enabled,
+            "username_changed": write.username.is_some(),
             "password_changed": body.password.is_some(),
         }),
     )
@@ -312,6 +320,7 @@ pub async fn test_smtp(
     }
     let language = ident(language)?;
     let (subject, text) = test_message(language, &auth.settings.public_origin);
+    // One attempt so a dead relay answers within SMTP_TIMEOUT, not three times that.
     let result = mail::deliver(
         &state.pool,
         &auth.settings.encryption_key,
@@ -324,6 +333,7 @@ pub async fn test_smtp(
         },
         DeliverOptions {
             allow_disabled: true,
+            max_attempts: 1,
             ..DeliverOptions::default()
         },
     )
@@ -372,15 +382,18 @@ struct ValidWrite {
     security: SmtpSecurity,
     sender_name: String,
     sender_address: String,
-    username: String,
+    username: Option<String>,
     enabled: bool,
 }
 
-fn validate(body: &SmtpSettingsWrite, exists: bool) -> Result<ValidWrite, ApiError> {
+/// `stored_host` is the saved connection's host, if any. Credentials are
+/// required unless they would go to that same host.
+fn validate(body: &SmtpSettingsWrite, stored_host: Option<&str>) -> Result<ValidWrite, ApiError> {
     let host = body.host.trim().trim_end_matches('.').to_owned();
     let sender_name = body.sender_name.trim().to_owned();
     let sender_address = body.sender_address.trim().to_owned();
-    let username = body.username.trim().to_owned();
+    let username = body.username.as_deref().map(|u| u.trim().to_owned());
+    let keep = stored_host.is_some_and(|stored| stored.eq_ignore_ascii_case(&host));
     let mut errors = FieldErrors::new();
     if !valid_host(&host) {
         errors.insert("host".into(), vec!["invalid"]);
@@ -394,14 +407,17 @@ fn validate(body: &SmtpSettingsWrite, exists: bool) -> Result<ValidWrite, ApiErr
     if !valid_email(&sender_address) {
         errors.insert("sender_address".into(), vec!["invalid"]);
     }
-    if username.is_empty()
-        || username.chars().count() > 256
-        || username.chars().any(char::is_control)
-    {
-        errors.insert("username".into(), vec!["invalid"]);
+    match &username {
+        None if !keep => {
+            errors.insert("username".into(), vec!["required"]);
+        }
+        Some(u) if u.is_empty() || u.chars().count() > 256 || u.chars().any(char::is_control) => {
+            errors.insert("username".into(), vec!["invalid"]);
+        }
+        _ => {}
     }
     match &body.password {
-        None if !exists => {
+        None if !keep => {
             errors.insert("password".into(), vec!["required"]);
         }
         Some(password) if !valid_password(password) => {

@@ -168,14 +168,14 @@ struct SecretRow {
     security: String,
     sender_name: String,
     sender_address: String,
-    username: String,
+    username_ciphertext: Vec<u8>,
     password_ciphertext: Vec<u8>,
     enabled: bool,
 }
 
 pub(crate) async fn load(pool: &PgPool, key: &[u8; 32]) -> Result<ReadySmtp, MailError> {
     let row: Option<SecretRow> = sqlx::query_as(
-        "SELECT host, port, security, sender_name, sender_address, username,
+        "SELECT host, port, security, sender_name, sender_address, username_ciphertext,
                 password_ciphertext, enabled
          FROM smtp_connection",
     )
@@ -185,6 +185,7 @@ pub(crate) async fn load(pool: &PgPool, key: &[u8; 32]) -> Result<ReadySmtp, Mai
     let Some(row) = row else {
         return Err(MailError::NotConfigured);
     };
+    let username = open(key, &row.username_ciphertext).ok_or(MailError::Unreadable)?;
     let password = open(key, &row.password_ciphertext).ok_or(MailError::Unreadable)?;
     let security = match row.security.as_str() {
         "starttls" => SmtpSecurity::StartTls,
@@ -198,7 +199,7 @@ pub(crate) async fn load(pool: &PgPool, key: &[u8; 32]) -> Result<ReadySmtp, Mai
         security,
         sender_name: row.sender_name,
         sender_address: row.sender_address,
-        username: row.username,
+        username,
         password,
         enabled: row.enabled,
     })

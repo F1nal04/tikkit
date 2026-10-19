@@ -111,11 +111,14 @@ After setup, accounts are created only from Admin invitations.
 Outbound SMTP is optional and configured by an Admin (`GET`/`PUT`/`DELETE
 /api/settings/smtp`, test with `POST /api/settings/smtp/test`). See
 [configuration.md](configuration.md) and [schema.md](schema.md). Only an Admin
-(`manage_settings`) can read or change it. The saved password is encrypted with
-`ENCRYPTION_KEY` and is never returned. A test message can be sent only to the
+(`manage_settings`) can read or change it. The saved username and password are
+encrypted with `ENCRYPTION_KEY` and are never returned; omit them on `PUT` to
+keep them. Changing the host requires entering both again, so stored credentials
+are never sent to a new server. A test message can be sent only to the
 acting Admin's own email or the configured sender address, through the saved
 host, and only with required STARTTLS or implicit TLS. Certificate verification
-cannot be turned off.
+cannot be turned off. The test makes one attempt, so it answers within the
+15-second SMTP timeout.
 
 Invitation and recovery messages are plain text in the recipient's language and
 sent in the background, so the response time does not depend on delivery. Links
