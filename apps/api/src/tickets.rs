@@ -691,26 +691,42 @@ pub async fn staff_action(
         assignee_account_id: assignee,
         status: ident(status)?,
     };
+    // Invisible tickets are `404` before any stale or policy result. The requester
+    // is `403` before the stale check, so a wrong timestamp never reveals that a
+    // ticket they must not handle has moved. Same order as assignment changes.
     match authz::ticket_view(&actor, &scope) {
         None => return Err(ApiError::NotFound),
         Some(TicketView::Requester) => return Err(ApiError::Forbidden),
         Some(TicketView::Staff) => {}
     }
-    let stale = |expected: OffsetDateTime| {
-        if expected == updated_at {
-            Ok(())
-        } else {
-            Err(ApiError::Conflict)
-        }
-    };
+    // Before the policy and status checks: the loser of a concurrent staff write
+    // gets one recoverable `409`, never a partial write or a `403` from the winner.
+    let (StaffAction::StartWork {
+        expected_updated_at,
+    }
+    | StaffAction::RequestInformation {
+        expected_updated_at,
+    }
+    | StaffAction::ProposeResolution {
+        expected_updated_at,
+        ..
+    }
+    | StaffAction::Reopen {
+        expected_updated_at,
+    }
+    | StaffAction::SetPriority {
+        expected_updated_at,
+        ..
+    }) = action;
+    if expected_updated_at != updated_at {
+        return Err(ApiError::Conflict);
+    }
     let by = By::Account(actor.id);
     let status = match action {
         StaffAction::SetPriority {
-            expected_updated_at,
-            priority_id: next,
+            priority_id: next, ..
         } => {
             authz::authorize_ticket(&actor, &scope, Permission::ChangePriority)?;
-            stale(expected_updated_at)?;
             let names: Vec<(Uuid, String)> = sqlx::query_as(
                 "SELECT id, name FROM priorities
                  WHERE id = ANY($1) AND (archived_at IS NULL OR id = $2)",
@@ -759,39 +775,80 @@ pub async fn staff_action(
             .await?;
             scope.status
         }
-        StaffAction::StartWork {
-            expected_updated_at,
-        } => {
-            let to = lifecycle::transition(&mut tx, id, by, &Transition::StartWork).await?;
-            stale(expected_updated_at)?;
-            to
+        StaffAction::StartWork { .. } => {
+            lifecycle::transition(&mut tx, id, by, &Transition::StartWork).await?
         }
-        StaffAction::RequestInformation {
-            expected_updated_at,
-        } => {
-            let to =
-                lifecycle::transition(&mut tx, id, by, &Transition::RequestInformation).await?;
-            stale(expected_updated_at)?;
-            to
+        StaffAction::RequestInformation { .. } => {
+            lifecycle::transition(&mut tx, id, by, &Transition::RequestInformation).await?
         }
-        StaffAction::ProposeResolution {
-            expected_updated_at,
-            summary,
-        } => {
-            let to =
-                lifecycle::transition(&mut tx, id, by, &Transition::ProposeResolution { summary })
-                    .await?;
-            stale(expected_updated_at)?;
-            to
+        StaffAction::ProposeResolution { summary, .. } => {
+            lifecycle::transition(&mut tx, id, by, &Transition::ProposeResolution { summary })
+                .await?
         }
-        StaffAction::Reopen {
-            expected_updated_at,
-        } => {
-            let to = lifecycle::transition(&mut tx, id, by, &Transition::Reopen).await?;
-            stale(expected_updated_at)?;
-            to
+        StaffAction::Reopen { .. } => {
+            lifecycle::transition(&mut tx, id, by, &Transition::Reopen).await?
         }
     };
     tx.commit().await?;
     Ok(Json(ActionResult { status }))
+}
+
+/// A cheap change marker for an open ticket page (docs/lifecycle.md "Refreshing").
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TicketActivity {
+    /// Opaque digest; compare for equality only. Changes with every status, team,
+    /// assignee, or priority change, every message the caller may read, and the
+    /// caller's own role or team (so open pages refresh their capabilities). It is
+    /// not a counter, so it does not reveal how many staff-only events exist.
+    pub version: String,
+}
+
+/// Poll target for open ticket pages: reload the ticket when `version` differs
+/// from the one loaded with it. Same visibility as `GET /api/tickets/{id}`, checked
+/// on every call, so a transfer, team removal, or revoked session stops it (`404`/`401`).
+/// Internal notes count only in the staff view.
+#[utoipa::path(get, path = "/api/tickets/{id}/activity", tag = "tickets",
+    params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, body = TicketActivity),
+        (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
+        (status = 404, description = "`not_found` (missing or not visible to the caller)", body = crate::api::ErrorEnvelope),
+    ))]
+pub async fn ticket_activity(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TicketActivity>, ApiError> {
+    let actor = Actor::load(&state.pool, &user).await?;
+    // One statement, one snapshot. The digest mixes the count of events this caller
+    // may read with `updated_at` and their own capability. Notes are left out for
+    // the requester (they do not move `updated_at` either), and the count itself is
+    // not returned: priority and assignment history stay staff-only.
+    let (requester, team_id, assignee, status, version): (
+        Uuid,
+        Option<Uuid>,
+        Option<Uuid>,
+        String,
+        String,
+    ) = sqlx::query_as(
+        "SELECT t.requester_account_id, t.team_id, t.assignee_account_id, t.status::text,
+                md5((SELECT count(*) FROM ticket_events e WHERE e.ticket_id = t.id
+                       AND (e.event_type <> 'internal_note_added' OR t.requester_account_id <> $2))::text
+                    || '@' || t.updated_at::text || '@' || $3)
+         FROM tickets t WHERE t.id = $1",
+    )
+    .bind(id)
+    .bind(actor.id)
+    .bind(authz::capability_key(&actor))
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let scope = TicketScope {
+        requester_account_id: requester,
+        team_id,
+        assignee_account_id: assignee,
+        status: ident(status)?,
+    };
+    authz::ticket_view(&actor, &scope).ok_or(ApiError::NotFound)?;
+    Ok(Json(TicketActivity { version }))
 }

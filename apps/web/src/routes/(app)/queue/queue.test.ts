@@ -118,3 +118,22 @@ test('renders German labels and stable status identifiers', () => {
   expect(screen.getAllByText('Nicht zugewiesen').length).toBeGreaterThan(0)
   expect(document.querySelector('[data-status="queued"]')?.textContent).toBe('In der Warteschlange')
 })
+
+test('polls the counts marker and reloads the queue only when it changed', async () => {
+  vi.useFakeTimers()
+  try {
+    const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ general: 2, team: 5, mine: 1, all: null, version: 'v1' })))
+    vi.stubGlobal('fetch', fetch)
+    show('', 'operator', { counts: { general: 2, team: 5, mine: 1, all: null, version: 'v1' } })
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(String(fetch.mock.calls[0][0].url ?? fetch.mock.calls[0][0])).toContain('/api/queue/counts')
+    expect(invalidateAll).not.toHaveBeenCalled()
+    fetch.mockImplementation(async () => new Response(JSON.stringify({ general: 3, team: 5, mine: 1, all: null, version: 'v2' })))
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(invalidateAll).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    invalidateAll.mockClear()
+  }
+})

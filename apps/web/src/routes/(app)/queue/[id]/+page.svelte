@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation'
   import { ApiError, type Schemas } from '@tikkit/api-client'
+  import { onMount } from 'svelte'
   import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
   import Field from '#lib/components/Field.svelte'
@@ -9,6 +10,7 @@
   import { attemptFor, type Attempt } from '#lib/intake.ts'
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
+  import { poll } from '#lib/poll.ts'
   import { publicText } from '#lib/requester.ts'
   import { readOnlyReason, routeOf, type AssignmentInput, type StaffInput } from '#lib/staff.ts'
   import type { PageProps } from './$types'
@@ -39,6 +41,8 @@
   let fields = $state<Record<string, string[]>>({})
   let feedback = $state<'reply' | 'note' | 'action' | null>(null)
   let changed = $state(false)
+  // Someone else changed the ticket while this page had unsent input.
+  let elsewhere = $state(false)
   let attempt: Attempt | null = null
   let activeTicketId: string | undefined
   $effect(() => {
@@ -46,7 +50,7 @@
     if (id && id !== activeTicketId) {
       activeTicketId = id
       kind = 'public'; body = ''; screenshots = []; summary = ''; priorityId = ''; teamId = ''; assigneeId = ''; moved = null
-      failure = null; fields = {}; feedback = null; changed = false; attempt = null
+      failure = null; fields = {}; feedback = null; changed = false; elsewhere = false; attempt = null
     }
   })
   let more = $state<Schemas['Message'][]>([])
@@ -58,7 +62,7 @@
   $effect(() => { data.conversation; more = []; moreCursor = undefined })
 
   const when = (iso: string) => new Date(iso).toLocaleString(data.locale, { timeZone: 'UTC', timeZoneName: 'short' })
-  function start() { failure = null; fields = {}; feedback = null; changed = false }
+  function start() { failure = null; fields = {}; feedback = null; changed = false; elsewhere = false }
   async function refresh() {
     try { await invalidateAll() } catch (e) { failure = e }
   }
@@ -70,6 +74,25 @@
       if ([403, 404, 409].includes(e.status)) { changed = true; await refresh() }
     }
   }
+  // Pull changes made elsewhere. Every poll is re-authorized: a transfer, team removal, or
+  // signed-out session answers 401/404, and the reload replaces the page with that answer.
+  onMount(() =>
+    poll(async (current) => {
+      if (!current() || busy || moved) return
+      if (!data.ticket || !data.activity) return refresh()
+      let version: string
+      try {
+        ;({ version } = await api(data.locale).request('get', '/api/tickets/{id}/activity', { path: { id: data.ticket.id } }))
+      } catch (e) {
+        if (!current()) return
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500) return refresh()
+        throw e
+      }
+      if (!current() || busy || version === data.activity.version) return
+      if (body.trim() || summary.trim() || priorityId || teamId || assigneeId || screenshots.length) elsewhere = true
+      await refresh()
+    }),
+  )
   async function act(input: StaffInput) {
     if (busy || !ticket) return
     start(); busy = true
@@ -139,7 +162,7 @@
   <h1>#{ticket.reference} · {ticket.subject}</h1>
   <div class="actions"><StatusBadge status={ticket.status} label={t.statuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{s.refresh}</button></div>
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? s.replySent : feedback === 'note' ? s.noteSent : s.actionSaved}</Alert>{/if}
-  {#if changed}<Alert>{s.changed}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}
+  {#if changed}<Alert>{s.changed}</Alert>{:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}
   {#if reason}<Alert kind="info">{s.readOnly[reason]}</Alert>{/if}
 
   <dl class="facts">

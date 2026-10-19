@@ -905,6 +905,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Poll target for open ticket pages: reload the ticket when `version` differs
+         *     from the one loaded with it. Same visibility as `GET /api/tickets/{id}`, checked
+         *     on every call, so a transfer, team removal, or revoked session stops it (`404`/`401`).
+         *     Internal notes count only in the staff view.
+         */
+        get: operations["ticket_activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{id}/assignment": {
         parameters: {
             query?: never;
@@ -1611,6 +1633,12 @@ export interface components {
              * @description The caller's team; for an Admin, every dispatched ticket.
              */
             team: number;
+            /**
+             * @description Opaque change marker, compare for equality only: changes whenever an open
+             *     ticket the caller may see enters, leaves, or changes, or the caller's role or
+             *     team changes. Queue pages poll this endpoint and reload when it differs.
+             */
+            version: string;
         };
         /**
          * @description Fixed orders; ties break on `(created_at, id)`.
@@ -1900,6 +1928,16 @@ export interface components {
             /** Format: uuid */
             lead_account_id: string | null;
             name: string;
+        };
+        /** @description A cheap change marker for an open ticket page (docs/lifecycle.md "Refreshing"). */
+        TicketActivity: {
+            /**
+             * @description Opaque digest; compare for equality only. Changes with every status, team,
+             *     assignee, or priority change, every message the caller may read, and the
+             *     caller's own role or team (so open pages refresh their capabilities). It is
+             *     not a counter, so it does not reveal how many staff-only events exist.
+             */
+            version: string;
         };
         /**
          * @description Public handling details shown to a ticket's requester. `team_name: null`
@@ -4820,6 +4858,45 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ticket_activity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketActivity"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible to the caller) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

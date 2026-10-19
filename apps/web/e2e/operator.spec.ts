@@ -152,6 +152,39 @@ test('a claim taken away mid-session turns the page read-only safely', async ({ 
   await expect(page.getByText('Draft answer')).toHaveCount(0)
 })
 
+test('changes made elsewhere appear without reloading and keep the unsent reply', async ({ page }) => {
+  await page.clock.install()
+  await signIn(page, 'operator')
+  await open(page, ids.deskClaimed)
+  await page.getByLabel('Message').fill('Draft answer')
+  expect(await post(page, '/api/test/concurrent', { id: ids.deskClaimed })).toBe(204)
+  await page.clock.runFor(15_000)
+  await expect(page.getByText('Newer reply from the requester')).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Someone else updated this ticket' })).toBeVisible()
+  await expect(page.getByLabel('Message')).toHaveValue('Draft answer')
+  // The page now carries the current version: sending works without a conflict.
+  await page.getByRole('button', { name: 'Send public reply' }).click()
+  await expect(page.getByText('Public reply sent.')).toBeVisible()
+})
+
+test('a transfer away clears the open page and the queue row', async ({ page }) => {
+  await page.clock.install()
+  await signIn(page, 'operator')
+  await open(page, ids.deskUnclaimed)
+  await page.goto('/queue?view=team')
+  await expect(page.getByRole('link', { name: 'Desk unclaimed' })).toBeVisible()
+  expect(await post(page, '/api/test/concurrent', { id: ids.deskUnclaimed, team: 'Field' })).toBe(204)
+  await page.clock.runFor(15_000)
+  await expect(page.getByRole('link', { name: 'Desk unclaimed' })).toHaveCount(0)
+
+  await open(page, ids.deskClaimed)
+  await expect(page.getByText('The printer jams on every page.')).toBeVisible()
+  expect(await post(page, '/api/test/concurrent', { id: ids.deskClaimed, team: 'Field' })).toBe(204)
+  await page.clock.runFor(15_000)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Page not found')
+  await expect(page.getByText('The printer jams on every page.')).toHaveCount(0)
+})
+
 test('reopening follows the Admin toggle, including after it is revoked on a loaded page', async ({ page }) => {
   await signIn(page, 'operator')
   await open(page, ids.closed)

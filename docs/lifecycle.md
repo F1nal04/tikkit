@@ -159,8 +159,13 @@ or `set_priority {priority_id}`. Status actions call `lifecycle::transition`
 (so authorization precedes the source-status check, as in #16); there is no staff
 action that accepts, rejects, or closes. A newer reply, status, or priority change
 makes `expected_updated_at` stale: `409 conflict`, nothing written. Private
-notes do not move `updated_at`. The check runs after the ticket lock, so
-concurrent staff serialize and the second always loses.
+notes do not move `updated_at`. Checks run in the same order as assignment:
+invisible tickets are `404` before anything else; the ticket's requester (any
+role) is `403` before the stale check, so a wrong timestamp never says the
+ticket moved; then `expected_updated_at` under the ticket lock; then the policy,
+status, and input checks. Concurrent staff writes serialize, and a visible
+member who lost the race gets that `409` rather than a `403` caused by the
+winner or a partial write.
 
 `set_priority` needs `change_priority` on the ticket (open, in a team, caller in
 charge; self-handling `403`). The level must be active and different from the
@@ -175,12 +180,44 @@ empty history and the current effective priority only.
 affordances; every write is rechecked. Transition and priority entries also carry
 `actor_display_name` (staff view), so cancellations and proposals show who and when.
 
-The staff endpoint first requires a staff capability and rejects the ticket's
-requester (`403`) before invoking the lifecycle, including for `reopen`.
-Requesters of any role use `/actions`. Ordinary staff work on finished tickets
-returns `403`, because `authorize_ticket` requires open human work before the
-lifecycle checks the transition's source status. This preserves #16 and the
-conversation API's authorization order. An authorized writer attempting an
-invalid transition between open states (or reopening a non-closed team ticket)
-gets `409`. Invisible tickets still return `404` to staff; stale authorized
-writes return `409` and roll back both state and events.
+The staff endpoint first requires a staff capability, then applies the order
+above, including for `reopen`. Requesters of any role use `/actions`. Ordinary
+staff work on finished tickets returns `403`, because `authorize_ticket`
+requires open human work before the lifecycle checks the transition's source
+status. This preserves #16 and the conversation API's authorization order. An
+authorized writer attempting an invalid transition between open states (or
+reopening a non-closed team ticket) gets `409`. Stale authorized writes return
+`409` and roll back both state and events.
+
+## Concurrent edits and refreshing
+
+Every staff write on a ticket (status actions, priority, dispatch and
+assignment) carries the `expected_updated_at` the client loaded and is checked
+under the ticket row lock in the write's transaction. The loser of a race, or a
+tab that missed a change, gets `409` with the standard envelope
+(`error.code = "conflict"`) and nothing is written. The response deliberately
+carries no new version: the client reloads `GET /api/tickets/{id}` (current
+state, capabilities, and `updated_at`), keeps unsent text, and lets the person
+decide again. Messages are append-only and idempotency-keyed instead
+([conversations.md](conversations.md)); every send rechecks write authority under
+the same locks. Authority changes (role, membership, leadership, claim) are
+re-read on every write, so a former assignee's open tab is refused.
+
+Open staff pages poll instead of holding a stream. `GET /api/tickets/{id}/activity`
+returns an opaque `version` (a digest, compare for equality only); the page loads
+it before the ticket and reloads when a poll returns another value. It changes
+with every event the caller may read, `updated_at`, and the caller's role, team,
+and leadership, so capabilities refresh too. Internal notes move the staff
+digest only. The digest is not a counter: a requester cannot read how many
+priority or assignment changes exist behind the empty histories. Each poll runs
+the normal visibility check: a transfer or team removal makes it `404` (the page
+reloads into "not found"), a revoked session `401`. Responses are
+`Cache-Control: private, no-store`. Queue pages poll `GET /api/queue/counts`,
+whose `version` is a digest of the caller's visible open tickets plus their own
+role and team ([queues.md](queues.md#counts)); work they cannot see never moves it.
+
+Polling carries no cursor or delivered-event state: a reconnect or a second tab
+just compares versions and reloads through the normal endpoints, so nothing is
+delivered twice or out of authorization, and any number of API instances behind
+the proxy serve it from the database alone. The web client polls every
+15 seconds while the tab is visible and once when it becomes visible again.
