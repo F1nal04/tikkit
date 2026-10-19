@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::PgConnection;
+use sqlx::{PgConnection, Postgres, Transaction};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -407,35 +407,43 @@ pub enum By {
 /// Applies one transition in the caller's transaction under the current
 /// [`policy`] and returns the new status. The caller commits; on error it must
 /// roll back (dropping the transaction does).
+///
+/// Autocommit connections must not release the authorization and ticket locks
+/// before the state and event have both been written:
+/// ```compile_fail
+/// use sqlx::PgConnection;
+/// use tikkit_api::lifecycle::{transition, By, Transition};
+/// async fn without_transaction(conn: &mut PgConnection, id: uuid::Uuid) {
+///     transition(conn, id, By::System, &Transition::AiFailed).await.unwrap();
+/// }
+/// ```
 pub async fn transition(
-    conn: &mut PgConnection,
+    tx: &mut Transaction<'_, Postgres>,
     ticket_id: Uuid,
     by: By,
     t: &Transition,
 ) -> Result<TicketStatus, ApiError> {
-    transition_with(conn, ticket_id, by, t, None).await
+    transition_with(tx, ticket_id, by, t, None).await
 }
 
 /// [`transition`] with a fixed policy instead of the current one, for tests of
 /// non-default settings. Production code calls [`transition`].
 #[doc(hidden)]
 pub async fn transition_with(
-    conn: &mut PgConnection,
+    tx: &mut Transaction<'_, Postgres>,
     ticket_id: Uuid,
     by: By,
     t: &Transition,
     fixed_policy: Option<Policy>,
 ) -> Result<TicketStatus, ApiError> {
+    let conn = &mut **tx;
     let actor = match by {
         By::Account(id) => Some(lock_actor(conn, id).await?),
         By::System => None,
     };
     let row: Option<StateRow> = sqlx::query_as(
         "SELECT t.requester_account_id, t.team_id, t.assignee_account_id, t.status::text AS status,
-                t.proposal_version, t.confirmation_deadline, c.skip_ai,
-                EXISTS (SELECT 1 FROM ticket_events e
-                        WHERE e.ticket_id = t.id AND e.to_status = 'in_progress') AS work_started,
-                now() AS now
+                t.proposal_version, t.confirmation_deadline, c.skip_ai
          FROM tickets t JOIN categories c ON c.id = t.category_id
          WHERE t.id = $1
          FOR UPDATE OF t",
@@ -448,6 +456,15 @@ pub async fn transition_with(
         Some(p) => p,
         None => policy(conn).await?,
     };
+    // A fresh statement sees events committed by a previous ticket lock holder;
+    // the clock is read after locking, not at the start of a possibly old transaction.
+    let (work_started, now): (bool, OffsetDateTime) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM ticket_events
+                        WHERE ticket_id = $1 AND to_status = 'in_progress'), clock_timestamp()",
+    )
+    .bind(ticket_id)
+    .fetch_one(&mut *conn)
+    .await?;
     let state = TicketState {
         scope: TicketScope {
             requester_account_id: row.requester_account_id,
@@ -457,14 +474,14 @@ pub async fn transition_with(
         },
         proposal_version: row.proposal_version,
         confirmation_deadline: row.confirmation_deadline,
-        work_started: row.work_started,
+        work_started,
         category_skip_ai: row.skip_ai,
     };
-    let out = decide(&state, actor.as_ref(), t, &policy, row.now)?;
+    let out = decide(&state, actor.as_ref(), t, &policy, now)?;
     sqlx::query(
         "UPDATE tickets SET status = $2, proposal_version = proposal_version + $3,
                 confirmation_deadline = $4, resolution_source = $5, closure_reason = $6,
-                updated_at = now()
+                updated_at = $7
          WHERE id = $1",
     )
     .bind(ticket_id)
@@ -473,11 +490,12 @@ pub async fn transition_with(
     .bind(out.confirmation_deadline)
     .bind(out.resolution.map(|(source, _)| ident_str(source)))
     .bind(out.resolution.map(|(_, reason)| ident_str(reason)))
+    .bind(now)
     .execute(&mut *conn)
     .await?;
     sqlx::query(
-        "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(ticket_id)
     .bind(actor.map(|a| a.id))
@@ -485,6 +503,7 @@ pub async fn transition_with(
     .bind(ident_str(state.scope.status))
     .bind(ident_str(out.to))
     .bind(&out.payload)
+    .bind(now)
     .execute(&mut *conn)
     .await?;
     Ok(out.to)
@@ -499,8 +518,6 @@ struct StateRow {
     proposal_version: i32,
     confirmation_deadline: Option<OffsetDateTime>,
     skip_ai: bool,
-    work_started: bool,
-    now: OffsetDateTime,
 }
 
 /// The actor as of this transaction. Share locks make a concurrent role,
