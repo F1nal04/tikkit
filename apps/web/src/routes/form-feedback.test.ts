@@ -16,7 +16,7 @@ const data = {
   locale: 'en' as 'en' | 'de', next: null, lookupError: null,
   user: { id: '1', username: 'alice', display_name: 'Alice', email: 'a@example.com', role: 'admin' as const, language: 'en' as const },
   invitation: { role: 'operator' as const, language: 'en' as const, email: 'a@example.com', expires_at: '2026-10-20T00:00:00Z' },
-  accounts: [], invitations: [],
+  accounts: [], invitations: [], teams: [], accountCursor: null, invitationCursor: null,
 }
 
 const forms: { page: Component<{ data: typeof data; params: { token: string } }>; button: string }[] = [

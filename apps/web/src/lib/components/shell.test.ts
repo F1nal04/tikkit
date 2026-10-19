@@ -49,7 +49,7 @@ test('Team Lead sees team tools, never administration', () => {
 
 test('Admin sees global controls', () => {
   shell('admin')
-  expect(links()).toEqual(['My tickets', 'New ticket', 'General queue', 'Overview', 'Accounts'])
+  expect(links()).toEqual(['My tickets', 'New ticket', 'General queue', 'Overview', 'Accounts', 'Teams', 'Organization settings'])
 })
 
 test('names the account, its role, and the current page for assistive technology', () => {
@@ -64,6 +64,7 @@ test('names the account, its role, and the current page for assistive technology
 test('renders German labels', () => {
   shell('admin', 'de')
   expect(links()).toContain('Allgemeine Warteschlange')
+  expect(links()).toContain('Organisationseinstellungen')
   expect(screen.getByText('Administrator')).toBeTruthy()
   expect(screen.getByRole('navigation').getAttribute('aria-label')).toBe('Hauptnavigation')
 })

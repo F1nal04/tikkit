@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { signIn } from './support'
 
 for (const locale of ['en', 'de']) {
-  test(`admin policy form preserves values after rejection (${locale}, mobile)`, async ({ page, context }) => {
-    await context.addCookies([{ name: 'tikkit_session', value: 'e2e_admin', domain: '127.0.0.1', path: '/' }])
+  test(`admin policy form preserves values after rejection (${locale}, mobile)`, async ({ page }) => {
+    await signIn(page, 'admin')
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(`/admin/settings?lang=${locale}`)
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(locale === 'en' ? 'Organization settings' : 'Organisationseinstellungen')
@@ -11,7 +12,7 @@ for (const locale of ['en', 'de']) {
     const name = page.getByLabel(locale === 'en' ? 'Organization name' : 'Organisationsname')
     await name.fill('Changed organization')
     await page.route('**/api/admin/settings', async (route) => {
-      if (route.request().method() !== 'PUT') return route.continue()
+      if (route.request().method() !== 'PUT') return route.fallback()
       expect(route.request().postDataJSON().name).toBe('Changed organization')
       expect(route.request().headers()['x-requested-with']).toBe('tikkit')
       await route.fulfill({ status: 422, json: { error: { code: 'validation_failed', details: { fields: { timezone: ['invalid'] } } }, request_id: 'e2e' } })
@@ -24,8 +25,8 @@ for (const locale of ['en', 'de']) {
   })
 }
 
-test('account administration distinguishes shared-email accounts and offers all five invitation roles', async ({ page, context }) => {
-  await context.addCookies([{ name: 'tikkit_session', value: 'e2e_admin', domain: '127.0.0.1', path: '/' }])
+test('account administration distinguishes shared-email accounts and offers all five invitation roles', async ({ page }) => {
+  await signIn(page, 'admin')
   await page.goto('/admin/accounts')
   const role = page.locator('select[name="role"]')
   await expect(role).toHaveValue('user')
@@ -36,15 +37,15 @@ test('account administration distinguishes shared-email accounts and offers all 
   await expect(page.getByRole('article', { name: 'admin', exact: true }).getByLabel('Team', { exact: true })).toHaveCount(0)
 })
 
-test('a non-admin deep link does not render management content', async ({ page, context }) => {
-  await context.addCookies([{ name: 'tikkit_session', value: 'e2e_user', domain: '127.0.0.1', path: '/' }])
+test('a non-admin deep link does not render management content', async ({ page }) => {
+  await signIn(page, 'requester')
   const response = await page.goto('/admin/settings')
   expect(response?.status()).toBe(403)
   await expect(page.getByLabel('Organization name')).toHaveCount(0)
 })
 
-test('an Admin creates a role-specific invitation and receives the link once', async ({ page, context }) => {
-  await context.addCookies([{ name: 'tikkit_session', value: 'e2e_admin', domain: '127.0.0.1', path: '/' }])
+test('an Admin creates a role-specific invitation and receives the link once', async ({ page }) => {
+  await signIn(page, 'admin')
   await page.goto('/admin/accounts')
   await page.route('**/api/**', async (route) => {
     if (route.request().method() === 'GET') return route.fulfill({ json: { items: [], next_cursor: null } })
