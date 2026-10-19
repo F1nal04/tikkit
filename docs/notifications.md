@@ -42,7 +42,9 @@ loop; `poll_loop` is the shared "drain, then sleep" loop that the confirmation
 timeout worker should reuse. `process_one` claims one due row with
 `FOR UPDATE SKIP LOCKED` and keeps the lock until the outcome is committed, so
 concurrent workers (or replicas) never handle a row twice. Each worker needs two
-pool connections while it sends.
+pool connections while it sends. On SIGTERM `main.rs` calls `stop_workers`: each
+`poll_loop` returns after its current step (waited for up to 5 s), so a sent
+message records its idempotency key before the pool closes.
 
 At delivery the worker re-reads the account and the ticket (plain reads: no row
 locks are held while SMTP talks, so a slow relay never stalls portal writes),
