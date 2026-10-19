@@ -1,8 +1,7 @@
 node_modules/
 .turbo/
-.tanstack/
-.output/
-dist/
+.svelte-kit/
+build/
 /target/
 coverage/
 *.tsbuildinfo
