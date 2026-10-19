@@ -23,6 +23,7 @@ use crate::{
         new_token, revoke_all_sessions, signed_in, token_hash, unique_violation, valid_email,
     },
     authz::{Permission, require_permission},
+    mail::{self, OutboundMessage},
 };
 
 const INVITATION_DEFAULT_HOURS: u32 = 168;
@@ -231,10 +232,24 @@ async fn issue_invitation(
         auth.settings.public_origin,
         ident_str(language)
     );
-    let emailed = email.as_deref().is_some_and(|to| {
-        let (subject, text) = invitation_email(language, &url, hours);
-        auth.settings.mailer.send(to, subject, text)
-    });
+    let emailed = match email.as_deref() {
+        Some(to) => {
+            let (subject, text) = invitation_email(language, &url, hours);
+            mail::queue(
+                state.pool.clone(),
+                auth.settings.encryption_key,
+                auth.settings.smtp_trust_root_pem.clone(),
+                OutboundMessage {
+                    to: to.to_owned(),
+                    subject: subject.to_owned(),
+                    body: text,
+                    idempotency_key: Some(format!("invitation:{}", invitation.id)),
+                },
+            )
+            .await
+        }
+        None => false,
+    };
     let created = CreatedInvitation {
         invitation,
         url,
@@ -249,8 +264,9 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
             "You are invited to Tikkit",
             format!(
                 "An administrator invited you to create a Tikkit account.\n\n\
-                 Open this link to choose your username and password:\n{url}\n\n\
+                 Open this link in the portal to choose your username and password:\n{url}\n\n\
                  The link works once and expires in {hours} hours.\n\
+                 Create and reply to tickets in the portal. Do not reply to this email.\n\
                  If you did not expect this invitation, ignore this email."
             ),
         ),
@@ -258,8 +274,9 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
             "Einladung zu Tikkit",
             format!(
                 "Sie wurden eingeladen, ein Tikkit-Konto anzulegen.\n\n\
-                 Öffnen Sie diesen Link, um Benutzernamen und Passwort festzulegen:\n{url}\n\n\
+                 Öffnen Sie diesen Link im Portal, um Benutzernamen und Passwort festzulegen:\n{url}\n\n\
                  Der Link funktioniert einmal und läuft in {hours} Stunden ab.\n\
+                 Tickets werden im Portal erstellt und beantwortet. Antworten Sie nicht auf diese E-Mail.\n\
                  Wenn Sie diese Einladung nicht erwartet haben, ignorieren Sie diese E-Mail."
             ),
         ),
@@ -556,13 +573,14 @@ pub async fn request_recovery(
     .fetch_one(&mut *tx)
     .await?;
     let found = found.filter(|_| !cooling);
+    let recovery_hash = token_hash(&token);
     if let Some((id, ..)) = &found {
         sqlx::query(&format!(
             "INSERT INTO password_resets (account_id, token_hash, expires_at)
              VALUES ($1, $2, now() + {RESET_TTL})"
         ))
         .bind(id)
-        .bind(token_hash(&token))
+        .bind(&recovery_hash)
         .execute(&mut *tx)
         .await?;
     }
@@ -580,14 +598,34 @@ pub async fn request_recovery(
             ident_str(language)
         );
         let (subject, text) = recovery_email(language, &username, &url);
-        if !auth.settings.mailer.send(&email, subject, text) {
-            // Never log the token or link.
-            tracing::info!(
-                "password recovery requested, but no email was sent (SMTP not configured)"
-            );
+        let queued = mail::queue(
+            state.pool.clone(),
+            auth.settings.encryption_key,
+            auth.settings.smtp_trust_root_pem.clone(),
+            OutboundMessage {
+                to: email,
+                subject: subject.to_owned(),
+                body: text,
+                idempotency_key: Some(format!("recovery:{}", hex_bytes(&recovery_hash))),
+            },
+        )
+        .await;
+        if !queued {
+            // Never log the token, link, address, or SMTP credentials.
+            tracing::info!("password recovery requested, but no email was sent");
         }
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0xf) as usize] as char);
+    }
+    out
 }
 
 fn recovery_email(language: Language, username: &str, url: &str) -> (&'static str, String) {
@@ -596,8 +634,9 @@ fn recovery_email(language: Language, username: &str, url: &str) -> (&'static st
             "Reset your Tikkit password",
             format!(
                 "Someone asked to reset the password of the Tikkit account \"{username}\".\n\n\
-                 Open this link to choose a new password:\n{url}\n\n\
-                 The link works once and expires in one hour. If you did not ask for this, \
+                 Open this link in the portal to choose a new password:\n{url}\n\n\
+                 The link works once and expires in one hour. Create and reply to tickets \
+                 in the portal. Do not reply to this email. If you did not ask for this, \
                  ignore this email; your password stays unchanged."
             ),
         ),
@@ -605,9 +644,10 @@ fn recovery_email(language: Language, username: &str, url: &str) -> (&'static st
             "Tikkit-Passwort zurücksetzen",
             format!(
                 "Für das Tikkit-Konto „{username}“ wurde das Zurücksetzen des Passworts angefordert.\n\n\
-                 Öffnen Sie diesen Link, um ein neues Passwort festzulegen:\n{url}\n\n\
-                 Der Link funktioniert einmal und ist eine Stunde gültig. Wenn Sie das nicht \
-                 angefordert haben, ignorieren Sie diese E-Mail; Ihr Passwort bleibt unverändert."
+                 Öffnen Sie diesen Link im Portal, um ein neues Passwort festzulegen:\n{url}\n\n\
+                 Der Link funktioniert einmal und ist eine Stunde gültig. Tickets werden im \
+                 Portal erstellt und beantwortet. Antworten Sie nicht auf diese E-Mail. Wenn Sie \
+                 das nicht angefordert haben, ignorieren Sie diese E-Mail; Ihr Passwort bleibt unverändert."
             ),
         ),
     }

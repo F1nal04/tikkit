@@ -19,17 +19,21 @@ name the variable and the fix but never echo values.
 | `SESSION_ROTATE_HOURS` | no | `24` | Session age after which its token is replaced on the next request (1-8760). |
 | `TRUST_PROXY_HEADERS` | no | `false` | `true` only behind a reverse proxy that overwrites `X-Forwarded-For` (the production compose sets it for Caddy); the last hop is used as client IP for rate limits. Otherwise every client shares the proxy's IP. |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
-| `SMTP_URL` | no | | Outbound mail for invitation and recovery links, e.g. `smtps://user:pass@mail.example.com` or `smtp://user:pass@mail.example.com:587?tls=required` (STARTTLS). Production requires one of those two TLS forms. Treated as a secret: never logged or echoed. Set together with `SMTP_FROM`. |
-| `SMTP_FROM` | with `SMTP_URL` | | Sender, e.g. `Tikkit <help@example.com>`. |
 | `RUST_LOG` | no | `info,sqlx=warn` | Log filter, e.g. `info,tower_http=debug`. Request logs include the request ID and path, never query strings or bodies. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 
 AI providers are not environment configuration: they are optional, disabled by
-default, and configured by an Admin at runtime. SMTP is optional too; until
-Admin-managed SMTP settings arrive with notifications it is read from
-`SMTP_URL`/`SMTP_FROM`. Without it, Admins copy invitation links and recovery
-emails are not sent (see [auth.md](auth.md#email-delivery)). The API starts and
-serves the full service desk without either.
+default, and configured by an Admin at runtime. Outbound SMTP is optional too
+and is **not** an environment variable. An Admin saves the host, port, sender,
+username, and password in the app (`/admin/email`). The password is encrypted
+with `ENCRYPTION_KEY` (AES-256-GCM) and is write-only: it is never returned,
+logged, or written into audit events. Losing `ENCRYPTION_KEY` makes the stored
+password unreadable; enter it again. Transport security is either required
+STARTTLS or implicit TLS, and the server certificate is always verified. Without
+a saved, enabled connection, Admins copy invitation links and recovery emails
+are not sent (see [auth.md](auth.md#email-delivery)). The API starts and serves
+the full service desk either way. Each delivery attempt is limited to 15 seconds
+and transient failures are tried at most 3 times.
 
 ## Probes and shutdown
 

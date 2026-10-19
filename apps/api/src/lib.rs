@@ -24,6 +24,7 @@ pub mod config;
 pub mod db;
 pub mod mail;
 pub mod management;
+pub mod smtp;
 
 use api::{ApiError, Json};
 
@@ -71,6 +72,10 @@ pub struct AppState {
         management::organization,
         management::settings,
         management::update_settings,
+        smtp::get_smtp,
+        smtp::put_smtp,
+        smtp::delete_smtp,
+        smtp::test_smtp,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -220,6 +225,13 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/accounts/{id}/reactivate",
             post(accounts::reactivate_account),
         )
+        .route(
+            "/api/settings/smtp",
+            get(smtp::get_smtp)
+                .put(smtp::put_smtp)
+                .delete(smtp::delete_smtp),
+        )
+        .route("/api/settings/smtp/test", post(smtp::test_smtp))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,
