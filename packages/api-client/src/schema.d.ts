@@ -572,6 +572,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/screenshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload one screenshot as the raw request body (`Content-Type: image/png`,
+         *     `image/jpeg`, or `image/webp`). It stays private to the uploader until
+         *     attached by submission; unreferenced uploads expire after 24 hours.
+         */
+        post: operations["upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Metadata of a screenshot the caller may currently read. */
+        get: operations["metadata"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an own pending upload immediately. Attached screenshots are frozen
+         *     (`409`); so are uploads still referenced by an editable draft: save the draft
+         *     without it first (or just save it; unreferenced uploads expire on their own).
+         */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The same bytes as an attachment download. */
+        get: operations["download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inline image for `<img>` previews. Access is rechecked on every request and
+         *     never cached, so revoked access applies to old URLs immediately.
+         */
+        get: operations["preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/smtp": {
         parameters: {
             query?: never;
@@ -1211,6 +1291,29 @@ export interface components {
         ResolutionSource: "ai" | "operator";
         /** @enum {string} */
         Role: "user" | "operator" | "specialist" | "team_lead" | "admin";
+        /**
+         * @description Metadata of a validated screenshot. The bytes are only served by the
+         *     preview/download endpoints.
+         */
+        Screenshot: {
+            /**
+             * Format: int32
+             * @description Size of the stored, re-encoded file.
+             */
+            byte_size: number;
+            /** @description `image/png`, `image/jpeg`, or `image/webp`, from the decoded content. */
+            content_type: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Normalized server-side; the extension matches `content_type`. */
+            filename: string;
+            /** Format: int32 */
+            height: number;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            width: number;
+        };
         SetupRequest: {
             email: string;
             language: components["schemas"]["Language"];
@@ -1395,7 +1498,7 @@ export interface components {
             description?: string;
             /** Format: uuid */
             priority_id?: string | null;
-            /** @description Must be empty until validated screenshot uploads (#19) are available. */
+            /** @description Up to 10 distinct pending uploads of this account (`POST /api/screenshots`). */
             screenshot_ids?: string[];
             /** @description Up to 200 characters; required on submission. */
             subject?: string;
@@ -2955,6 +3058,244 @@ export interface operations {
             };
         };
     };
+    upload: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Original file name; only a safe base name is kept. Its extension, if
+                 *     any, must match the image format.
+                 */
+                filename?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Raw image bytes, at most 10 MiB */
+        requestBody?: {
+            content: {
+                "image/jpeg": unknown;
+                "image/png": unknown;
+                "image/webp": unknown;
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Screenshot"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `payload_too_large` (over 10 MiB) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed`: `file` is `required`, `unsupported_type`, `type_mismatch`, `corrupt`, `animated`, `dimensions_too_large`, or `too_many`; `filename` is `type_mismatch` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `internal` (storage failure; nothing was recorded) */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Screenshot"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or another account's upload) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (attached to a ticket or referenced by a draft) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated image bytes (`Content-Disposition: attachment`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/webp": unknown;
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/webp": unknown;
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_smtp: {
         parameters: {
             query?: never;
@@ -3440,7 +3781,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `validation_failed` (input bounds, unsupported screenshots) */
+            /** @description `validation_failed` (input bounds; `screenshot_ids` not own pending uploads) */
             422: {
                 headers: {
                     [name: string]: unknown;

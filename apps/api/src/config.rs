@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, str::FromStr, time::Duration};
+use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use sqlx::postgres::PgConnectOptions;
@@ -25,6 +25,8 @@ pub struct Config {
     pub session_rotate: Duration,
     /// Take the client IP from `X-Forwarded-For` (only behind a trusted reverse proxy).
     pub trust_proxy_headers: bool,
+    /// Private directory for screenshot files (a persistent volume in production).
+    pub screenshot_dir: PathBuf,
 }
 
 /// Every configuration problem found, one actionable line each. Never contains values.
@@ -53,6 +55,7 @@ impl fmt::Debug for Config {
             .field("session_ttl", &self.session_ttl)
             .field("session_rotate", &self.session_rotate)
             .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("screenshot_dir", &self.screenshot_dir)
             .finish()
     }
 }
@@ -161,6 +164,14 @@ impl Config {
                 false
             }
         };
+        let screenshot_dir =
+            PathBuf::from(var("SCREENSHOT_DIR").unwrap_or_else(|| "data/screenshots".into()));
+        if environment == Environment::Production && !screenshot_dir.is_absolute() {
+            fail(
+                "SCREENSHOT_DIR must be an absolute path to a persistent private volume when ENVIRONMENT=production, e.g. /var/lib/tikkit/screenshots",
+            );
+        }
+
         match (public_origin, session_secret, encryption_key) {
             (Some(public_origin), Some(session_secret), Some(encryption_key))
                 if errors.is_empty() =>
@@ -176,6 +187,7 @@ impl Config {
                     session_ttl,
                     session_rotate,
                     trust_proxy_headers,
+                    screenshot_dir,
                 })
             }
             _ => Err(ConfigError(errors)),
@@ -230,6 +242,7 @@ mod tests {
         assert_eq!(c.session_ttl, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(c.session_rotate, Duration::from_secs(24 * 3600));
         assert!(!c.trust_proxy_headers);
+        assert_eq!(c.screenshot_dir, PathBuf::from("data/screenshots"));
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
     }
@@ -274,6 +287,10 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.0[0].contains("https"));
-        assert!(config(&[("ENVIRONMENT", "production")]).is_ok());
+        let prod = ("ENVIRONMENT", "production");
+        let dir = ("SCREENSHOT_DIR", "/var/lib/tikkit/screenshots");
+        assert!(config(&[prod, dir]).is_ok());
+        let err = config(&[prod]).unwrap_err();
+        assert!(err.0[0].contains("SCREENSHOT_DIR"), "{err}");
     }
 }

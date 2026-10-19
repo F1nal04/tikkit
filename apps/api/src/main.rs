@@ -1,7 +1,7 @@
 use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
-use tikkit_api::{AppState, app_with, auth, config::Config, db};
+use tikkit_api::{AppState, app_with, auth, config::Config, db, screenshots};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
@@ -21,6 +21,12 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
+    std::fs::create_dir_all(&config.screenshot_dir)
+        .context("cannot create SCREENSHOT_DIR (see docs/configuration.md)")?;
+    tokio::spawn(screenshots::cleanup_loop(
+        pool.clone(),
+        config.screenshot_dir.clone(),
+    ));
 
     let listener = TcpListener::bind(config.api_addr)
         .await
@@ -30,7 +36,10 @@ async fn main() -> anyhow::Result<()> {
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
     let app = app_with(
-        AppState { pool: pool.clone() },
+        AppState {
+            pool: pool.clone(),
+            screenshot_dir: config.screenshot_dir.as_path().into(),
+        },
         auth::Settings::from(&config),
     );
     let server = axum::serve(
