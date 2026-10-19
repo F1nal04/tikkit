@@ -1,20 +1,23 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation'
-  import { ApiError, createClient, type Schemas } from '@tikkit/api-client'
+  import { ApiError, type Schemas } from '@tikkit/api-client'
+  import { api as apiClient } from '#lib/api.ts'
+  import Alert from '#lib/components/Alert.svelte'
+  import Field from '#lib/components/Field.svelte'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import { fieldBody } from './form.ts'
   import type { PageProps } from './$types'
 
-  type Field = Schemas['IntakeField']
+  type IntakeField = Schemas['IntakeField']
 
   let { data }: PageProps = $props()
   let t = $derived(messages[data.locale])
   let catalog = $derived(data.catalog)
-  let newKind = $state<Field['kind']>('text')
+  let newKind = $state<string>('text')
   // The failed form's key and message, shown next to that form.
   let problem = $state<{ at: string; text: string } | null>(null)
 
-  const api = () => createClient({ language: data.locale })
+  const api = () => apiClient(data.locale)
 
   async function run(at: string, action: () => Promise<unknown>): Promise<boolean> {
     problem = null
@@ -71,7 +74,7 @@
 <svelte:head><title>{t.catalog.title}</title></svelte:head>
 
 {#snippet problemAt(at: string)}
-  {#if problem?.at === at}<p class="error" role="alert">{problem.text}</p>{/if}
+  {#if problem?.at === at}<Alert>{problem.text}</Alert>{/if}
 {/snippet}
 
 {#snippet controls(kind: Kind, items: { id: string; archived: boolean }[], index: number, name: string)}
@@ -87,7 +90,7 @@
   </button>
 {/snippet}
 
-{#snippet fieldInputs(field: Field)}
+{#snippet fieldInputs(field: IntakeField)}
   <label>{t.catalog.label} <input name="label" value={field.label} required maxlength="100" /></label>
   <label>{t.catalog.guidance} <textarea name="guidance" maxlength="1000" value={field.guidance}></textarea></label>
   <label class="check"><input type="checkbox" name="required" checked={field.required} /> {t.catalog.required}</label>
@@ -119,136 +122,133 @@
   {/if}
 {/snippet}
 
-<main class="wide">
-  <h1>{t.catalog.title}</h1>
-  <p>{t.catalog.intro}</p>
-  <p class="hint">{t.catalog.archivedHint}</p>
+<h1>{t.catalog.title}</h1>
+<p>{t.catalog.intro}</p>
+<p class="hint">{t.catalog.archivedHint}</p>
 
-  <h2>{t.catalog.categories}</h2>
-  {@render problemAt('categories')}
-  <ul>
-    {#each catalog.categories as c, i (c.id)}
-      <li class="row">
+<h2>{t.catalog.categories}</h2>
+{@render problemAt('categories')}
+<ul>
+  {#each catalog.categories as c, i (c.id)}
+    <li class="row">
+      <form
+        class="row"
+        onsubmit={submit('categories', (f) =>
+          api().request('patch', '/api/categories/{id}', {
+            path: { id: c.id },
+            body: { name: named(f), skip_ai: f.has('skip_ai') },
+          }),
+        )}
+      >
+        <label>{t.catalog.name} <input name="name" value={c.name} required maxlength="100" /></label>
+        <label class="check"><input type="checkbox" name="skip_ai" checked={c.skip_ai} /> {t.catalog.skipAi}</label>
+        {#if c.archived}<span>{t.catalog.archived}</span>{/if}
+        <button type="submit" aria-label="{t.save}: {c.name}">{t.save}</button>
+      </form>
+      {@render controls('categories', catalog.categories, i, c.name)}
+    </li>
+  {:else}
+    <li>{t.catalog.none}</li>
+  {/each}
+</ul>
+<form
+  onsubmit={submit(
+    'category-new',
+    (f) => api().request('post', '/api/categories', { body: { name: named(f), skip_ai: f.has('skip_ai') } }),
+    true,
+  )}
+>
+  <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
+  <label class="check">
+    <input type="checkbox" name="skip_ai" aria-describedby="skip-ai-hint" />
+    {t.catalog.skipAi}
+  </label>
+  <p class="hint" id="skip-ai-hint">{t.catalog.skipAiHint}</p>
+  {@render problemAt('category-new')}
+  <button type="submit">{t.catalog.add}</button>
+</form>
+
+<h2>{t.catalog.priorities}</h2>
+{@render problemAt('priorities')}
+<ul>
+  {#each catalog.priorities as p, i (p.id)}
+    <li class="row">
+      <form
+        class="row"
+        onsubmit={submit('priorities', (f) =>
+          api().request('patch', '/api/priorities/{id}', { path: { id: p.id }, body: { name: named(f) } }),
+        )}
+      >
+        <label>{t.catalog.name} <input name="name" value={p.name} required maxlength="100" /></label>
+        {#if p.archived}<span>{t.catalog.archived}</span>{/if}
+        <button type="submit" aria-label="{t.save}: {p.name}">{t.save}</button>
+      </form>
+      {@render controls('priorities', catalog.priorities, i, p.name)}
+    </li>
+  {:else}
+    <li>{t.catalog.none}</li>
+  {/each}
+</ul>
+<form
+  onsubmit={submit('priority-new', (f) => api().request('post', '/api/priorities', { body: { name: named(f) } }), true)}
+>
+  <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
+  {@render problemAt('priority-new')}
+  <button type="submit">{t.catalog.add}</button>
+</form>
+
+<h2>{t.catalog.fields}</h2>
+{@render problemAt('fields')}
+<ul>
+  {#each catalog.fields as field, i (field.id)}
+    <li>
+      <details>
+        <summary>
+          {field.label} ({t.catalog.kinds[field.kind]}){field.archived ? ` — ${t.catalog.archived}` : ''}
+        </summary>
         <form
-          class="row"
-          onsubmit={submit('categories', (f) =>
-            api().request('patch', '/api/categories/{id}', {
-              path: { id: c.id },
-              body: { name: named(f), skip_ai: f.has('skip_ai') },
-            }),
+          onsubmit={submit('fields', (f) =>
+            api().request('patch', '/api/intake-fields/{id}', { path: { id: field.id }, body: fieldBody(f) }),
           )}
         >
-          <label>{t.catalog.name} <input name="name" value={c.name} required maxlength="100" /></label>
-          <label class="check"><input type="checkbox" name="skip_ai" checked={c.skip_ai} /> {t.catalog.skipAi}</label>
-          {#if c.archived}<span>{t.catalog.archived}</span>{/if}
-          <button type="submit" aria-label="{t.save}: {c.name}">{t.save}</button>
+          {@render fieldInputs(field)}
+          <button type="submit">{t.save}</button>
         </form>
-        {@render controls('categories', catalog.categories, i, c.name)}
-      </li>
-    {:else}
-      <li>{t.catalog.none}</li>
-    {/each}
-  </ul>
-  <form
-    onsubmit={submit(
-      'category-new',
-      (f) => api().request('post', '/api/categories', { body: { name: named(f), skip_ai: f.has('skip_ai') } }),
-      true,
-    )}
-  >
-    <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
-    <label class="check">
-      <input type="checkbox" name="skip_ai" aria-describedby="skip-ai-hint" />
-      {t.catalog.skipAi}
-    </label>
-    <p class="hint" id="skip-ai-hint">{t.catalog.skipAiHint}</p>
-    {@render problemAt('category-new')}
-    <button type="submit">{t.catalog.add}</button>
-  </form>
-
-  <h2>{t.catalog.priorities}</h2>
-  {@render problemAt('priorities')}
-  <ul>
-    {#each catalog.priorities as p, i (p.id)}
-      <li class="row">
-        <form
-          class="row"
-          onsubmit={submit('priorities', (f) =>
-            api().request('patch', '/api/priorities/{id}', { path: { id: p.id }, body: { name: named(f) } }),
-          )}
-        >
-          <label>{t.catalog.name} <input name="name" value={p.name} required maxlength="100" /></label>
-          {#if p.archived}<span>{t.catalog.archived}</span>{/if}
-          <button type="submit" aria-label="{t.save}: {p.name}">{t.save}</button>
-        </form>
-        {@render controls('priorities', catalog.priorities, i, p.name)}
-      </li>
-    {:else}
-      <li>{t.catalog.none}</li>
-    {/each}
-  </ul>
-  <form
-    onsubmit={submit('priority-new', (f) => api().request('post', '/api/priorities', { body: { name: named(f) } }), true)}
-  >
-    <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
-    {@render problemAt('priority-new')}
-    <button type="submit">{t.catalog.add}</button>
-  </form>
-
-  <h2>{t.catalog.fields}</h2>
-  {@render problemAt('fields')}
-  <ul>
-    {#each catalog.fields as field, i (field.id)}
-      <li>
-        <details>
-          <summary>
-            {field.label} ({t.catalog.kinds[field.kind]}){field.archived ? ` — ${t.catalog.archived}` : ''}
-          </summary>
-          <form
-            onsubmit={submit('fields', (f) =>
-              api().request('patch', '/api/intake-fields/{id}', { path: { id: field.id }, body: fieldBody(f) }),
-            )}
-          >
-            {@render fieldInputs(field)}
-            <button type="submit">{t.save}</button>
-          </form>
-        </details>
-        {@render controls('fields', catalog.fields, i, field.label)}
-      </li>
-    {:else}
-      <li>{t.catalog.none}</li>
-    {/each}
-  </ul>
-  <h3>{t.catalog.addField}</h3>
-  <form
-    onsubmit={submit(
-      'field-new',
-      (f) => api().request('post', '/api/intake-fields', { body: { ...fieldBody(f), kind: newKind } }),
-      true,
-    )}
-  >
-    <label>
-      {t.catalog.kind}
-      <select name="kind" bind:value={newKind}>
-        <option value="text">{t.catalog.kinds.text}</option>
-        <option value="select">{t.catalog.kinds.select}</option>
-      </select>
-    </label>
-    {@render fieldInputs({
-      id: '',
-      label: '',
-      guidance: '',
-      kind: newKind,
-      required: false,
-      allow_other: false,
-      category_ids: [],
-      choices: [],
-      archived: false,
-    })}
-    {@render problemAt('field-new')}
-    <button type="submit">{t.catalog.addField}</button>
-  </form>
-</main>
+      </details>
+      {@render controls('fields', catalog.fields, i, field.label)}
+    </li>
+  {:else}
+    <li>{t.catalog.none}</li>
+  {/each}
+</ul>
+<h3>{t.catalog.addField}</h3>
+<form
+  onsubmit={submit(
+    'field-new',
+    (f) => api().request('post', '/api/intake-fields', { body: { ...fieldBody(f), kind: newKind as IntakeField['kind'] } }),
+    true,
+  )}
+>
+  <Field
+    name="kind"
+    label={t.catalog.kind}
+    bind:value={newKind}
+    options={[{ value: 'text', label: t.catalog.kinds.text }, { value: 'select', label: t.catalog.kinds.select }]}
+  />
+  {@render fieldInputs({
+    id: '',
+    label: '',
+    guidance: '',
+    kind: newKind as IntakeField['kind'],
+    required: false,
+    allow_other: false,
+    category_ids: [],
+    choices: [],
+    archived: false,
+  })}
+  {@render problemAt('field-new')}
+  <button type="submit">{t.catalog.addField}</button>
+</form>
 
 <style>
   ul { padding: 0; list-style: none; display: grid; gap: 0.75rem; }
