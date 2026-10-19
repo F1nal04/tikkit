@@ -1932,9 +1932,10 @@ export interface components {
         /** @description A cheap change marker for an open ticket page (docs/lifecycle.md "Refreshing"). */
         TicketActivity: {
             /**
-             * @description Opaque; compare for equality only. Changes with every status, team, assignee,
-             *     or priority change, every message the caller may read, and the caller's own
-             *     role or team (so open pages refresh their capabilities).
+             * @description Opaque digest; compare for equality only. Changes with every status, team,
+             *     assignee, or priority change, every message the caller may read, and the
+             *     caller's own role or team (so open pages refresh their capabilities). It is
+             *     not a counter, so it does not reveal how many staff-only events exist.
              */
             version: string;
         };

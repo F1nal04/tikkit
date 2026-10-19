@@ -6719,7 +6719,7 @@
         "properties": {
           "version": {
             "type": "string",
-            "description": "Opaque; compare for equality only. Changes with every status, team, assignee,\nor priority change, every message the caller may read, and the caller's own\nrole or team (so open pages refresh their capabilities)."
+            "description": "Opaque digest; compare for equality only. Changes with every status, team,\nassignee, or priority change, every message the caller may read, and the\ncaller's own role or team (so open pages refresh their capabilities). It is\nnot a counter, so it does not reveal how many staff-only events exist."
           }
         }
       },
