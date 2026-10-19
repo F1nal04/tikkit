@@ -21,6 +21,7 @@ pub mod api;
 pub mod assignment;
 pub mod auth;
 pub mod authz;
+pub mod autoclose;
 pub mod bulk;
 pub mod catalog;
 pub mod config;
