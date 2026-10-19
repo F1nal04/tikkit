@@ -435,6 +435,26 @@ async fn spoofed_corrupt_animated_oversized_and_disallowed_files_are_rejected() 
         );
         assert_eq!(r.field(field), code, "{name} {mime}: {:?}", r.json());
     }
+    // The route's own body limit replaces the 1 MiB JSON default.
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let noise = RgbaImage::from_fn(1000, 800, |_, _| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        image::Rgba(state.to_le_bytes()[..4].try_into().unwrap())
+    });
+    let mut big = Cursor::new(Vec::new());
+    noise.write_to(&mut big, ImageFormat::Png).unwrap();
+    let big = big.into_inner();
+    assert!(big.len() > 2 * 1024 * 1024);
+    let r = upload(&w.app, &w.requester, "big.png", "image/png", big).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    sqlx::query("DELETE FROM screenshots")
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(screenshot_dir(&w.db.pool)).unwrap();
+
     let r = upload(
         &w.app,
         &w.requester,
