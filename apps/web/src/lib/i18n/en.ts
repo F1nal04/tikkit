@@ -246,6 +246,7 @@ export default {
       'Every category uses the same ticket form: category, subject, description, priority, and optional screenshots. Conditional fields add context for the categories you choose. A category never selects a support team.',
     categories: 'Categories',
     priorities: 'Priority levels',
+    prioritiesHint: 'List the most urgent level first: queues sorted by priority show tickets in this order.',
     fields: 'Conditional fields',
     name: 'Name',
     add: 'Add',
