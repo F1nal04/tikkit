@@ -8,22 +8,53 @@
     },
     "check": {},
     "test": {},
+    "@tikkit/web#test:e2e": { "dependsOn": ["build"], "cache": false, "env": ["CI"] },
     "start": { "cache": false, "persistent": true },
+    "@tikkit/api-client#check": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/api/openapi.json"]
+    },
     "@tikkit/api#dev": {
       "cache": false,
       "persistent": true,
-      "env": ["API_ADDR"]
+      "passThroughEnv": [
+        "API_ADDR",
+        "DATABASE_URL",
+        "PUBLIC_ORIGIN",
+        "SESSION_SECRET",
+        "ENCRYPTION_KEY",
+        "SHUTDOWN_TIMEOUT_SECS",
+        "SESSION_TTL_HOURS",
+        "SESSION_ROTATE_HOURS",
+        "TRUST_PROXY_HEADERS",
+        "ENVIRONMENT",
+        "RUST_LOG"
+      ]
     },
     "@tikkit/api#build": {
       "cache": false,
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/Cargo.toml", "$TURBO_ROOT$/Cargo.lock"]
     },
     "@tikkit/api#check": { "cache": false },
-    "@tikkit/api#test": { "cache": false },
+    "@tikkit/api#test": {
+      "cache": false,
+      "passThroughEnv": ["DATABASE_URL", "TEST_DATABASE_URL"]
+    },
     "@tikkit/api#start": {
       "cache": false,
       "persistent": true,
-      "env": ["API_ADDR"]
+      "passThroughEnv": [
+        "API_ADDR",
+        "DATABASE_URL",
+        "PUBLIC_ORIGIN",
+        "SESSION_SECRET",
+        "ENCRYPTION_KEY",
+        "SHUTDOWN_TIMEOUT_SECS",
+        "SESSION_TTL_HOURS",
+        "SESSION_ROTATE_HOURS",
+        "TRUST_PROXY_HEADERS",
+        "ENVIRONMENT",
+        "RUST_LOG"
+      ]
     },
     "@tikkit/web#start": {
       "cache": false,

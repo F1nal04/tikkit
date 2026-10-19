@@ -26,3 +26,24 @@ export function resolveLocale(
     .sort((a, b) => b.q - a.q)
   return ranked.map(({ tag }) => tag).find(isLocale) ?? 'en'
 }
+
+/** Signed in, the account's language applies unless this request picked one with `?lang=`. */
+export function pageLocale(resolved: Locale, query: string | null, account: Locale | undefined): Locale {
+  return account && query !== resolved ? account : resolved
+}
+
+type Messages = (typeof messages)[Locale]
+
+/** Localized text for a failed API call, chosen by its stable error code. */
+export function errorText(t: Messages, error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' && code in t.errors
+    ? t.errors[code as keyof Messages['errors']]
+    : t.errors.generic
+}
+
+/** Localized text for a field error code from `validation_failed`. */
+export function fieldText(t: Messages, code: string | undefined): string | undefined {
+  if (!code) return undefined
+  return code in t.fieldErrors ? t.fieldErrors[code as keyof Messages['fieldErrors']] : t.fieldErrors.invalid
+}
