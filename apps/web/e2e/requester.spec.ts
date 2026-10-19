@@ -174,11 +174,11 @@ test('reopening defaults off, honors current policy changes, then reopens only a
   await expect(page.getByRole('form', { name: 'Public reply' })).toBeVisible()
 })
 
-test('AI-solved history is read-only, escapes its suggestion, and rejects direct reopen/escalation', async ({ page }) => {
+test('AI-solved history is read-only, marks the suggestion unavailable, and rejects direct reopen/escalation', async ({ page }) => {
   const ids = await setup(page)
   await request(page, '/api/test/policy', { allow_reopening: true })
   await detail(page, ids.ai)
-  await expect(page.getByText('Restart the printer. <script>window.aiXss = true</script>')).toBeVisible()
+  await expect(page.getByText('The AI suggestion text is unavailable for this record.')).toBeVisible()
   await expect(page.getByText('AI solution confirmed', { exact: true })).toBeVisible()
   await expect(page.getByRole('main').getByRole('textbox')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Send reply|Reopen|Cancel ticket|Still not solved|Confirm resolved/ })).toHaveCount(0)
@@ -188,7 +188,6 @@ test('AI-solved history is read-only, escapes its suggestion, and rejects direct
   }
   expect((await request(page, `/api/tickets/${ids.ai}/replies`, { body: 'Escalate', idempotency_key: crypto.randomUUID() })).status).toBe(409)
   expect((await request(page, `/api/tickets/${ids.ai}`)).body).toEqual(before.body)
-  expect(await page.evaluate('window.aiXss || false')).toBe(false)
 })
 
 test('requester history and detail offer accessible unavailable states and recover', async ({ page }) => {

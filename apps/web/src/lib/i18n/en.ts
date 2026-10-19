@@ -34,7 +34,7 @@ export default {
   "screenshot": "Screenshot",
   "download": "Download screenshot",
   "aiSolution": "AI suggestion",
-  "noSolution": "No stored suggestion is available for this historical record.",
+  "noSolution": "The AI suggestion text is unavailable for this record.",
   "aiFinal": "You confirmed this AI suggestion solved the problem. This record is final and read-only.",
   "resolution": "Proposed resolution",
   "deadline": "Automatic closure deadline:",

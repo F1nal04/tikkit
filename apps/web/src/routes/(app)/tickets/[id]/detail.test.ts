@@ -8,7 +8,7 @@ afterEach(() => { vi.unstubAllGlobals(); invalidateAll.mockClear() })
 
 const base = {
   id: 'ticket-1', reference: 42, status: 'awaiting_confirmation', view: 'requester', subject: 'Printer', description: '<script>bad()</script>',
-  category_name: 'Hardware', priority_name: 'Normal', intake_snapshot: null, ai_solution: null, resolution_source: null, closure_reason: null,
+  category_name: 'Hardware', priority_name: 'Normal', intake_snapshot: null, resolution_source: null, closure_reason: null,
   proposal_version: 3, confirmation_deadline: '2026-12-01T10:00:00Z', requester: null,
   assignment: { team_name: 'Desk', assignee_display_name: 'Olga' }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z',
   transitions: [{ id: 1, event_type: 'propose_resolution', to_status: 'awaiting_confirmation', created_at: '2026-10-01T10:00:00Z', payload: { summary: 'Replaced driver', proposal_version: 3 } }],
@@ -58,9 +58,9 @@ test('an uncertain reply send retries with the same key and keeps input', async 
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(JSON.parse(fetch.mock.calls[1][1].body))
 })
 
-test('AI-solved history escapes the suggestion and offers no mutation controls in German', () => {
-  show({ status: 'ai_solved', ai_solution: '<img src=x onerror=bad()>', closure_reason: 'requester_confirmed', assignment: { team_name: null, assignee_display_name: null } }, 'de')
-  expect(screen.getByText('<img src=x onerror=bad()>')).toBeTruthy()
+test('AI-solved history marks the suggestion unavailable and offers no mutation controls in German', () => {
+  show({ status: 'ai_solved', closure_reason: 'requester_confirmed', assignment: { team_name: null, assignee_display_name: null } }, 'de')
+  expect(screen.getByText(/KI-Lösungsvorschlags ist für diesen Eintrag nicht verfügbar/)).toBeTruthy()
   expect(document.querySelector('script, img')).toBeNull()
   expect(screen.queryByRole('textbox')).toBeNull()
   expect(screen.queryByRole('button', { name: /Antwort|wiedereröffnen|stornieren|bestätigen/i })).toBeNull()
