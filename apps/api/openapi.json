@@ -6408,7 +6408,7 @@
             "items": {
               "$ref": "#/components/schemas/PriorityChange"
             },
-            "description": "Effective-priority changes, oldest first. Actors are staff-view only."
+            "description": "Staff-only effective-priority history, oldest first; empty in requester responses."
           },
           "priority_id": {
             "type": "string",
