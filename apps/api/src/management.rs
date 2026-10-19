@@ -137,11 +137,22 @@ async fn set_membership(
     account: Uuid,
     team: Option<Uuid>,
 ) -> Result<(), ApiError> {
-    let old: Option<Uuid> =
-        sqlx::query_scalar("SELECT team_id FROM team_memberships WHERE account_id = $1")
-            .bind(account)
-            .fetch_optional(&mut *db)
-            .await?;
+    // Account, then membership and its team, before any ticket. Assignment and
+    // lifecycle take those locks before the ticket row; clearing tickets first
+    // deadlocks, and would miss an assignee committed while this waited.
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(account)
+        .fetch_optional(&mut *db)
+        .await?;
+    let old: Option<Uuid> = sqlx::query_scalar(
+        "SELECT m.team_id FROM team_memberships m
+         JOIN teams t ON t.id = m.team_id
+         WHERE m.account_id = $1
+         FOR UPDATE OF m, t",
+    )
+    .bind(account)
+    .fetch_optional(&mut *db)
+    .await?;
     if old == team {
         return Ok(());
     }
@@ -309,14 +320,26 @@ pub async fn update_team(
         if body.lead_account_id.is_some() {
             return Err(invalid("lead_account_id"));
         }
-        sqlx::query("UPDATE teams SET name=$2, archived_at=coalesce(archived_at,now()), lead_account_id=NULL,lead_role=NULL,lead_active=NULL WHERE id=$1")
-            .bind(id).bind(name).execute(&mut *tx).await.map_err(team_error)?;
         let members: Vec<Uuid> = sqlx::query_scalar(
             "SELECT account_id FROM team_memberships WHERE team_id=$1 ORDER BY account_id",
         )
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
+        // Accounts before the team, before tickets: assignment share-locks a
+        // member and then their team.
+        for member in &members {
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+                .bind(member)
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM teams WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE teams SET name=$2, archived_at=coalesce(archived_at,now()), lead_account_id=NULL,lead_role=NULL,lead_active=NULL WHERE id=$1")
+            .bind(id).bind(name).execute(&mut *tx).await.map_err(team_error)?;
         for member in members {
             set_membership(&mut tx, &user, member, None).await?;
         }
@@ -325,6 +348,16 @@ pub async fn update_team(
             .lead_account_id
             .ok_or_else(|| invalid("lead_account_id"))?;
         check_lead(&mut tx, lead, Some(id)).await?;
+        // The lead's account, then this team, before set_membership touches tickets.
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+            .bind(lead)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| invalid("lead_account_id"))?;
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM teams WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
         if old.archived {
             // Restore with the same deferred-FK sequence used for initial creation.
             set_membership(&mut tx, &user, lead, None).await?;
