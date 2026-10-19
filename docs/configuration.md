@@ -56,3 +56,33 @@ PUBLIC_HOST=help.example.com
 ```
 
 Packaged images and full production documentation are tracked separately.
+
+## Organization settings
+
+Admins configure these at `/admin/settings`; they are persisted in the singleton
+organization row and read with `GET /api/organization` by signed-in clients.
+No new environment variables are required. The Admin-only PUT endpoint is
+`/api/admin/settings`; every successful change is audited.
+
+- `name`: trimmed, nonblank, at most 120 characters; default `Tikkit`.
+- `timezone`: standard IANA area/timezone name such as `Europe/Berlin`; default `UTC`.
+  Invitation history uses it for display. All persisted timestamps remain UTC.
+- `default_language`: `en` (default) or `de`; used for invitations without an
+  explicit language. Existing account preferences are unchanged.
+- `allow_reopening`: false by default, for human-closed tickets only. AI-solved
+  records remain permanently final regardless of this value.
+- `requester_cancellation_policy`: `anytime_while_open` (default),
+  `before_work_starts`, or `disabled`. Every cancellation requires a reason;
+  work starts with the first recorded human In Progress/work-start event and
+  is not reset by unassignment or transfer.
+- `resolution_confirmation_hours`: positive integer elapsed hours, default 168
+  (7 days). Resolution proposals must snapshot the policy and deadline; changes
+  affect subsequent proposals. Timeout closure is separate from requester
+  confirmation and never implies acceptance. This is not an SLA setting.
+- `allow_requester_ai_skip`: false by default; does not enable AI or change
+  category exemptions.
+
+This issue stores lifecycle policies for the ticket workflows that follow.
+Enforcement, snapshotted proposals and timeout processing belong to their
+respective ticket/lifecycle issues. Admin-managed SMTP is tracked in #28;
+category/priority configuration is tracked in #15.

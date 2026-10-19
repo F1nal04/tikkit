@@ -21,6 +21,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_account"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounts/{id}/deactivate": {
         parameters: {
             query?: never;
@@ -53,6 +69,22 @@ export interface paths {
         put?: never;
         /** Reactivates an account (Admin only). */
         post: operations["reactivate_account"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["settings"];
+        put: operations["update_settings"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -196,7 +228,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Pending (usable) invitations, newest first (Admin only). */
+        /** Invitations newest first, optionally including all historical statuses (Admin only). */
         get: operations["list_invitations"];
         put?: never;
         /**
@@ -251,6 +283,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invitations/{id}/reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reissue replaces an unused invitation atomically; concurrent/replayed requests fail. */
+        post: operations["reissue_invitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invitations/{id}/revoke": {
         parameters: {
             query?: never;
@@ -280,6 +329,22 @@ export interface paths {
         };
         /** This OpenAPI document. */
         get: operations["openapi_json"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["organization"];
         put?: never;
         post?: never;
         delete?: never;
@@ -326,6 +391,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_teams"];
+        put?: never;
+        post: operations["create_team"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_team"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -355,13 +452,19 @@ export interface components {
             created_at: string;
             display_name: string;
             email: string;
+            expertise: string | null;
             /** Format: uuid */
             id: string;
             is_active: boolean;
+            is_team_lead: boolean;
             language: components["schemas"]["Language"];
             role: components["schemas"]["Role"];
+            /** Format: uuid */
+            team_id: string | null;
             username: string;
         };
+        /** @enum {string} */
+        CancellationPolicy: "anytime_while_open" | "before_work_starts" | "disabled";
         ChangePasswordRequest: {
             current_password: string;
             /** @description 12-256 characters. */
@@ -383,6 +486,11 @@ export interface components {
             expires_in_hours?: number | null;
             language?: null | components["schemas"]["Language"];
             role?: null | components["schemas"]["Role"];
+        };
+        CreateTeamRequest: {
+            /** Format: uuid */
+            lead_account_id: string;
+            name: string;
         };
         CreatedInvitation: {
             /** @description Whether an email was queued (SMTP configured and an email given). */
@@ -417,6 +525,8 @@ export interface components {
             status: string;
         };
         Invitation: {
+            /** Format: uuid */
+            account_id: string | null;
             /** Format: date-time */
             created_at: string;
             email: string | null;
@@ -426,6 +536,8 @@ export interface components {
             id: string;
             language: components["schemas"]["Language"];
             role: components["schemas"]["Role"];
+            status: components["schemas"]["InvitationStatus"];
+            username: string | null;
         };
         /** @description What an invitee sees before accepting. Opening a link never consumes it. */
         InvitationPreview: {
@@ -435,6 +547,8 @@ export interface components {
             language: components["schemas"]["Language"];
             role: components["schemas"]["Role"];
         };
+        /** @enum {string} */
+        InvitationStatus: "pending" | "accepted" | "expired" | "revoked";
         /**
          * @description Machine identifiers published in the contract; display text is localized by clients.
          * @enum {string}
@@ -444,6 +558,22 @@ export interface components {
             password: string;
             username: string;
         };
+        OrganizationSettings: {
+            /** @description Human-closed tickets only. AI-solved records remain permanently non-reopenable. */
+            allow_reopening: boolean;
+            allow_requester_ai_skip: boolean;
+            default_language: components["schemas"]["Language"];
+            name: string;
+            /** @description Before work starts uses the first human work-start event, never current assignment. Every cancellation requires a reason. */
+            requester_cancellation_policy: components["schemas"]["CancellationPolicy"];
+            /**
+             * Format: int32
+             * @description Positive elapsed hours, default 168. Future proposals snapshot this policy; timeout closure is not requester acceptance.
+             */
+            resolution_confirmation_hours: number;
+            /** @description UTC or an IANA area/timezone name supported by PostgreSQL; timestamps remain UTC. */
+            timezone: string;
+        };
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_AccountSummary: {
             items: {
@@ -451,11 +581,15 @@ export interface components {
                 created_at: string;
                 display_name: string;
                 email: string;
+                expertise: string | null;
                 /** Format: uuid */
                 id: string;
                 is_active: boolean;
+                is_team_lead: boolean;
                 language: components["schemas"]["Language"];
                 role: components["schemas"]["Role"];
+                /** Format: uuid */
+                team_id: string | null;
                 username: string;
             }[];
             next_cursor: string | null;
@@ -463,6 +597,8 @@ export interface components {
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_Invitation: {
             items: {
+                /** Format: uuid */
+                account_id: string | null;
                 /** Format: date-time */
                 created_at: string;
                 email: string | null;
@@ -472,6 +608,22 @@ export interface components {
                 id: string;
                 language: components["schemas"]["Language"];
                 role: components["schemas"]["Role"];
+                status: components["schemas"]["InvitationStatus"];
+                username: string | null;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Team: {
+            items: {
+                archived: boolean;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                lead_account_id: string | null;
+                name: string;
             }[];
             next_cursor: string | null;
         };
@@ -509,6 +661,16 @@ export interface components {
         SetupStatus: {
             setup_required: boolean;
         };
+        Team: {
+            archived: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            lead_account_id: string | null;
+            name: string;
+        };
         /**
          * @description Public handling details shown to a ticket's requester. `team_name: null`
          *     means the shared general queue; `assignee_display_name: null` means unassigned.
@@ -522,10 +684,30 @@ export interface components {
         TokenRequest: {
             token: string;
         };
+        UpdateAccountRequest: {
+            /** @description Descriptive only; only Specialist accounts may have expertise. Maximum 120 characters. */
+            expertise?: string | null;
+            role: components["schemas"]["Role"];
+            /**
+             * Format: uuid
+             * @description One current team; null removes membership. Users/Admins must use null.
+             */
+            team_id?: string | null;
+        };
         UpdateProfileRequest: {
             /** @description Contact address; omitted keeps the current one. */
             email?: string | null;
             language?: null | components["schemas"]["Language"];
+        };
+        UpdateTeamRequest: {
+            /** @description Archiving clears leadership, memberships and assignments, retaining all history. */
+            archived: boolean;
+            /**
+             * Format: uuid
+             * @description Required for active teams; null when archiving. A lead must be active with team_lead role.
+             */
+            lead_account_id?: string | null;
+            name: string;
         };
     };
     responses: never;
@@ -569,6 +751,71 @@ export interface operations {
             };
             /** @description `forbidden` (not an Admin) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated atomically */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description last_active_admin, active_team_lead, conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -672,6 +919,88 @@ export interface operations {
             };
             /** @description `not_found` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -962,10 +1291,10 @@ export interface operations {
     list_invitations: {
         parameters: {
             query?: {
-                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
                 limit?: number;
-                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
+                /** @description Include accepted/expired/revoked invitations. Default false preserves the pending-only view. */
+                include_history?: boolean;
             };
             header?: never;
             path?: never;
@@ -1143,6 +1472,51 @@ export interface operations {
             };
         };
     };
+    reissue_invitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedInvitation"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     revoke_invitation: {
         parameters: {
             query?: never;
@@ -1206,6 +1580,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    organization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -1300,6 +1701,158 @@ export interface operations {
             };
             /** @description `rate_limited` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_teams: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Team"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_team: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTeamRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_team: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTeamRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

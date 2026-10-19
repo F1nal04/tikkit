@@ -80,3 +80,36 @@ Rust validates and authorizes first; these constraints are the backstop.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change.
+
+## Admin management (0005)
+
+Migration `0005_admin_management.sql` extends the existing singleton `organization`
+with `name` (default `Tikkit`), `timezone` (default `UTC`), `default_language`
+(`en`/`de`, default `en`), `allow_reopening` (false),
+`requester_cancellation_policy` (`anytime_while_open` by default,
+`before_work_starts`, or `disabled`), `resolution_confirmation_hours` (positive
+integer, default 168), and `allow_requester_ai_skip` (false). There are no
+credentials or AI enablement fields here. Timezone names are validated against
+PostgreSQL's `pg_timezone_names` and limited to `UTC` or standard IANA area names; storage timestamps stay UTC.
+
+`accounts.expertise` is nullable, bounded to 120 characters, descriptive Specialist
+metadata. The management API clears it when changing to another role. Neither it
+nor the Team Lead title grants additional team scope.
+
+Admin account/team edits take the existing `tikkit.active_admins` transaction
+advisory lock before row locks, then recheck the actor's current Admin status.
+The existing FK/check constraints remain the final backstop. Replacing a lead is
+one transaction; the former lead remains a member without leadership. A lead
+cannot transfer, leave, deactivate or change role until replaced or archived.
+Archiving clears leadership, all memberships and individual assignments;
+restoring requires an eligible active Team Lead and appoints them atomically.
+Leaving a team or deactivating an assignee clears affected assignments and appends
+`ticket_events.assignment_changed` with the Admin actor, previous assignee and
+reason. Tickets, messages, membership history and account IDs remain intact.
+
+Additional attributable append-only audit event types are `account_updated`
+(role/expertise before/after), `team_created`, `team_updated` (including leadership
+and archival), `team_membership_changed` (old/new team IDs), and
+`organization_settings_updated` (before/after policy). Invitation reissue appends
+`invitation_revoked` with reason `reissued` and `invitation_created` atomically;
+neither event contains the link or token.
