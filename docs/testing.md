@@ -64,7 +64,7 @@ bun run test:e2e                                              # builds, then run
 `e2e/shell.spec.ts` again at phone size (Pixel 7); it starts the production server
 (`node build/index.js`) twice: on :4173 with `API_ORIGIN` pointing at a stub
 API (`e2e/stub-api.mjs`, :4175; sign in as `requester`, `operator`, `specialist`,
-`lead`, or `admin` with `correct horse battery`; `e2e/support.ts` routes browser
+`lead`, or `admin` with `correct horse battery`; it also serves `/api/queue`, `/api/queue/counts`, and `/api/catalog` from fixed queue data; `e2e/support.ts` routes browser
 `/api` calls to it), and on :4174 pointing at a closed port for the
 API-unavailable state. No Rust build, database, or AI key is needed. Locally,
 already-running servers on those ports are reused. Failures keep a trace and
