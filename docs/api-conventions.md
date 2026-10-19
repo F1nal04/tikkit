@@ -98,6 +98,8 @@ Handlers take `auth::CurrentUser` to require a session (`401 unauthorized` other
   before a cursor and be missed by a client already paging; refresh from the
   first page when completeness matters. Endpoints that need another order
   document a fixed `sort` enum; there is no free-form ordering.
+- Conversation messages are ordered oldest first by internal commit sequence
+  instead of the default timestamp order; see [conversations.md](conversations.md).
 - Filters are plain query parameters with documented values (stable
   identifiers, e.g. `status=queued`). Unparsable or unknown filter
   values are rejected with 400 `invalid_query`. Filters and counts always apply the caller's visibility
@@ -115,8 +117,10 @@ or business rules. Timestamps are RFC 3339 UTC.
 
 Requester-facing ticket responses include `TicketAssignmentView`:
 `team_name` (`null` = shared general queue) and `assignee_display_name`
-(`null` = unassigned). Both keys are always present. Nothing else about staff,
-internal notes, or team membership is exposed to requesters.
+(`null` = unassigned). Both keys are always present. Public conversation
+messages additionally expose author display names and author kind, with
+account IDs redacted. Internal notes and team membership
+are never exposed to requesters.
 
 ## Typed client and drift checks
 

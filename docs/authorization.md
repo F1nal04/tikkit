@@ -114,3 +114,13 @@ changes run one after another; the row trigger then fails with constraint
 concurrent loser under `REPEATABLE READ` gets `40001` instead, which `ApiError`
 maps to `409 conflict` (as is `40P01`). `ApiError` maps the
 constraint to `409 last_active_admin` via `?`, so handlers just run the update.
+
+## Conversation enforcement
+
+[Conversation APIs](conversations.md) use the ticket policy above for every
+read and write. Requester ownership takes precedence over staff role. Private
+notes (and their screenshots) require the staff view; on tickets returned to
+general intake, they remain Admin-only until dispatch. SQL filters private
+messages before pagination, so hidden messages cannot create extra pages.
+New sends share the lifecycle service's locked actor loader and lock the ticket,
+serializing writes with reassignment, transfer, and status transitions.

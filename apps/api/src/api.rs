@@ -347,6 +347,15 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
+/// Sensitive resource responses must not survive authorization changes in caches.
+pub async fn private_response(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-store"),
+    );
+    response
+}
+
 /// Middleware rendering every error response as the JSON envelope, including
 /// framework responses (unknown route, wrong method) that never saw an `ApiError`.
 pub async fn error_envelope(request: Request, next: Next) -> Response {

@@ -214,3 +214,25 @@ Migration `0011_operator_queues.sql` adds the partial index
 (`queued`, `in_progress`, `waiting_for_requester`, `awaiting_confirmation`). No
 new columns: queue membership is derived from `status`, `team_id`, and
 `assignee_account_id` (see [queues.md](queues.md)).
+
+## Conversations
+
+Migration `0012_ticket_messages.sql` extends the existing `ticket_messages`
+table (it does not duplicate it): immutable identity `sequence` for stable
+per-ticket commit ordering (internal; never returned by the API), server-derived `author_kind` (`requester`,
+`staff`), optional UUID `idempotency_key` and SHA-256 `request_hash` (null only
+for legacy rows). `(ticket_id, author_account_id, idempotency_key)` is unique.
+Bodies are nonempty plain text, at most 10,000 characters; internal notes have
+staff authors. UPDATE/DELETE/TRUNCATE are rejected (`23001`). Full and
+public-only `(ticket_id, sequence)` indexes support bounded ascending pages.
+
+`screenshots.message_id` is null for intake/pending uploads, otherwise bound
+once during attachment with a composite `(message_id, ticket_id)` foreign key
+to `ticket_messages`. The existing screenshot freeze trigger protects this
+association. Note screenshots require staff-only message access on every read.
+
+Send events `public_reply_added` and `internal_note_added` in `ticket_events`
+record the actor and `{message_id}` only, without content or screenshot IDs;
+they have no status columns. Requester transition history never includes
+these events. See [conversations.md](conversations.md) for endpoints,
+authorization, rendering, ordering, retries, and notification integration.

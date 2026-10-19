@@ -26,6 +26,7 @@ pub mod db;
 pub mod lifecycle;
 pub mod mail;
 pub mod management;
+pub mod messages;
 pub mod queues;
 pub mod screenshots;
 pub mod smtp;
@@ -99,6 +100,9 @@ pub struct AppState {
         tickets::list_own_tickets,
         queues::list_queue,
         queues::queue_counts,
+        messages::list,
+        messages::reply,
+        messages::note,
         submission::create_draft,
         submission::list_drafts,
         submission::get_draft,
@@ -306,12 +310,26 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .route(
+            "/api/tickets/{id}/messages",
+            get(messages::list).layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/tickets/{id}/replies",
+            post(messages::reply).layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/tickets/{id}/notes",
+            post(messages::note).layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
             "/api/screenshots",
             post(screenshots::upload).layer(DefaultBodyLimit::max(screenshots::MAX_BYTES)),
         )
         .route(
             "/api/screenshots/{id}",
-            get(screenshots::metadata).delete(screenshots::delete),
+            get(screenshots::metadata)
+                .delete(screenshots::delete)
+                .layer(axum::middleware::map_response(api::private_response)),
         )
         .route("/api/screenshots/{id}/preview", get(screenshots::preview))
         .route("/api/screenshots/{id}/download", get(screenshots::download))
