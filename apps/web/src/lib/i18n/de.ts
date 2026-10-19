@@ -250,6 +250,7 @@ export default {
       'Alle Kategorien nutzen dasselbe Ticketformular: Kategorie, Betreff, Beschreibung, Priorität und optionale Screenshots. Bedingte Felder ergänzen Angaben für die gewählten Kategorien. Eine Kategorie wählt nie ein Support-Team aus.',
     categories: 'Kategorien',
     priorities: 'Prioritätsstufen',
+    prioritiesHint: 'Stellen Sie die dringendste Stufe an den Anfang: Nach Priorität sortierte Warteschlangen zeigen Tickets in dieser Reihenfolge.',
     fields: 'Bedingte Felder',
     name: 'Name',
     add: 'Hinzufügen',
