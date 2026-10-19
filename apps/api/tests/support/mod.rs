@@ -204,6 +204,8 @@ pub async fn login(app: &Router, username: &str, password: &str) -> Reply {
     call(app, "POST", "/api/auth/login", Some(body), None).await
 }
 
+pub mod smtp;
+
 pub mod fixtures {
     use sqlx::{PgExecutor, PgPool};
     pub use tikkit_api::api::Role;

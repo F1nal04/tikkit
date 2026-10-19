@@ -45,7 +45,7 @@ language; translations map them to display text.
   `invitation_created`, `invitation_revoked`, `invitation_accepted`,
   `recovery_requested`, `recovery_completed`, `profile_updated`,
   `account_deactivated`, `account_reactivated`, `smtp_configured`,
-  `smtp_updated`, `smtp_removed`, `smtp_tested`, `catalog_item_created`,
+  `smtp_updated`, `smtp_removed`, `smtp_tested`, `notifications_retried`, `catalog_item_created`,
   `catalog_item_updated`, `catalog_reordered` (metadata `kind`: `category`,
   `priority`, `intake_field`)
 - `intake_fields.kind`: `text`, `select`
@@ -257,3 +257,15 @@ unique `tickets_reference_key`.
 trimmed, unique per owner), `filters` (a JSON object of `GET /api/queue`
 parameters, see [queues.md](queues.md#saved-views)), `created_at`. Views store
 filters, never ticket IDs or results.
+
+## Notifications
+
+Migration `0018_notifications.sql` adds `accounts.notify_email` /
+`notify_in_app` (default true), `notification_outbox` (content-free jobs: event,
+account, `audience` `requester`/`staff`, `channel` `email`/`in_app`, `status`
+`pending`/`sent`/`suppressed`/`failed`, `attempts`, `available_at`, safe
+`last_error`; unique `(source_key, channel)`), and `notifications` (the in-app
+inbox, one row per delivered in-app job, with `read_at`). An `AFTER INSERT`
+trigger on `ticket_events` fills the outbox in the event writer's transaction.
+Behavior, recipients, and retries: [notifications.md](notifications.md). No new
+configuration variables.

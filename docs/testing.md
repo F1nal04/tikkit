@@ -50,6 +50,9 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `call(&app, method, path, body, cookie) -> Reply` (`status`, `cookie`, `body`,
   `.code()`, `.session()`), `call_from(..., ip)` for another client IP, and
   `login(&app, username, password)`
+- `support::smtp::listen(Listen::StartTls, Fault::None)`: an in-process TLS SMTP server
+  (`.port`, `.ca_pem` for `Settings::smtp_trust_root_pem`, `.messages`); used by the SMTP and
+  notification tests, never an external relay
 - `fixtures::team(&pool, "Name", lead) -> Result<Uuid>`: team plus lead
   membership in one transaction; `fixtures::member(&pool, team, account)`
 
