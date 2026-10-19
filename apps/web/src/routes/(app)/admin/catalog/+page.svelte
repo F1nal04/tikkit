@@ -256,6 +256,5 @@
   .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
   .check { display: flex; gap: 0.5rem; align-items: center; font-weight: 400; }
   fieldset { display: grid; gap: 0.5rem; border: 1px solid #cad3cb; border-radius: 0.375rem; }
-  textarea { font: inherit; padding: 0.5rem 0.75rem; border: 1px solid #93a096; border-radius: 0.375rem; }
   button:disabled { opacity: 0.4; cursor: default; }
 </style>

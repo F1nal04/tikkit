@@ -55,3 +55,27 @@ and shows an alert with a retry button that reruns the load; any other error is 
 real answer and goes to the error page. Ages render after mount (relative to the
 clock), so server and client markup agree; until then the UTC creation time shows.
 Server rules, filters, and visibility: [queues.md](queues.md).
+
+## Ticket form (`routes/(app)/tickets/new`)
+
+One form for every category; the category only decides which conditional fields appear
+(`visibleFields` in `src/lib/intake.ts`, from `GET /api/catalog`). Server rules stay
+authoritative: `validate` mirrors them for convenience and uses the API's field-error keys
+(`subject`, `category_id`, `answers.<field id>`), so server errors render through the same `Field`
+controls.
+
+- **Hidden answers** are kept in the browser (switching the category back restores them) but
+  `toIntake` never puts them in a draft save or submission, and the form says which ones are not sent.
+- **Autosave:** the form saves a draft about a second after the last change, one request at a
+  time, using the draft's `version`. A `409`/`404` (changed or removed elsewhere) stops saving and
+  asks the user to load the saved version or keep their own as a new draft; nothing is overwritten
+  silently. Resuming a draft that names an archived category, priority, or choice empties that
+  input and lists what could not be restored; the saved copy is only rewritten after the next edit.
+  Leaving the page saves a pending edit and drops the timer.
+- **Submission:** a draft in progress is submitted through its draft endpoint (so it leaves the
+  list), otherwise through `POST /api/tickets`. That endpoint submits the saved copy, so when the
+  visible form differs from it (answers resume could not restore) the visible intake is written
+  first. `attemptFor` keeps one idempotency key per identical request and issues a new one when the
+  input changed; the submit button and handler ignore clicks while a request runs.
+- The receipt shows the reference, status, category, and the priority the requester chose; the
+  full ticket view is `/tickets/{id}`.
