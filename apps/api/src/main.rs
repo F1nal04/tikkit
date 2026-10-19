@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         config.screenshot_dir.clone(),
     ));
 
-    tokio::spawn(notifications::worker_loop(
+    let notifier = tokio::spawn(notifications::worker_loop(
         pool.clone(),
         auth::Settings::from(&config),
     ));
@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
             config.shutdown_timeout
         );
         stopping.send_replace(true);
+        notifications::stop_workers();
     })
     .into_future();
     let deadline = async {
@@ -67,6 +68,13 @@ async fn main() -> anyhow::Result<()> {
     tokio::select! {
         result = server => result?,
         () = deadline => tracing::warn!("Drain timeout reached; aborting remaining requests"),
+    }
+    // Let a notification already being sent record its outcome before the pool closes.
+    if tokio::time::timeout(Duration::from_secs(5), notifier)
+        .await
+        .is_err()
+    {
+        tracing::warn!("Timed out waiting for the notification worker");
     }
     // Bounded so a stuck connection cannot hold the process past the drain window.
     if tokio::time::timeout(Duration::from_secs(5), pool.close())

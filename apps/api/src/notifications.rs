@@ -8,7 +8,11 @@
 //! **current** access with the ticket policy at delivery time; text never
 //! copies ticket subjects, replies, notes, or images.
 
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 use axum::{extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
@@ -29,15 +33,24 @@ use crate::{
 pub const MAX_ATTEMPTS: i32 = 8;
 const POLL: Duration = Duration::from_secs(2);
 
+static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// Graceful shutdown: every [`poll_loop`] returns after its current step, so a
+/// message the relay accepted gets its idempotency key recorded before the
+/// pool closes (otherwise the restart would send it again).
+pub fn stop_workers() {
+    STOPPING.store(true, Ordering::Relaxed);
+}
+
 /// Runs `step` until it reports no more work, then sleeps. Shared by background
 /// processors (the notification outbox now, confirmation timeouts later);
-/// `step` returns whether it did something.
+/// `step` returns whether it did something. Returns after [`stop_workers`].
 pub async fn poll_loop<F, Fut>(name: &'static str, mut step: F)
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<bool, ApiError>>,
 {
-    loop {
+    while !STOPPING.load(Ordering::Relaxed) {
         match step().await {
             Ok(true) => continue,
             Ok(false) => {}
@@ -641,4 +654,23 @@ pub async fn retry_failed(
     .await?;
     tx.commit().await?;
     Ok(Json(RetryResult { retried }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn poll_loop_returns_after_stop_workers() {
+        let mut steps = 0;
+        poll_loop("test", || {
+            steps += 1;
+            if steps == 3 {
+                stop_workers();
+            }
+            async { Ok(true) }
+        })
+        .await;
+        assert_eq!(steps, 3);
+    }
 }
