@@ -7,7 +7,7 @@
   import { messages, type Locale } from '#lib/i18n.ts'
   import { ACCEPT, precheck, uploadErrorText, uploadScreenshot, type Screenshot } from '#lib/screenshots.ts'
 
-  let { locale, ids = $bindable([]) }: { locale: Locale; ids?: string[] } = $props()
+  let { locale, ids = $bindable([]), error }: { locale: Locale; ids?: string[]; error?: string } = $props()
   let t = $derived(messages[locale])
   let known = $state<Record<string, Screenshot>>({})
   let problems = $state<{ name: string; text: string }[]>([])
@@ -63,9 +63,11 @@
     type="file"
     accept={ACCEPT.join(',')}
     multiple
-    aria-describedby="{inputId}-hint"
+    aria-invalid={error ? 'true' : undefined}
+    aria-describedby={error ? `${inputId}-hint ${inputId}-error` : `${inputId}-hint`}
     onchange={add}
   />
+  {#if error}<p id="{inputId}-error" class="error">{error}</p>{/if}
   {#if busy}<p aria-live="polite">{t.screenshots.uploading}</p>{/if}
   {#if problems.length}
     <ul role="alert">

@@ -113,7 +113,7 @@ const CATALOG = {
 }
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 const sessionState = {}
-const stateOf = (req) => (sessionState[tokenOf(req)] ??= { drafts: new Map(), tickets: [], receipts: new Map(), shots: new Map(), reference: 1000 })
+const stateOf = (req) => (sessionState[tokenOf(req)] ??= { drafts: new Map(), tickets: [], receipts: new Map(), shots: new Map(), submitted: [], reference: 1000 })
 const validation = (res, fields) => reply(res, 422, { error: { code: 'validation_failed', message: 'validation_failed', details: { fields } }, request_id: 'stub' })
 
 // Mirrors the server rules the form relies on (docs/submission.md); hidden answers are dropped.
@@ -137,6 +137,8 @@ function checkIntake(intake) {
 }
 
 function submit(res, st, intake, key, sameRequest, draftId) {
+  // What the client actually sent, before hidden answers are dropped the way the server does.
+  st.submitted.push(JSON.parse(JSON.stringify(intake ?? {})))
   const prior = st.receipts.get(key)
   if (prior) return prior.same === sameRequest ? reply(res, 200, prior.receipt) : fail(res, 409, 'conflict')
   const { fields, answers } = checkIntake(intake)
@@ -225,6 +227,7 @@ createServer(async (req, res) => {
   const shotId = /^\/api\/screenshots\/([^/]+)(\/preview)?$/.exec(pathname)
   if (route === 'GET /api/catalog') return reply(res, 200, CATALOG)
   if (route === 'GET /api/test/tickets') return reply(res, 200, st.tickets)
+  if (route === 'GET /api/test/submitted') return reply(res, 200, st.submitted)
   if (route === 'POST /api/test/draft') {
     const draft = { id: randomUUID(), version: 1, intake: (await readBody(req)).intake, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
     st.drafts.set(draft.id, draft)

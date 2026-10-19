@@ -17,6 +17,7 @@
     isEmpty,
     OTHER,
     restore,
+    sameIntake,
     toIntake,
     validate,
     visibleFields,
@@ -56,6 +57,15 @@
   let timer: ReturnType<typeof setTimeout> | undefined
   let queue: Promise<unknown> = Promise.resolve()
   let attempt: Attempt | null = null
+  // The draft identity the save queue reads. A plain value, because a response can still arrive
+  // after navigation and the next queued save needs the version even though the page is gone.
+  let savedDraft: { id: string; version: number } | null = null
+  let alive = true
+  // True when the saved draft still holds answers the visible form dropped. Submit writes the
+  // visible intake first; ordinary autosave waits for the next edit, so resume does not destroy them.
+  let serverDiffers = false
+  let forceSync = false
+  let saveError: unknown = null
 
   let visible = $derived(visibleFields(catalog, form.category_id))
   let hidden = $derived(hiddenAnswers(catalog, form))
@@ -72,19 +82,31 @@
   })
 
   $effect(() => {
+    if (!alive) return
     if (json !== untrack(() => lastSaved)) untrack(schedule)
     else clearTimeout(timer)
+    return () => clearTimeout(timer)
   })
 
   const schedule = () => {
+    if (!alive) return
     clearTimeout(timer)
-    timer = setTimeout(flush, AUTOSAVE_MS)
+    timer = setTimeout(() => {
+      if (alive) flush()
+    }, AUTOSAVE_MS)
   }
-  // Saves run one at a time, each with the then-current form and version.
+  // Saves run one at a time, each with the then-current form and version, so a slow response
+  // cannot overwrite a newer one.
   const flush = () => (queue = queue.then(save, save))
 
+  function setDraft(next: { id: string; version: number } | null) {
+    savedDraft = next
+    if (alive) draft = next
+  }
+
   function track(saved: Draft) {
-    draft = { id: saved.id, version: saved.version }
+    setDraft({ id: saved.id, version: saved.version })
+    if (!alive) return
     drafts = [saved, ...drafts.filter((d) => d.id !== saved.id)]
     savedAt = new Date(saved.updated_at)
     saveState = 'saved'
@@ -95,17 +117,26 @@
     if (stale) return false
     const body = untrack(() => intake)
     const snapshot = JSON.stringify(body)
-    if (snapshot === lastSaved || (!draft && isEmpty(body))) return true
-    saveState = 'saving'
+    const sync = forceSync
+    forceSync = false
+    const current = savedDraft
+    if ((snapshot === lastSaved && !sync) || (!current && isEmpty(body))) return true
+    if (alive) saveState = 'saving'
     try {
       track(
-        draft
-          ? await api().request('patch', '/api/ticket-drafts/{id}', { path: { id: draft.id }, body: { version: draft.version, intake: body } })
+        current
+          ? await api().request('patch', '/api/ticket-drafts/{id}', { path: { id: current.id }, body: { version: current.version, intake: body } })
           : await api().request('post', '/api/ticket-drafts', { body }),
       )
       lastSaved = snapshot
+      serverDiffers = false
+      saveError = null
       return true
     } catch (e) {
+      if (!alive) return false
+      saveError = e
+      // The forced write did not land; the next submit has to try again.
+      if (sync) forceSync = true
       if (e instanceof ApiError && (e.code === 'conflict' || e.code === 'not_found')) {
         stale = e.code === 'conflict' ? 'changed' : 'gone'
         saveState = 'idle'
@@ -116,6 +147,13 @@
     }
   }
 
+  // Client-only: leaving the page saves a debounced edit. beforeunload does not fire for in-app navigation.
+  $effect(() => () => {
+    alive = false
+    clearTimeout(timer)
+    void flush().catch(() => {})
+  })
+
   function load(saved: Draft) {
     const restored = restore(saved.intake, catalog)
     form = restored.form
@@ -124,12 +162,14 @@
     formError = null
     stale = null
     attempt = null
-    draft = { id: saved.id, version: saved.version }
+    setDraft({ id: saved.id, version: saved.version })
     savedAt = new Date(saved.updated_at)
     saveState = 'saved'
-    // The restored form is what the user sees; saving waits for their next edit so a draft is
-    // never rewritten without them (answers that no longer fit stay in the saved copy until then).
-    lastSaved = JSON.stringify(toIntake(form, catalog))
+    // The restored form is what the user sees. Saving waits for their next edit so a draft is
+    // never rewritten without them; submit writes first, because the draft endpoint submits the saved copy.
+    const cleaned = toIntake(form, catalog)
+    lastSaved = JSON.stringify(cleaned)
+    serverDiffers = !sameIntake(saved.intake, cleaned)
   }
 
   async function resume(id: string) {
@@ -152,8 +192,10 @@
   }
 
   async function keepMine() {
-    draft = null
+    setDraft(null)
     stale = null
+    serverDiffers = false
+    forceSync = false
     lastSaved = ''
     await flush()
   }
@@ -177,7 +219,7 @@
       }
     }
     drafts = drafts.filter((d) => d.id !== target.id)
-    if (draft?.id === target.id) reset()
+    if (savedDraft?.id === target.id) reset()
   }
 
   function reset() {
@@ -187,7 +229,9 @@
     errors = {}
     formError = null
     stale = null
-    draft = null
+    setDraft(null)
+    serverDiffers = false
+    forceSync = false
     attempt = null
     receipt = null
     saveState = 'idle'
@@ -210,46 +254,62 @@
     errors = validate(form, catalog)
     if (Object.keys(errors).length) return focusFirstError()
     submitting = true
+    let focusErrors = false
     try {
+      // The draft endpoint submits the saved copy. Write the visible form first when resume
+      // dropped answers, so they are not submitted and the idempotency key matches that write.
+      if (serverDiffers) forceSync = true
       if (!(await flush())) {
-        if (!stale) formError = new ApiError(0, null)
-        return
+        forceSync = false
+        if (!stale && alive) {
+          if (saveError instanceof ApiError && saveError.code === 'validation_failed') {
+            errors = saveError.fields
+            focusErrors = true
+          } else formError = saveError ?? new ApiError(0, null)
+        }
+      } else if (alive) {
+        const body = untrack(() => intake)
+        const current = savedDraft
+        const fingerprint = `${current?.id}:${current?.version}:${JSON.stringify(body)}`
+        attempt = attemptFor(attempt, fingerprint)
+        const sent = current
+          ? await api().request('post', '/api/ticket-drafts/{id}/submit', {
+              path: { id: current.id },
+              body: { version: current.version, idempotency_key: attempt.key },
+            })
+          : await api().request('post', '/api/tickets', { body: { intake: body, idempotency_key: attempt.key } })
+        if (!alive) return
+        receipt = {
+          ...sent,
+          category: category?.name ?? '',
+          priority: catalog.priorities.find((p) => p.id === form.priority_id)?.name ?? '',
+        }
+        if (current) drafts = drafts.filter((d) => d.id !== current.id)
+        setDraft(null)
+        serverDiffers = false
+        clearTimeout(timer)
+        await tick()
+        receiptHeading?.focus()
       }
-      const body = untrack(() => intake)
-      const fingerprint = `${draft?.id}:${draft?.version}:${JSON.stringify(body)}`
-      attempt = attemptFor(attempt, fingerprint)
-      const sent = draft
-        ? await api().request('post', '/api/ticket-drafts/{id}/submit', {
-            path: { id: draft.id },
-            body: { version: draft.version, idempotency_key: attempt.key },
-          })
-        : await api().request('post', '/api/tickets', { body: { intake: body, idempotency_key: attempt.key } })
-      receipt = {
-        ...sent,
-        category: category?.name ?? '',
-        priority: catalog.priorities.find((p) => p.id === form.priority_id)?.name ?? '',
-      }
-      if (draft) drafts = drafts.filter((d) => d.id !== draft!.id)
-      draft = null
-      clearTimeout(timer)
-      await tick()
-      receiptHeading?.focus()
     } catch (e) {
+      if (!alive) return
       if (e instanceof ApiError && e.code === 'validation_failed') {
         errors = e.fields
         // A category, priority, or choice archived since this page loaded: refresh the catalog, keep the input.
         if (Object.keys(errors).some((k) => k === 'category_id' || k === 'priority_id' || k.startsWith('answers.'))) {
           await invalidate('tikkit:catalog')
         }
-        void focusFirstError()
-      } else if (e instanceof ApiError && draft && (e.code === 'conflict' || e.code === 'not_found')) {
+        focusErrors = true
+      } else if (e instanceof ApiError && savedDraft && (e.code === 'conflict' || e.code === 'not_found')) {
         stale = e.code === 'conflict' ? 'changed' : 'gone'
       } else {
         formError = e
       }
     } finally {
-      submitting = false
+      if (alive) submitting = false
     }
+    // After the fieldset is enabled again; focusing a control inside a disabled fieldset does nothing.
+    if (alive && focusErrors) await focusFirstError()
   }
 
   const time = (d: Date) => new Intl.DateTimeFormat(data.locale, { timeStyle: 'short' }).format(d)
@@ -322,10 +382,10 @@
   {#if Object.keys(errors).length}<Alert kind="error">{t.errors.validation_failed}</Alert>{/if}
 
   <form novalidate onsubmit={submit} aria-busy={submitting}>
-    <p class="form-state" aria-live="polite">
+    <p class="form-state">
       <StatusBadge status="draft" label={t.statuses.draft} />
       {#if saveState === 'saving'}{f.stateSaving}
-      {:else if saveState === 'failed'}{f.stateFailed}
+      {:else if saveState === 'failed'}<span role="status">{f.stateFailed}</span>
       {:else if saveState === 'saved' && savedAt}{f.stateSaved.replace('{time}', time(savedAt))}
       {:else}{f.stateUnsaved}{/if}
     </p>
@@ -364,7 +424,7 @@
                   <Field
                     label={f.otherAnswer.replace('{label}', field.label)}
                     name="answer-{field.id}-text"
-                    required
+                    required={field.required}
                     bind:value={answer.text}
                     error={errorFor(key)}
                   />
@@ -397,8 +457,7 @@
         options={[{ value: '', label: f.priorityPlaceholder }, ...catalog.priorities.map((p) => ({ value: p.id, label: p.name }))]}
       />
 
-      <ScreenshotPicker locale={data.locale} bind:ids={form.screenshot_ids} />
-      {#if errorFor('screenshot_ids')}<p class="error">{errorFor('screenshot_ids')}</p>{/if}
+      <ScreenshotPicker locale={data.locale} bind:ids={form.screenshot_ids} error={errorFor('screenshot_ids')} />
       <p class="hint">{category?.skip_ai ? f.skipsAi : f.aiNote}</p>
     </fieldset>
 

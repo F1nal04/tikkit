@@ -6,6 +6,7 @@ import {
   isEmpty,
   OTHER,
   restore,
+  sameIntake,
   toIntake,
   uuid,
   validate,
@@ -129,6 +130,15 @@ describe('resuming a draft', () => {
     const ok = restore({ ...toIntake(filled(), catalog), answers: { [PROGRAM]: { text: 'Notepad++' } } }, catalog)
     expect(ok.form.answers[PROGRAM]).toEqual({ choice: OTHER, text: 'Notepad++' })
     expect(ok.dropped).toEqual([])
+  })
+
+  it('sees a resumed draft as different when it still holds an answer the form dropped', () => {
+    const visible = toIntake({ ...filled(), category_id: NETWORK }, catalog)
+    const saved = { ...visible, answers: { [PROGRAM]: { choice_id: null, text: 'Lotus Notes' } } }
+    expect(sameIntake(visible, saved)).toBe(false)
+    // The server sends both answer parts; omitting a null one is the same intake.
+    const choice = toIntake({ ...filled(), answers: { [PROGRAM]: { choice: WORD, text: '' } } }, catalog)
+    expect(sameIntake(choice, { ...choice, answers: { [PROGRAM]: { choice_id: WORD, text: null } } })).toBe(true)
   })
 
   it('detects an untouched form so no empty draft is created', () => {
