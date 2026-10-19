@@ -1,7 +1,7 @@
 //! Operator work queues: paginated lists and counts of the tickets staff may
 //! work on. Visibility is the one SQL predicate [`authz::staff_visible_sql`]
 //! (the twin of [`authz::ticket_view`]), applied in the query itself so lists,
-//! counts, and direct detail access always agree. See docs/queues.md.
+//! counts, search, and direct detail access always agree. See docs/queues.md.
 
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,7 @@ const OPEN: [&str; 4] = [
 ];
 /// Statuses a queue can be filtered to: operator work plus finished tickets.
 /// Drafts, AI stages, and AI-solved records never belong to a staff queue.
-const FILTERABLE: [&str; 6] = [
+pub(crate) const FILTERABLE: [&str; 6] = [
     "queued",
     "in_progress",
     "waiting_for_requester",
@@ -39,7 +39,7 @@ const FILTERABLE: [&str; 6] = [
 ];
 
 /// Which slice of the visible tickets a queue shows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueView {
     /// Shared intake: tickets with no team yet. Every staff role.
@@ -55,7 +55,7 @@ pub enum QueueView {
 }
 
 /// Fixed orders; ties break on `(created_at, id)`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueSort {
     /// Newest first.
@@ -82,6 +82,10 @@ pub struct QueueQuery {
     /// Only tickets without an individual assignee.
     pub unassigned: Option<bool>,
     pub sort: Option<QueueSort>,
+    /// Search text, up to 200 characters: a ticket reference (`123` or `#123`), or
+    /// at least 3 characters matched anywhere in the subject, description, category,
+    /// requester username or display name, or message text the caller may read.
+    pub q: Option<String>,
     /// Page size, 1-100 (default 25).
     pub limit: Option<i64>,
     /// `next_cursor` from the previous page.
@@ -156,6 +160,7 @@ pub struct QueueCounts {
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden` (not staff, or `view=all` without Admin)", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found` (another team's `team_id`)", body = crate::api::ErrorEnvelope),
+        (status = 422, description = "`validation_failed`: `q` is `too_short` or `too_long`, or the cursor is invalid", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn list_queue(
     State(state): State<AppState>,
@@ -182,6 +187,7 @@ pub async fn list_queue(
         cursor: raw,
     };
     let cursor = page.cursor()?;
+    let search = search_terms(q.q.as_deref())?;
     let statuses: Vec<String> = match q.status {
         None => OPEN.map(String::from).to_vec(),
         Some(s) => {
@@ -231,9 +237,15 @@ pub async fn list_queue(
            AND ($6::uuid IS NULL OR t.priority_id = $6)
            AND ($7::bool IS NOT TRUE OR t.assignee_account_id IS NULL)
            AND ($10::uuid IS NULL OR {after})
+           {search}
          ORDER BY {order} LIMIT $11",
         visible = authz::staff_visible_sql(1),
+        search = match search {
+            Some(_) => format!("AND {}", search_sql(13, 14, 2)),
+            None => String::new(),
+        },
     );
+    let (pattern, reference) = search.unzip();
     let (id, role, own_team) = actor.visibility_binds();
     let rows: Vec<Row> = sqlx::query_as(&sql)
         .bind(id)
@@ -248,6 +260,8 @@ pub async fn list_queue(
         .bind(cursor.map(|c| c.id))
         .bind(page.limit() + 1)
         .bind(rank)
+        .bind(pattern.flatten())
+        .bind(reference.flatten())
         .fetch_all(&state.pool)
         .await?;
     let last_rank = rows.get(page.limit() as usize - 1).map(|r| r.priority_rank);
@@ -287,6 +301,69 @@ pub async fn list_queue(
             .map(|(c, rank)| format!("{rank}.{c}"));
     }
     Ok(Json(result))
+}
+
+/// Longest accepted search text, in characters.
+pub const SEARCH_MAX: usize = 200;
+/// Shortest substring searched: trigram indexes need three characters.
+const SEARCH_MIN: usize = 3;
+
+/// An `ILIKE` substring pattern and a ticket reference from search text.
+type SearchTerms = (Option<String>, Option<i64>);
+
+/// Parses `q`: `None` without text. A number, optionally after `#`, also matches
+/// that reference; shorter than 3 characters it matches only the reference. The
+/// pattern escapes `\`, `%`, and `_`, so the text is always a literal substring.
+pub(crate) fn search_terms(q: Option<&str>) -> Result<Option<SearchTerms>, ApiError> {
+    let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) else {
+        return Ok(None);
+    };
+    let field = |code| ApiError::Validation(FieldErrors::from([("q".into(), vec![code])]));
+    let len = q.chars().count();
+    if len > SEARCH_MAX {
+        return Err(field("too_long"));
+    }
+    let digits = q.strip_prefix('#').unwrap_or(q);
+    let reference = digits
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| digits.parse::<i64>().ok())
+        .flatten();
+    let pattern = (len >= SEARCH_MIN).then(|| {
+        let escaped = q
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        format!("%{escaped}%")
+    });
+    if pattern.is_none() && reference.is_none() {
+        return Err(field("too_short"));
+    }
+    Ok(Some((pattern, reference)))
+}
+
+/// Narrows `tickets t` to search matches; `$pattern` is a [`search_terms`] pattern,
+/// `$reference` a ticket number (either may be NULL), `$role` the caller's role from
+/// [`Actor::visibility_binds`]. Callers still apply [`authz::staff_visible_sql`],
+/// so a match never widens visibility. Internal notes match only where the caller
+/// may read them (`messages::can_read_notes`): a team ticket, or an Admin. Every
+/// branch is an index scan (migration `0017_search_saved_views.sql`); the ticket
+/// expression must stay identical to `tickets_search_trgm_idx`.
+pub fn search_sql(pattern: usize, reference: usize, role: usize) -> String {
+    format!(
+        "t.id IN (
+           SELECT s.id FROM tickets s
+           WHERE s.reference = ${reference}::bigint
+              OR (s.subject || ' ' || s.description || ' '
+                  || coalesce(s.intake_snapshot #>> '{{catalog,category_name}}', '')) ILIKE ${pattern}::text
+           UNION ALL
+           SELECT s.id FROM accounts a JOIN tickets s ON s.requester_account_id = a.id
+           WHERE (a.username || ' ' || a.display_name) ILIKE ${pattern}::text
+           UNION ALL
+           SELECT m.ticket_id FROM ticket_messages m JOIN tickets s ON s.id = m.ticket_id
+           WHERE m.body ILIKE ${pattern}::text
+             AND (m.kind = 'public_reply' OR s.team_id IS NOT NULL OR ${role}::text = 'admin'))"
+    )
 }
 
 fn invalid_cursor() -> ApiError {

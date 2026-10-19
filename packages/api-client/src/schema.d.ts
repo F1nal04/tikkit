@@ -572,6 +572,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/queue/bulk-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["bulk_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/queue/counts": {
         parameters: {
             query?: never;
@@ -604,6 +620,44 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/saved-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's saved views, by name (at most 50, not paged). */
+        get: operations["list_views"];
+        put?: never;
+        /**
+         * Saves the caller's current filters under a name. Every filter must apply now
+         *     (`422`, `filters.<name>: invalid`).
+         */
+        post: operations["create_view"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/saved-views/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes one of the caller's views; anyone else's is `404`. */
+        delete: operations["delete_view"];
         options?: never;
         head?: never;
         patch?: never;
@@ -858,6 +912,27 @@ export interface paths {
          *     key reused with different input is `409`; identical retries replay the receipt.
          */
         post: operations["submit_ticket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Applies one change to up to 50 tickets, each independently authorized, locked,
+         *     and checked for staleness. A retry never applies twice: an applied item moved
+         *     its `updated_at`, so repeating it reports `conflict` and writes nothing.
+         */
+        post: operations["bulk_change"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1152,6 +1227,81 @@ export interface components {
         };
         /** @enum {string} */
         AuthorKind: "requester" | "staff";
+        /** @description An eligible assignee for bulk assignment. */
+        BulkAssignee: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            team_id: string;
+            team_name: string;
+        };
+        /**
+         * @description The change applied to every listed ticket; the same rules as the single-ticket
+         *     `assignment` and `staff-actions` endpoints.
+         */
+        BulkChange: {
+            /** @enum {string} */
+            action: "dispatch";
+            /** Format: uuid */
+            team_id: string;
+        } | {
+            /** @enum {string} */
+            action: "return_to_general";
+        } | {
+            /** @enum {string} */
+            action: "claim";
+        } | {
+            /** @enum {string} */
+            action: "assign";
+            /** Format: uuid */
+            assignee_account_id: string;
+        } | {
+            /** @enum {string} */
+            action: "unassign";
+        } | {
+            /** @enum {string} */
+            action: "start_work";
+        } | {
+            /** @enum {string} */
+            action: "request_information";
+        } | {
+            /** @enum {string} */
+            action: "set_priority";
+            /** Format: uuid */
+            priority_id: string;
+        };
+        BulkItemResult: {
+            error: null | components["schemas"]["ErrorCode"];
+            /** Format: uuid */
+            id: string;
+        };
+        /** @description Targets the bulk bar offers. Affordances only: each item is rechecked. */
+        BulkOptions: {
+            /**
+             * @description Active staff members a caller may assign: a Team Lead's own team, every
+             *     active team for an Admin, nobody otherwise.
+             */
+            assignees: components["schemas"]["BulkAssignee"][];
+            /** @description Active teams (dispatch targets). */
+            teams: components["schemas"]["NamedId"][];
+        };
+        BulkRequest: {
+            change: components["schemas"]["BulkChange"];
+            /** @description 1-50 distinct tickets. */
+            tickets: components["schemas"]["BulkTicket"][];
+        };
+        /** @description One result per requested ticket, in request order. */
+        BulkResponse: {
+            results: components["schemas"]["BulkItemResult"][];
+        };
+        /** @description A ticket and the `updated_at` the client listed it with (`QueueTicket.updated_at`). */
+        BulkTicket: {
+            /** Format: date-time */
+            expected_updated_at: string;
+            /** Format: uuid */
+            id: string;
+        };
         /**
          * @description When the owning requester may cancel a submitted open ticket.
          * @enum {string}
@@ -1223,6 +1373,11 @@ export interface components {
             expires_in_hours?: number | null;
             language?: null | components["schemas"]["Language"];
             role?: null | components["schemas"]["Role"];
+        };
+        CreateSavedView: {
+            filters: components["schemas"]["QueueFilters"];
+            /** @description 1-80 characters after trimming, unique per account. */
+            name: string;
         };
         CreateTeamRequest: {
             /** Format: uuid */
@@ -1640,6 +1795,20 @@ export interface components {
              */
             version: string;
         };
+        /** @description The `GET /api/queue` filters a view applies (no cursor or page size). */
+        QueueFilters: {
+            /** Format: uuid */
+            category_id?: string | null;
+            /** Format: uuid */
+            priority_id?: string | null;
+            q?: string | null;
+            sort?: null | components["schemas"]["QueueSort"];
+            status?: null | components["schemas"]["TicketStatus"];
+            /** Format: uuid */
+            team_id?: string | null;
+            unassigned?: boolean | null;
+            view?: null | components["schemas"]["QueueView"];
+        };
         /**
          * @description Fixed orders; ties break on `(created_at, id)`.
          * @enum {string}
@@ -1718,6 +1887,16 @@ export interface components {
         ResolutionSource: "ai" | "operator";
         /** @enum {string} */
         Role: "user" | "operator" | "specialist" | "team_lead" | "admin";
+        SavedView: {
+            /** Format: date-time */
+            created_at: string;
+            filters: components["schemas"]["QueueFilters"];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description Filters to drop when applying: the rest still work as saved. */
+            stale: components["schemas"]["StaleFilter"][];
+        };
         /**
          * @description Metadata of a validated screenshot. The bytes are only served by the
          *     preview/download endpoints.
@@ -1881,6 +2060,11 @@ export interface components {
             /** Format: uuid */
             priority_id: string;
         };
+        /**
+         * @description A filter that no longer applies to the caller.
+         * @enum {string}
+         */
+        StaleFilter: "view" | "team_id" | "status" | "category_id" | "priority_id" | "q";
         /**
          * @description Immutable submission receipt. A replay returns the original submitted status;
          *     read `/api/tickets/{id}` for the current status.
@@ -3560,6 +3744,12 @@ export interface operations {
                 /** @description Only tickets without an individual assignee. */
                 unassigned?: boolean;
                 sort?: components["schemas"]["QueueSort"];
+                /**
+                 * @description Search text, up to 200 characters: a ticket reference (`123` or `#123`), or
+                 *     at least 3 characters matched anywhere in the subject, description, category,
+                 *     requester username or display name, or message text the caller may read.
+                 */
+                q?: string;
                 /** @description Page size, 1-100 (default 25). */
                 limit?: number;
                 /** @description `next_cursor` from the previous page. */
@@ -3608,6 +3798,51 @@ export interface operations {
             };
             /** @description `not_found` (another team's `team_id`) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed`: `q` is `too_short` or `too_long`, or the cursor is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    bulk_options: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkOptions"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3679,6 +3914,126 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Readiness"];
+                };
+            };
+        };
+    };
+    list_views: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_view: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSavedView"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `name` is `required`, `too_long`, or `taken`; `saved_views: too_many`; or a filter is `invalid` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_view: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -4751,6 +5106,55 @@ export interface operations {
                 };
             };
             /** @description `validation_failed` (intake/catalog) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    bulk_change: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `tickets` is empty (`required`), over 50 (`too_many`), or repeats a ticket (`duplicate`) */
             422: {
                 headers: {
                     [name: string]: unknown;

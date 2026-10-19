@@ -9,6 +9,7 @@
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -93,12 +94,25 @@ pub async fn change_assignment(
     Path(id): Path<Uuid>,
     Json(action): Json<AssignmentAction>,
 ) -> Result<Json<AssignmentReceipt>, ApiError> {
+    apply(&state.pool, user.account_id(), id, action)
+        .await
+        .map(Json)
+}
+
+/// One assignment change in its own transaction: the single-ticket endpoint and
+/// each item of a bulk action (`bulk.rs`) run exactly this.
+pub(crate) async fn apply(
+    pool: &PgPool,
+    account_id: Uuid,
+    id: Uuid,
+    action: AssignmentAction,
+) -> Result<AssignmentReceipt, ApiError> {
     use AssignmentAction as A;
-    let mut tx = state.pool.begin().await?;
+    let mut tx = pool.begin().await?;
     // Account, membership, and team before the ticket. `lock_actor`, deactivation,
     // and membership edits use that order; locking a target after the ticket
     // deadlocks with a member who is already waiting on this row.
-    let actor = lifecycle::lock_actor(&mut tx, user.account_id()).await?;
+    let actor = lifecycle::lock_actor(&mut tx, account_id).await?;
     match &action {
         A::Dispatch {
             team_id: target, ..
@@ -266,10 +280,10 @@ pub async fn change_assignment(
         assignee_account_id: next_assignee,
         ..scope
     };
-    Ok(Json(AssignmentReceipt {
+    Ok(AssignmentReceipt {
         reference,
         team_name,
         assignee_display_name: assignee_name,
         visible: authz::ticket_view(&actor, &after).is_some(),
-    }))
+    })
 }
