@@ -161,6 +161,27 @@ async fn teams_and_roles_preserve_leadership_and_immediately_change_live_session
             .body["role"],
         "specialist"
     );
+    // A deactivated member keeps its team, so editing it with its current team still works.
+    let deactivate = format!("/api/accounts/{staff}/deactivate");
+    assert_eq!(
+        call(&app, "POST", &deactivate, None, Some(&admin))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        edit(&app, &admin, staff, "specialist", Some(team), Some("Wi-Fi"))
+            .await
+            .status,
+        204
+    );
+    let reactivate = format!("/api/accounts/{staff}/reactivate");
+    assert_eq!(
+        call(&app, "POST", &reactivate, None, Some(&admin))
+            .await
+            .status,
+        204
+    );
     assert_eq!(
         edit(&app, &admin, aid, "admin", Some(team), None)
             .await
