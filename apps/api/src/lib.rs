@@ -27,6 +27,7 @@ pub mod lifecycle;
 pub mod mail;
 pub mod management;
 pub mod smtp;
+pub mod submission;
 pub mod tickets;
 
 use api::{ApiError, Json};
@@ -91,6 +92,14 @@ pub struct AppState {
         catalog::update_intake_field,
         catalog::reorder_intake_fields,
         tickets::ticket_detail,
+        tickets::list_own_tickets,
+        submission::create_draft,
+        submission::list_drafts,
+        submission::get_draft,
+        submission::update_draft,
+        submission::delete_draft,
+        submission::submit_ticket,
+        submission::submit_draft,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -263,6 +272,24 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route(
             "/api/intake-fields/{id}",
             patch(catalog::update_intake_field),
+        )
+        .route(
+            "/api/tickets",
+            get(tickets::list_own_tickets).post(submission::submit_ticket),
+        )
+        .route(
+            "/api/ticket-drafts",
+            get(submission::list_drafts).post(submission::create_draft),
+        )
+        .route(
+            "/api/ticket-drafts/{id}",
+            get(submission::get_draft)
+                .patch(submission::update_draft)
+                .delete(submission::delete_draft),
+        )
+        .route(
+            "/api/ticket-drafts/{id}/submit",
+            post(submission::submit_draft),
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .layer(axum::middleware::from_fn_with_state(

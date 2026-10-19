@@ -2293,6 +2293,534 @@
         }
       }
     },
+    "/api/ticket-drafts": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Active drafts of this account only (including for staff/Admin accounts).",
+        "operationId": "list_drafts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Save incomplete input privately. Retained until the owner deletes or submits it.",
+        "operationId": "create_draft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketIntake"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (input bounds, unsupported screenshots)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ticket-drafts/{id}": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Resume one owned draft. Other accounts, including Admins, get `404`.",
+        "operationId": "get_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Delete an owned, unsubmitted draft at the last read version.",
+        "operationId": "delete_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (stale version or already submitted)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Replace editable draft input using the last read version. Never edits a submitted ticket.",
+        "operationId": "update_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (stale version or already submitted)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ticket-drafts/{id}/submit": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Submit exactly the owned draft version last read. On failure the draft stays\neditable with the same version and input; success leaves an immutable tombstone.",
+        "operationId": "submit_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Original receipt (idempotent replay)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Committed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (AI skip policy)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (stale/submitted draft or key reuse)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (intake/catalog)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Own submitted tickets, newest first, including final AI-solved history.\nThis is a requester list for every role, never a staff queue or Admin report.",
+        "operationId": "list_own_tickets",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TicketSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Validate and submit new input. Owner is always the signed-in account. A\nkey reused with different input is `409`; identical retries replay the receipt.",
+        "operationId": "submit_ticket",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitTicket"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Original receipt (idempotent replay)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Committed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (AI skip policy)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (key already used for different input)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (intake/catalog)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tickets/{id}": {
       "get": {
         "tags": [
@@ -2469,6 +2997,35 @@
           },
           "username": {
             "type": "string"
+          }
+        }
+      },
+      "AnswerSnapshot": {
+        "type": "object",
+        "required": [
+          "field_id",
+          "label",
+          "value"
+        ],
+        "properties": {
+          "choice_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set when a listed choice was picked; `None` for typed text."
+          },
+          "field_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "The choice label or the typed text."
           }
         }
       },
@@ -2732,6 +3289,55 @@
           }
         }
       },
+      "Draft": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "intake",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "intake": {
+            "$ref": "#/components/schemas/TicketIntake"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DraftUpdate": {
+        "type": "object",
+        "required": [
+          "version",
+          "intake"
+        ],
+        "properties": {
+          "intake": {
+            "$ref": "#/components/schemas/TicketIntake"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version last read; stale writes return `409 conflict`."
+          }
+        },
+        "additionalProperties": false
+      },
       "ErrorBody": {
         "type": "object",
         "required": [
@@ -2847,6 +3453,26 @@
           }
         }
       },
+      "IntakeAnswer": {
+        "type": "object",
+        "description": "One conditional answer on the shared form: the `choice_id` of a `select`\nfield, or `text` (a `text` field, or a `select` field's free-text alternative).",
+        "properties": {
+          "choice_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "IntakeField": {
         "type": "object",
         "required": [
@@ -2959,6 +3585,44 @@
           }
         },
         "additionalProperties": false
+      },
+      "IntakeSnapshot": {
+        "type": "object",
+        "description": "What a submitted ticket stores: names, labels, and answers as they were at\nsubmission, so later edits and archival never rewrite history, and the AI\nroute (`skip_ai`) is fixed for the whole attempt.",
+        "required": [
+          "category_id",
+          "category_name",
+          "skip_ai",
+          "priority_id",
+          "priority_name",
+          "answers"
+        ],
+        "properties": {
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnswerSnapshot"
+            },
+            "description": "Answers to fields visible for the category, in display order."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "priority_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "skip_ai": {
+            "type": "boolean"
+          }
+        }
       },
       "Invitation": {
         "type": "object",
@@ -3304,6 +3968,56 @@
           }
         }
       },
+      "Page_Draft": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "version",
+                "intake",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "intake": {
+                  "$ref": "#/components/schemas/TicketIntake"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "version": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Invitation": {
         "type": "object",
         "description": "One page of a list. `next_cursor` is null on the last page.",
@@ -3460,6 +4174,73 @@
                     "string",
                     "null"
                   ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_TicketSummary": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Minimal requester history. No staff-only metadata; all roles see only their own.",
+              "required": [
+                "id",
+                "reference",
+                "status",
+                "subject",
+                "category_name",
+                "priority_name",
+                "assignment",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "assignment": {
+                  "$ref": "#/components/schemas/TicketAssignmentView"
+                },
+                "category_name": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "priority_name": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
                 }
               }
             }
@@ -3784,6 +4565,99 @@
           }
         }
       },
+      "SubmissionReceipt": {
+        "type": "object",
+        "description": "Immutable submission receipt. A replay returns the original submitted status;\nread `/api/tickets/{id}` for the current status.",
+        "required": [
+          "id",
+          "reference",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "SubmitDraft": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requester_skip": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmitTicket": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "intake"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Generate once per logical submission; retain across network retries."
+          },
+          "intake": {
+            "$ref": "#/components/schemas/TicketIntake"
+          },
+          "requester_skip": {
+            "type": "boolean",
+            "description": "A request, never a bypass authority. The lifecycle checks current policy."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmittedIntake": {
+        "type": "object",
+        "description": "Original intake, frozen when submission commits; current effective priority\nstays on the ticket independently of the initial catalog selection here.",
+        "required": [
+          "subject",
+          "description",
+          "catalog",
+          "screenshot_ids"
+        ],
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/IntakeSnapshot"
+          },
+          "description": {
+            "type": "string"
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "subject": {
+            "type": "string"
+          }
+        }
+      },
       "Team": {
         "type": "object",
         "required": [
@@ -3854,6 +4728,7 @@
           "priority_id",
           "priority_name",
           "assignment",
+          "intake_snapshot",
           "resolution_source",
           "closure_reason",
           "proposal_version",
@@ -3903,6 +4778,17 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "intake_snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmittedIntake",
+                "description": "Frozen original intake; null only for legacy records predating submission."
+              }
+            ]
           },
           "priority_id": {
             "type": "string",
@@ -3966,6 +4852,54 @@
           }
         }
       },
+      "TicketIntake": {
+        "type": "object",
+        "description": "Full replacement of editable draft input. Missing fields have empty defaults;\ncategory/priority and required answers are checked against the catalog at submission.",
+        "properties": {
+          "answers": {
+            "type": "object",
+            "description": "Up to 100 conditional answers, keyed by field ID.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/IntakeAnswer"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "description": {
+            "type": "string",
+            "description": "Up to 20,000 characters; required on submission."
+          },
+          "priority_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Must be empty until validated screenshot uploads (#19) are available."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Up to 200 characters; required on submission."
+          }
+        },
+        "additionalProperties": false
+      },
       "TicketRequester": {
         "type": "object",
         "required": [
@@ -4000,6 +4934,54 @@
           "cancelled",
           "ai_solved"
         ]
+      },
+      "TicketSummary": {
+        "type": "object",
+        "description": "Minimal requester history. No staff-only metadata; all roles see only their own.",
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "subject",
+          "category_name",
+          "priority_name",
+          "assignment",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "TicketTransition": {
         "type": "object",
