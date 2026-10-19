@@ -11,7 +11,7 @@ anything.
 
 Migration `0018` installs an `AFTER INSERT` trigger on `ticket_events`, so every
 event writer (lifecycle transitions, assignment, replies, each bulk item in its
-own transaction, and the future auto-close worker) enqueues rows in the **same
+own transaction, and the auto-close worker) enqueues rows in the **same
 transaction** as the change: a
 rollback leaves nothing to send, and no writer can forget to enqueue. Rows are
 content-free (event ID + account ID + channel); text, address, language,
@@ -41,8 +41,8 @@ best-effort sending.
 ## Worker
 
 `notifications::worker_loop` (spawned in `main.rs`) calls `process_one` in a
-loop; `poll_loop` is the shared "drain, then sleep" loop that the confirmation
-timeout worker should reuse. `process_one` claims one due row with
+loop; `poll_loop` is the shared "drain, then sleep" loop that the auto-close worker
+(`autoclose::worker_loop`, [lifecycle.md](lifecycle.md#auto-close-worker)) reuses. `process_one` claims one due row with
 `FOR UPDATE SKIP LOCKED` and keeps the lock until the outcome is committed, so
 concurrent workers (or replicas) never handle a row twice. Each worker needs two
 pool connections while it sends. On SIGTERM `main.rs` calls `stop_workers`: each
