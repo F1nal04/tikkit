@@ -49,11 +49,15 @@ submission enters `general` once, on its `queued` transition.
 Filters: `status`, `category_id`, `priority_id`, `unassigned=true`. Priority is
 the ticket's current effective priority (`tickets.priority_id`); the requester's
 original choice stays in `intake_snapshot`. `sort`: `newest` (default),
-`oldest`, `priority` (the Admin-defined priority order, then oldest first); all
-break ties on `(created_at, id)`. Paging is the standard `limit`/`cursor`
+`oldest`, `priority`; all break ties on `(created_at, id)`. `priority` follows
+the catalog order Admins set for priority levels (`priorities.sort_order`,
+ascending): the level listed first comes first, so Admins list the most urgent
+level first; within a level, oldest first. Paging is the standard `limit`/`cursor`
 ([api-conventions.md](api-conventions.md)); the cursor is the last row's
-`(created_at, id)`, and for `sort=priority` the next page continues after that
-ticket's position in `(priority order, created_at, id)`.
+`(created_at, id)`. A `sort=priority` cursor also carries that row's priority
+rank (`{rank}.{cursor}`), so the next page continues from values in the cursor
+and never looks up its ticket: a forged cursor naming a hidden ticket reveals
+nothing, and reprioritizing the last row between pages skips no rows.
 Index `tickets_open_work_idx` (migration `0011_operator_queues.sql`) serves open
 work in creation order.
 
