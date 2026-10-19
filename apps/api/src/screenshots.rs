@@ -14,7 +14,7 @@ use std::{
 
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{FromRequest, Request, State},
     http::{
         HeaderMap, HeaderName, HeaderValue, StatusCode,
         header::{
@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use time::OffsetDateTime;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -61,9 +61,49 @@ pub const MAX_PENDING: i64 = 50;
 /// Unattached uploads not referenced by a draft are deleted after this long.
 pub const ORPHAN_TTL: Duration = Duration::from_secs(24 * 3600);
 
-// ponytail: two decodes at a time per process bounds peak memory (~2 × 320 MiB
-// worst case); make it configurable if uploads ever queue noticeably.
+// Bound buffered uploads and decoding together; wait fairly before reading bodies.
 static DECODING: Semaphore = Semaphore::const_new(2);
+
+/// Acquire capacity before buffering a request body. The decoder keeps the
+/// permit even if its HTTP request is cancelled (spawn_blocking cannot abort).
+pub struct UploadBody {
+    bytes: Bytes,
+    permit: SemaphorePermit<'static>,
+}
+
+impl FromRequest<AppState> for UploadBody {
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &AppState) -> Result<Self, ApiError> {
+        let permit = DECODING.acquire().await.map_err(|_| ApiError::Internal)?;
+        let bytes =
+            tokio::time::timeout(Duration::from_secs(30), Bytes::from_request(request, state))
+                .await
+                .map_err(|_| ApiError::BadRequest)?
+                .map_err(|error| {
+                    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                        ApiError::PayloadTooLarge
+                    } else {
+                        ApiError::BadRequest
+                    }
+                })?;
+        Ok(Self { bytes, permit })
+    }
+}
+
+impl UploadBody {
+    async fn normalize(
+        self,
+        kind: Kind,
+    ) -> Result<(Normalized, SemaphorePermit<'static>), ApiError> {
+        blocking(move || {
+            let permit = self.permit;
+            normalize(&self.bytes, kind).map(|image| (image, permit))
+        })
+        .await?
+        .map_err(|code| field("file", code))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -159,7 +199,19 @@ fn normalize(bytes: &[u8], kind: Kind) -> Result<Normalized, &'static str> {
     let reader = Cursor::new(bytes);
     let mut decoder: Box<dyn ImageDecoder + '_> = match kind {
         Kind::Png => {
-            let decoder = PngDecoder::new(reader).map_err(corrupt)?;
+            // set_limits() does not update the PNG reader's internal limits.
+            // Bound metadata inflation during construction, before pixel decoding.
+            let mut limits = Limits::default();
+            limits.max_image_width = Some(MAX_SIDE);
+            limits.max_image_height = Some(MAX_SIDE);
+            limits.max_alloc = Some(16 << 20);
+            let decoder = PngDecoder::with_limits(reader, limits).map_err(|error| {
+                if matches!(error, image::ImageError::Limits(_)) {
+                    "dimensions_too_large"
+                } else {
+                    "corrupt"
+                }
+            })?;
             if decoder.is_apng().map_err(corrupt)? {
                 return Err("animated");
             }
@@ -167,6 +219,7 @@ fn normalize(bytes: &[u8], kind: Kind) -> Result<Normalized, &'static str> {
         }
         Kind::Jpeg => Box::new(JpegDecoder::new(reader).map_err(corrupt)?),
         Kind::WebP => {
+            validate_webp_chunks(bytes)?;
             let decoder = WebPDecoder::new(reader).map_err(corrupt)?;
             if decoder.has_animation() {
                 return Err("animated");
@@ -215,6 +268,29 @@ fn normalize(bytes: &[u8], kind: Kind) -> Result<Normalized, &'static str> {
         width: image.width(),
         height: image.height(),
     })
+}
+
+// The WebP decoder allocates metadata using the declared chunk length before
+// reading it, and its image::Limits do not constrain those allocations.
+fn validate_webp_chunks(bytes: &[u8]) -> Result<(), &'static str> {
+    let size = bytes.get(4..8).ok_or("corrupt")?;
+    let end = u64::from(u32::from_le_bytes(size.try_into().unwrap())) + 8;
+    if end < 12 || end > bytes.len() as u64 {
+        return Err("corrupt");
+    }
+    let mut offset = 12u64;
+    while offset < end {
+        if end - offset < 8 {
+            return Err("corrupt");
+        }
+        let size = &bytes[offset as usize + 4..offset as usize + 8];
+        let size = u64::from(u32::from_le_bytes(size.try_into().unwrap()));
+        offset += 8 + size + size % 2;
+        if offset > end {
+            return Err("corrupt");
+        }
+    }
+    Ok(())
 }
 
 fn encode(
@@ -283,9 +359,11 @@ fn write_file(dir: &FsPath, id: Uuid, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = dir.join(format!("{id}.tmp"));
     let written = std::fs::File::create_new(&tmp)
         .and_then(|mut f| f.write_all(bytes).and_then(|()| f.sync_all()))
-        .and_then(|()| std::fs::rename(&tmp, file_path(dir, id)));
+        .and_then(|()| std::fs::rename(&tmp, file_path(dir, id)))
+        .and_then(|()| std::fs::File::open(dir)?.sync_all());
     if written.is_err() {
         let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(file_path(dir, id));
     }
     written
 }
@@ -308,72 +386,74 @@ async fn blocking<T: Send + 'static>(
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 413, description = "`payload_too_large` (over 10 MiB)", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed`: `file` is `required`, `unsupported_type`, `type_mismatch`, `corrupt`, `animated`, `dimensions_too_large`, or `too_many`; `filename` is `type_mismatch`", body = crate::api::ErrorEnvelope),
-        (status = 500, description = "`internal` (storage failure; nothing was recorded)", body = crate::api::ErrorEnvelope),
+        (status = 400, description = "`bad_request` (incomplete upload or body read exceeded 30 seconds)", body = crate::api::ErrorEnvelope),
+        (status = 500, description = "`internal` (storage or database failure; a commit acknowledgement may be lost)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn upload(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(params): Query<UploadParams>,
     headers: HeaderMap,
-    body: Bytes,
+    body: UploadBody,
 ) -> Result<(StatusCode, Json<Screenshot>), ApiError> {
     let declared = headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(Kind::from_mime)
         .ok_or_else(|| field("file", "unsupported_type"))?;
-    if body.is_empty() {
+    if body.bytes.is_empty() {
         return Err(field("file", "required"));
     }
-    let kind = Kind::detect(&body).ok_or_else(|| field("file", "unsupported_type"))?;
+    let kind = Kind::detect(&body.bytes).ok_or_else(|| field("file", "unsupported_type"))?;
     if kind != declared {
         return Err(field("file", "type_mismatch"));
     }
     let filename =
         normalize_filename(params.filename.as_deref(), kind).map_err(|c| field("filename", c))?;
-    // ponytail: concurrent uploads may overshoot the cap by a few; it bounds disk use, not a contract.
+    let mut tx = state.pool.begin().await?;
+    // Share the quota across API processes, not just the decoding semaphore.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('screenshot_upload'), hashtext($1))")
+        .bind(user.account_id().to_string())
+        .execute(&mut *tx)
+        .await?;
     let pending: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM screenshots WHERE uploader_account_id = $1 AND ticket_id IS NULL",
     )
     .bind(user.account_id())
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
     if pending >= MAX_PENDING {
         return Err(field("file", "too_many"));
     }
-    let image = {
-        let _permit = DECODING.acquire().await.map_err(|_| ApiError::Internal)?;
-        blocking(move || normalize(&body, kind)).await?
-    }
-    .map_err(|code| field("file", code))?;
+    let (image, permit) = body.normalize(kind).await?;
 
     let id = Uuid::new_v4();
     let dir = state.screenshot_dir.clone();
     let bytes = image.bytes;
     let byte_size =
         i32::try_from(bytes.len()).map_err(|_| field("file", "dimensions_too_large"))?;
-    if let Err(error) = blocking(move || write_file(&dir, id, &bytes)).await? {
+    let (written, _permit) = blocking(move || (write_file(&dir, id, &bytes), permit)).await?;
+    if let Err(error) = written {
         tracing::error!(%error, "screenshot storage write failed");
         return Err(ApiError::Internal);
     }
-    let recorded = async {
-        let mut tx = state.pool.begin().await?;
-        let screenshot: Screenshot = sqlx::query_as(&format!(
-            "INSERT INTO screenshots AS s (id, uploader_account_id, filename, content_type, byte_size, width, height)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {COLUMNS}"))
-            .bind(id).bind(user.account_id()).bind(&filename).bind(kind.mime()).bind(byte_size)
-            .bind(image.width as i32).bind(image.height as i32).fetch_one(&mut *tx).await?;
-        audit(&mut *tx, "screenshot_uploaded", Some(user.account_id()), Some(user.account_id()),
-            json!({"screenshot_id": id, "content_type": kind.mime(), "byte_size": byte_size})).await?;
-        tx.commit().await?;
-        Ok::<_, ApiError>(screenshot)
-    }
-    .await;
-    if recorded.is_err() {
-        let path = file_path(&state.screenshot_dir, id);
-        let _ = blocking(move || std::fs::remove_file(path)).await;
-    }
-    Ok((StatusCode::CREATED, Json(recorded?)))
+    let screenshot: Screenshot = sqlx::query_as(&format!(
+        "INSERT INTO screenshots AS s (id, uploader_account_id, filename, content_type, byte_size, width, height)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {COLUMNS}"))
+        .bind(id).bind(user.account_id()).bind(&filename).bind(kind.mime()).bind(byte_size)
+        .bind(image.width as i32).bind(image.height as i32).fetch_one(&mut *tx).await?;
+    audit(
+        &mut *tx,
+        "screenshot_uploaded",
+        Some(user.account_id()),
+        Some(user.account_id()),
+        json!({"screenshot_id": id, "content_type": kind.mime(), "byte_size": byte_size}),
+    )
+    .await?;
+    // A commit error can mean a lost acknowledgement after a successful commit.
+    // Leave the file for cleanup, which checks committed records after the TTL.
+    tx.commit().await?;
+    Ok((StatusCode::CREATED, Json(screenshot)))
 }
 
 #[derive(sqlx::FromRow)]
@@ -432,8 +512,12 @@ pub async fn metadata(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<Screenshot>, ApiError> {
-    Ok(Json(readable(&state.pool, &user, id).await?))
+) -> Result<Response, ApiError> {
+    Ok((
+        [(CACHE_CONTROL, "private, no-store")],
+        Json(readable(&state.pool, &user, id).await?),
+    )
+        .into_response())
 }
 
 /// Inline image for `<img>` previews. Access is rechecked on every request and
@@ -739,6 +823,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn upload_capacity_waits_before_buffering_and_survives_cancellation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
+                .unwrap();
+            let state = AppState {
+                pool,
+                screenshot_dir: std::env::temp_dir().into(),
+            };
+            let body = || Request::new(axum::body::Body::from(vec![0u8; 32]));
+            let first = UploadBody::from_request(body(), &state).await.unwrap();
+            let second = UploadBody::from_request(body(), &state).await.unwrap();
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(10),
+                    UploadBody::from_request(body(), &state)
+                )
+                .await
+                .is_err()
+            );
+            let (release, wait) = std::sync::mpsc::channel();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                let _ = wait.recv();
+            });
+            ready.await.unwrap();
+            let mut decode = Box::pin(first.normalize(Kind::Png));
+            tokio::select! {
+                biased;
+                _ = &mut decode => panic!("decoder must be queued behind the blocking worker"),
+                () = std::future::ready(()) => {}
+            }
+            drop(decode);
+            assert_eq!(
+                DECODING.available_permits(),
+                0,
+                "cancelled HTTP future must not free a running decoder's capacity"
+            );
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            let _finished = tokio::time::timeout(Duration::from_secs(2), DECODING.acquire())
+                .await
+                .unwrap()
+                .unwrap();
+            drop(second);
+        });
+    }
+
+    #[test]
+    fn webp_chunk_lengths_must_fit_the_uploaded_bytes() {
+        let mut frame = Vec::new();
+        DynamicImage::new_rgb8(2, 2)
+            .write_to(&mut Cursor::new(&mut frame), ImageFormat::WebP)
+            .unwrap();
+        let mut bytes = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\x20\0\0\0\x01\0\0\x01\0\0".to_vec();
+        bytes.extend_from_slice(&frame[12..]);
+        bytes.extend_from_slice(b"ICCP");
+        bytes.extend_from_slice(&(16u32 * 1024 * 1024).to_le_bytes());
+        let len = (bytes.len() - 8) as u32;
+        bytes[4..8].copy_from_slice(&len.to_le_bytes());
+        assert!(
+            normalize(&bytes, Kind::WebP).is_err(),
+            "a truncated metadata chunk must not allocate its claimed length or be silently dropped"
+        );
+    }
+
+    #[test]
+    fn compressed_icc_profiles_cannot_expand_without_a_constructor_limit() {
+        let pixels = DynamicImage::new_rgb8(2, 2);
+        let mut bytes = Vec::new();
+        let mut encoder = PngEncoder::new(&mut bytes);
+        encoder.set_icc_profile(vec![42; 17 * 1024 * 1024]).unwrap();
+        pixels.write_with_encoder(encoder).unwrap();
+        assert!(bytes.len() < MAX_BYTES);
+        let clean = normalize(&bytes, Kind::Png).unwrap();
+        let mut stored = PngDecoder::new(Cursor::new(&clean.bytes)).unwrap();
+        assert!(
+            stored.icc_profile().unwrap().is_none(),
+            "oversized metadata must not survive normalization"
+        );
+    }
+
+    #[test]
     fn filenames_are_normalized_and_extensions_must_match() {
         let png = |raw| normalize_filename(raw, Kind::Png);
         assert_eq!(png(Some("C:\\Users\\me\\shot.PNG")).unwrap(), "shot.png");
@@ -753,6 +926,7 @@ mod tests {
         );
         assert_eq!(png(Some("evil\u{202e}gnp.exe")), Err("type_mismatch"));
         assert_eq!(png(Some("x.svg")), Err("type_mismatch"));
+        assert_eq!(png(Some("Ü\"\r\nshot.png")).unwrap(), "Ü___shot.png");
         assert_eq!(png(Some(".png")).unwrap(), "screenshot.png");
         assert_eq!(png(None).unwrap(), "screenshot.png");
         let long = "a".repeat(500);

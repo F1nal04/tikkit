@@ -3088,6 +3088,15 @@ export interface operations {
                     "application/json": components["schemas"]["Screenshot"];
                 };
             };
+            /** @description `bad_request` (incomplete upload or body read exceeded 30 seconds) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description `unauthorized` */
             401: {
                 headers: {
@@ -3115,7 +3124,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `internal` (storage failure; nothing was recorded) */
+            /** @description `internal` (storage or database failure; a commit acknowledgement may be lost) */
             500: {
                 headers: {
                     [name: string]: unknown;
