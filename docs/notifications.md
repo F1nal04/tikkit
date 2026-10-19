@@ -44,8 +44,9 @@ timeout worker should reuse. `process_one` claims one due row with
 concurrent workers (or replicas) never handle a row twice. Each worker needs two
 pool connections while it sends.
 
-At delivery the worker re-reads the account (`lifecycle::lock_actor`, share
-locks) and the ticket, then applies the ticket policy again (`authz::ticket_view`):
+At delivery the worker re-reads the account and the ticket (plain reads: no row
+locks are held while SMTP talks, so a slow relay never stalls portal writes),
+then applies the ticket policy again (`authz::ticket_view`):
 a deactivated account, a former team member, or a dispatcher who lost access is
 `suppressed`; so is anything on an AI-solved record other than the requester's own
 `ai_solved` receipt, and any note event. Opted-out channels are suppressed too.
