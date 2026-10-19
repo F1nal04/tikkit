@@ -43,7 +43,7 @@ pub fn stop_workers() {
 }
 
 /// Runs `step` until it reports no more work, then sleeps. Shared by background
-/// processors (the notification outbox now, confirmation timeouts later);
+/// processors (the notification outbox and the auto-close worker);
 /// `step` returns whether it did something. Returns after [`stop_workers`].
 pub async fn poll_loop<F, Fut>(name: &'static str, mut step: F)
 where

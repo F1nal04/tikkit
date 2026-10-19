@@ -161,6 +161,7 @@
 {:else}
   <h1>#{ticket.reference} · {ticket.subject}</h1>
   <div class="actions"><StatusBadge status={ticket.status} label={t.statuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{s.refresh}</button></div>
+  {#if ticket.closure_reason}<p>{t.closureReasons[ticket.closure_reason]}</p>{/if}
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? s.replySent : feedback === 'note' ? s.noteSent : s.actionSaved}</Alert>{/if}
   {#if changed}<Alert>{s.changed}</Alert>{:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}
   {#if reason}<Alert kind="info">{s.readOnly[reason]}</Alert>{/if}

@@ -83,6 +83,33 @@ silence never close anything. Rejection keeps the team and assignee and is
 allowed with reopening disabled. Reopening clears both columns; the events keep
 the history.
 
+## Auto-close worker
+
+`autoclose::worker_loop` (spawned in `main.rs` next to the notification worker,
+sharing `notifications::poll_loop`) drains due tickets and then sleeps two
+seconds. On shutdown `notifications::stop_workers` ends it after its current
+step, and `main.rs` waits for it (with the notification worker, up to 5 s)
+before closing the pool. Each step selects one `awaiting_confirmation` ticket whose snapshotted
+`confirmation_deadline` has passed (`FOR UPDATE SKIP LOCKED`, oldest first,
+excluding tickets already failed in this cycle) and applies
+`ConfirmationTimeout` with the proposal version read under that lock, as the
+system actor, in one transaction with the event and its outbox rows. The
+deadline comparison uses `clock_timestamp()`, the same database clock
+`transition` reads after locking. All state is the ticket row, so a restart or
+outage just finds overdue proposals again (catch-up), and concurrent workers or
+replicas skip each other's rows. A transition that fails is rolled back, logged
+with its stable error code (not the database message), and that ticket is
+skipped until this cycle finds nothing else due; the sleep then backs off
+before the next cycle retries it. One failing ticket cannot block the ones
+behind it, and an idle queue does not spin. A requester decision or staff
+replacement that holds the row wins and the worker leaves the ticket alone; one
+that commits first changes status, version, or
+deadline so the worker no longer selects it. A proposal is the only thing that
+gets a deadline: drafts, information waits, queued/in-progress work, and AI
+stages never do, and `ai_solved`/`cancelled` are unreachable. The timeout event
+has no actor, `resolution_source: operator`, `closure_reason:
+confirmation_timeout`, and no `accept_resolution` event exists for the ticket.
+
 ## Cancellation
 
 The requester cancels a submitted open ticket with a reason. Policy
