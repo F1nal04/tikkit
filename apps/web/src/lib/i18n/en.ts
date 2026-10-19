@@ -173,7 +173,7 @@ export default {
   smtpSenderAddress: 'Sender address',
   smtpUsername: 'Username',
   smtpPassword: 'Password',
-  smtpPasswordKeep: 'A password is stored. Leave this blank to keep it.',
+  smtpCredentialsKeep: 'A username and password are stored. Leave both blank to keep them. Enter both again when you change the host.',
   smtpEnabled: 'Enabled',
   smtpEnabledHint: 'When this is off, the portal keeps working. Copy invitation links by hand.',
   smtpRemove: 'Remove connection',

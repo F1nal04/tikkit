@@ -75,6 +75,7 @@ createServer(async (req, res) => {
     return reply(res, 200, account(user, tokenOf(req)))
   }
   if (route === 'GET /api/organization') return reply(res, 200, settings)
+  if (route === 'GET /api/settings/smtp') return ROLES[user] === 'admin' ? reply(res, 200, { connection: null }) : fail(res, 403, 'forbidden')
   if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
     if (pathname === '/api/admin/settings') return reply(res, 200, settings)

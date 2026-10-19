@@ -18,7 +18,7 @@
     security: initial?.security ?? 'starttls',
     sender_name: initial?.sender_name ?? '',
     sender_address: initial?.sender_address ?? '',
-    username: initial?.username ?? '',
+    username: '',
     password: '',
   })
   let enabled = $state(initial?.enabled ?? true)
@@ -52,11 +52,13 @@
   function save(event: SubmitEvent) {
     event.preventDefault()
     return run(async () => {
-      const { password, port, ...rest } = form
+      // Blank credentials keep the stored ones; the API never returns them.
+      const { username, password, port, ...rest } = form
       const saved = await request('put', '/api/settings/smtp', {
-        body: { ...rest, port: Number(port), enabled, ...(password ? { password } : {}) },
+        body: { ...rest, port: Number(port), enabled, ...(username ? { username } : {}), ...(password ? { password } : {}) },
       })
       connection = saved.connection
+      form.username = ''
       form.password = ''
       return t.saved
     })
@@ -111,14 +113,20 @@
     bind:value={form.sender_address}
     error={fieldText(t, fields.sender_address?.[0])}
   />
-  <Field name="username" label={t.smtpUsername} bind:value={form.username} autocomplete="off" error={fieldText(t, fields.username?.[0])} />
+  <Field
+    name="username"
+    label={t.smtpUsername}
+    bind:value={form.username}
+    autocomplete="off"
+    hint={connection ? t.smtpCredentialsKeep : undefined}
+    error={fieldText(t, fields.username?.[0])}
+  />
   <Field
     name="password"
     type="password"
     label={t.smtpPassword}
     bind:value={form.password}
     autocomplete="new-password"
-    hint={connection ? t.smtpPasswordKeep : undefined}
     error={fieldText(t, fields.password?.[0])}
   />
   <label class="check"><input name="enabled" type="checkbox" bind:checked={enabled} />{t.smtpEnabled}</label>
