@@ -59,3 +59,23 @@ test('an Admin creates a role-specific invitation and receives the link once', a
   await expect(page.getByText('No email was sent. Copy the link and share it yourself.')).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
+
+test('outbound email settings render in the admin shell and send credentials only when typed', async ({ page }) => {
+  await signIn(page, 'admin')
+  await page.goto('/admin/email?lang=de')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Ausgehende E-Mail')
+  await expect(page.getByRole('link', { name: 'Ausgehende E-Mail' })).toHaveAttribute('aria-current', 'page')
+  let sent: Record<string, unknown> = {}
+  await page.route('**/api/settings/smtp', async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback()
+    sent = route.request().postDataJSON()
+    await route.fulfill({ status: 422, json: { error: { code: 'validation_failed', details: { fields: { password: ['required'] } } }, request_id: 'e2e' } })
+  })
+  await page.getByLabel('Host').fill('smtp.example.com')
+  await page.getByLabel('Benutzername').fill('mailer')
+  await page.getByRole('button', { name: 'Speichern', exact: true }).click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  expect(sent).toMatchObject({ host: 'smtp.example.com', username: 'mailer', security: 'starttls', port: 587 })
+  expect(sent).not.toHaveProperty('password')
+  await expect(page.getByLabel('Passwort')).toHaveAttribute('aria-invalid', 'true')
+})

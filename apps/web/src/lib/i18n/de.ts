@@ -177,7 +177,8 @@ export default {
   smtpSenderAddress: 'Absenderadresse',
   smtpUsername: 'Benutzername',
   smtpPassword: 'Passwort',
-  smtpPasswordKeep: 'Ein Passwort ist gespeichert. Lassen Sie das Feld leer, um es zu behalten.',
+  smtpCredentialsKeep:
+    'Benutzername und Passwort sind gespeichert. Lassen Sie beide Felder leer, um sie zu behalten. Geben Sie beide erneut ein, wenn Sie den Host ändern.',
   smtpEnabled: 'Aktiviert',
   smtpEnabledHint: 'Wenn dies aus ist, funktioniert das Portal weiter. Kopieren Sie Einladungslinks von Hand.',
   smtpRemove: 'Verbindung entfernen',
