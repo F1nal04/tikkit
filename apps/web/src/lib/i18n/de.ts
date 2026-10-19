@@ -125,6 +125,7 @@ export default {
     accounts: 'Konten',
     teams: 'Teams',
     settings: 'Organisationseinstellungen',
+    email: 'Ausgehende E-Mail',
   },
   myTicketsTitle: 'Meine Tickets',
   myTicketsEmpty: 'Sie haben noch keine Tickets eingereicht.',
