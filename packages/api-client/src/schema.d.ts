@@ -885,6 +885,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversation oldest first, with private rows excluded in SQL before pagination.
+         *     `cursor` is an opaque sequence position, not the default timestamp cursor.
+         */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a private internal note. Author, staff role, and visibility come from
+         *     the server's current ticket policy, never client-supplied fields.
+         */
+        post: operations["note"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a public reply. Ownership takes precedence over staff role: the ticket's
+         *     submitting account always speaks as requester. No AI work is scheduled.
+         */
+        post: operations["reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -937,6 +997,8 @@ export interface components {
             /** @description The choice label or the typed text. */
             value: string;
         };
+        /** @enum {string} */
+        AuthorKind: "requester" | "staff";
         /**
          * @description When the owning requester may cancel a submitted open ticket.
          * @enum {string}
@@ -1157,6 +1219,36 @@ export interface components {
             password: string;
             username: string;
         };
+        Message: {
+            /**
+             * Format: uuid
+             * @description Immutable account identity for staff consumers; null in requester responses.
+             */
+            author_account_id: string | null;
+            /** @description User-authored plain text; render as text, never HTML. */
+            author_display_name: string;
+            author_kind: components["schemas"]["AuthorKind"];
+            /** @description Original plain text; render as text, never HTML or Markdown. */
+            body: string;
+            /**
+             * @description HTML-escaped text for renderers; no tags, links, or embedded attachments.
+             *     Preserve newlines with CSS `white-space: pre-wrap`.
+             */
+            body_html: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["MessageKind"];
+            screenshot_ids: string[];
+            /**
+             * Format: int64
+             * @description Stable ascending order; gaps are valid. Never order by transaction timestamps.
+             */
+            sequence: number;
+        };
+        /** @enum {string} */
+        MessageKind: "public_reply" | "internal_note";
         NewCategory: {
             /** @description 1-100 characters, unique among active categories. */
             name: string;
@@ -1253,6 +1345,38 @@ export interface components {
                 role: components["schemas"]["Role"];
                 status: components["schemas"]["InvitationStatus"];
                 username: string | null;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Message: {
+            items: {
+                /**
+                 * Format: uuid
+                 * @description Immutable account identity for staff consumers; null in requester responses.
+                 */
+                author_account_id: string | null;
+                /** @description User-authored plain text; render as text, never HTML. */
+                author_display_name: string;
+                author_kind: components["schemas"]["AuthorKind"];
+                /** @description Original plain text; render as text, never HTML or Markdown. */
+                body: string;
+                /**
+                 * @description HTML-escaped text for renderers; no tags, links, or embedded attachments.
+                 *     Preserve newlines with CSS `white-space: pre-wrap`.
+                 */
+                body_html: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                kind: components["schemas"]["MessageKind"];
+                screenshot_ids: string[];
+                /**
+                 * Format: int64
+                 * @description Stable ascending order; gaps are valid. Never order by transaction timestamps.
+                 */
+                sequence: number;
             }[];
             next_cursor: string | null;
         };
@@ -1438,6 +1562,17 @@ export interface components {
             id: string;
             /** Format: int32 */
             width: number;
+        };
+        SendMessage: {
+            /** @description Plain text, 1–10,000 characters, nonblank. HTML and Markdown are not interpreted. */
+            body: string;
+            /**
+             * Format: uuid
+             * @description New UUID per send. Reuse the UUID and exact input to retry safely.
+             */
+            idempotency_key: string;
+            /** @description Own pending screenshot uploads (at most 10, distinct). */
+            screenshot_ids?: string[];
         };
         SetupRequest: {
             email: string;
@@ -4395,6 +4530,198 @@ export interface operations {
             };
             /** @description `not_found` (missing or not visible to the caller) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Message"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invisible ticket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid cursor */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    note: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            /** @description Committed private note (same receipt on identical retry) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Staff writer denied (including self-handling) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invisible ticket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Key reused with different input */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid body or screenshots */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            /** @description Committed message (same receipt on identical retry) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Staff writer denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invisible ticket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Requester ticket not open, or key reused with different input */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid body or screenshots */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
