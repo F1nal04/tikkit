@@ -204,6 +204,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The active catalog for the shared ticket form: unarchived categories,
+         *     priorities, fields, and choices in display order. Any signed-in account.
+         */
+        get: operations["active_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalog/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The whole catalog including archived entries (Admin only). */
+        get: operations["full_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds a category at the end of the order (Admin only). */
+        post: operations["create_category"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the display order of all categories (Admin only). */
+        put: operations["reorder_categories"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Renames, sets "Skip AI automatically", archives, or restores a category
+         *     (Admin only). Submitted tickets keep their snapshot of the category.
+         */
+        patch: operations["update_category"];
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -219,6 +310,63 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/intake-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adds a conditional field at the end of the order (Admin only). A `select`
+         *     field needs at least one choice or `allow_other`.
+         */
+        post: operations["create_intake_field"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intake-fields/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the display order of all conditional fields (Admin only). */
+        put: operations["reorder_intake_fields"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intake-fields/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edits, archives, or restores a conditional field, its choices, and the
+         *     categories that reveal it (Admin only). The kind cannot change.
+         */
+        patch: operations["update_intake_field"];
         trace?: never;
     };
     "/api/invitations": {
@@ -351,6 +499,57 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/priorities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds a priority level at the end of the order (Admin only). */
+        post: operations["create_priority"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/priorities/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the display order of all priority levels (Admin only). */
+        put: operations["reorder_priorities"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/priorities/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Renames, archives, or restores a priority level (Admin only). */
+        patch: operations["update_priority"];
         trace?: never;
     };
     "/api/ready": {
@@ -509,6 +708,29 @@ export interface components {
         };
         /** @enum {string} */
         CancellationPolicy: "anytime_while_open" | "before_work_starts" | "disabled";
+        /** @description Everything in display order. */
+        Catalog: {
+            categories: components["schemas"]["Category"][];
+            fields: components["schemas"]["IntakeField"][];
+            priorities: components["schemas"]["Priority"][];
+        };
+        Category: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * @description "Skip AI automatically": submissions go straight to the operator queue
+             *     with no AI provider call, whatever the requester-skip setting says.
+             */
+            skip_ai: boolean;
+        };
+        CategoryUpdate: {
+            /** @description `true` hides it from new tickets; `false` restores it. Existing tickets are unaffected. */
+            archived?: boolean | null;
+            name?: string | null;
+            skip_ai?: boolean | null;
+        };
         ChangePasswordRequest: {
             current_password: string;
             /** @description 12-256 characters. */
@@ -519,6 +741,23 @@ export interface components {
             database: string;
             /** @description `ok`, `pending`, `incompatible`, or `unknown`. */
             migrations: string;
+        };
+        /** @description A select option. Its ID is stable: renaming keeps it, and it is archived, never deleted. */
+        Choice: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            label: string;
+        };
+        ChoiceInput: {
+            archived?: boolean | null;
+            /**
+             * Format: uuid
+             * @description An existing choice of this field to update; omit to add a new choice.
+             */
+            id?: string | null;
+            /** @description 1-100 characters, unique among the field's active choices. */
+            label: string;
         };
         CreateInvitationRequest: {
             /** @description Optional recipient. With SMTP configured the link is emailed there. */
@@ -565,8 +804,41 @@ export interface components {
             /** @description Same value as the `x-request-id` response header. */
             request_id: string;
         };
+        /** @enum {string} */
+        FieldKind: "text" | "select";
         Health: {
             status: string;
+        };
+        IntakeField: {
+            /** @description `select` only: a free-text answer may be given instead of a choice. */
+            allow_other: boolean;
+            archived: boolean;
+            /** @description The categories whose selection reveals this field. */
+            category_ids: string[];
+            /** @description `select` only, in display order. */
+            choices: components["schemas"]["Choice"][];
+            /** @description Help text shown with the field; may be empty. */
+            guidance: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["FieldKind"];
+            label: string;
+            /** @description Required while visible. Hidden fields are never required. */
+            required: boolean;
+        };
+        IntakeFieldUpdate: {
+            allow_other?: boolean | null;
+            archived?: boolean | null;
+            /** @description Replaces the revealing categories. */
+            category_ids?: string[] | null;
+            /**
+             * @description The complete choice list in display order. Existing choices left out are
+             *     archived, never deleted, so their IDs stay valid for existing tickets.
+             */
+            choices?: components["schemas"]["ChoiceInput"][] | null;
+            guidance?: string | null;
+            label?: string | null;
+            required?: boolean | null;
         };
         Invitation: {
             /** Format: uuid */
@@ -601,6 +873,35 @@ export interface components {
         LoginRequest: {
             password: string;
             username: string;
+        };
+        NewCategory: {
+            /** @description 1-100 characters, unique among active categories. */
+            name: string;
+            /** @description Default `false`: follow the organization AI policy. */
+            skip_ai?: boolean | null;
+        };
+        NewIntakeField: {
+            /** @description `select` only. */
+            allow_other?: boolean | null;
+            /** @description The categories that reveal this field. */
+            category_ids: string[];
+            /** @description `select` only, in display order (new choices, so without `id`). */
+            choices?: components["schemas"]["ChoiceInput"][] | null;
+            /** @description Up to 1000 characters. */
+            guidance?: string | null;
+            /** @description Fixed after creation. */
+            kind: components["schemas"]["FieldKind"];
+            /** @description 1-100 characters. */
+            label: string;
+            required?: boolean | null;
+        };
+        NewPriority: {
+            /** @description 1-100 characters, unique among active priorities. */
+            name: string;
+        };
+        Order: {
+            /** @description Every ID of this kind, archived ones included, in the new display order. */
+            ids: string[];
         };
         OrganizationSettings: {
             /** @description Human-closed tickets only. AI-solved records remain permanently non-reopenable. */
@@ -678,6 +979,17 @@ export interface components {
                 team_name: string | null;
             }[];
             next_cursor: string | null;
+        };
+        Priority: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        PriorityUpdate: {
+            /** @description `true` hides it from new tickets; `false` restores it. Existing tickets are unaffected. */
+            archived?: boolean | null;
+            name?: string | null;
         };
         Readiness: {
             checks: components["schemas"]["Checks"];
@@ -1368,6 +1680,231 @@ export interface operations {
             };
         };
     };
+    active_catalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Catalog"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    full_catalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Catalog"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_category: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCategory"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reorder_categories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Order"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: the IDs are not exactly the current categories (reload) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_category: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     health: {
         parameters: {
             query?: never;
@@ -1384,6 +1921,166 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+        };
+    };
+    create_intake_field: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewIntakeField"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeField"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reorder_intake_fields: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Order"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: the IDs are not exactly the current fields (reload) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_intake_field: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntakeFieldUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeField"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -1702,6 +2399,166 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_priority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewPriority"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Priority"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reorder_priorities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Order"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: the IDs are not exactly the current priorities (reload) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_priority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriorityUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Priority"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
