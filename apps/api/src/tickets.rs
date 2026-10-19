@@ -66,6 +66,8 @@ pub struct TicketDetail {
     pub transitions: Vec<TicketTransition>,
     /// Staff-only effective-priority history, oldest first; empty in requester responses.
     pub priority_changes: Vec<PriorityChange>,
+    /// Dispatch and assignment history, oldest first; staff view only (empty for the requester).
+    pub assignment_changes: Vec<AssignmentChange>,
     /// What the caller may do as staff; `null` in the requester view.
     #[schema(required = true)]
     pub staff_access: Option<StaffAccess>,
@@ -81,6 +83,47 @@ pub struct StaffAccess {
     /// The ticket is closed with operator resolution, the Admin toggle is on, and
     /// the caller is in charge of it.
     pub can_reopen: bool,
+    /// Send to another team or return to the general queue.
+    pub can_dispatch: bool,
+    /// Take this unclaimed team ticket.
+    pub can_claim: bool,
+    /// (Re)assign or unassign within the ticket's team (its Team Lead or an Admin).
+    pub can_assign: bool,
+    /// Active teams the ticket can be sent to (empty unless `can_dispatch`).
+    pub dispatch_teams: Vec<NamedId>,
+    /// Eligible assignees: active staff members of the ticket's team other than
+    /// the requester and the current assignee (empty unless `can_assign`).
+    pub assignees: Vec<NamedId>,
+}
+
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
+pub struct NamedId {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// One immutable team/assignee change (`assignment_changed` event). Names are current.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AssignmentChange {
+    pub id: i64,
+    /// `dispatch`, `return_to_general`, `claim`, `assign`, or `unassign` (also
+    /// when an account lost eligibility; then `reason` says why).
+    pub action: String,
+    #[schema(required = true)]
+    pub reason: Option<String>,
+    #[schema(required = true)]
+    pub previous_team_name: Option<String>,
+    #[schema(required = true)]
+    pub team_name: Option<String>,
+    #[schema(required = true)]
+    pub previous_assignee_display_name: Option<String>,
+    #[schema(required = true)]
+    pub assignee_display_name: Option<String>,
+    #[schema(required = true)]
+    pub actor_display_name: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 /// One immutable change of the effective priority (`priority_changed` event).
@@ -169,6 +212,19 @@ type TransitionRow = (
 );
 
 type ChangeRow = (i64, Option<Uuid>, Option<String>, Value, OffsetDateTime);
+
+#[derive(sqlx::FromRow)]
+struct AssignmentRow {
+    id: i64,
+    action: Option<String>,
+    reason: Option<String>,
+    previous_team_name: Option<String>,
+    team_name: Option<String>,
+    previous_assignee_display_name: Option<String>,
+    assignee_display_name: Option<String>,
+    actor_display_name: Option<String>,
+    created_at: OffsetDateTime,
+}
 
 /// A ticket the caller may see: their own (requester view, any status, any
 /// role), or as staff under the ticket policy. Drafts, AI-stage and AI-solved
@@ -271,16 +327,88 @@ pub async fn ticket_detail(
             },
         )
         .collect();
+    let assignment_changes: Vec<AssignmentRow> = if staff {
+        sqlx::query_as(
+            "SELECT e.id, e.payload->>'action' AS action, e.payload->>'reason' AS reason,
+                    pt.name AS previous_team_name, nt.name AS team_name,
+                    pa.display_name AS previous_assignee_display_name,
+                    na.display_name AS assignee_display_name, a.display_name AS actor_display_name,
+                    e.created_at
+             FROM ticket_events e
+             LEFT JOIN accounts a ON a.id = e.actor_account_id
+             LEFT JOIN teams pt ON pt.id = (e.payload->>'previous_team_id')::uuid
+             LEFT JOIN teams nt ON nt.id = (e.payload->>'team_id')::uuid
+             LEFT JOIN accounts pa ON pa.id = (e.payload->>'previous_assignee_account_id')::uuid
+             LEFT JOIN accounts na ON na.id = (e.payload->>'assignee_account_id')::uuid
+             WHERE e.ticket_id = $1 AND e.event_type = 'assignment_changed' ORDER BY e.id",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?
+    } else {
+        vec![]
+    };
+    let assignment_changes = assignment_changes
+        .into_iter()
+        .map(|r| AssignmentChange {
+            id: r.id,
+            action: r.action.unwrap_or_else(|| "unassign".into()),
+            reason: r.reason,
+            previous_team_name: r.previous_team_name,
+            team_name: r.team_name,
+            previous_assignee_display_name: r.previous_assignee_display_name,
+            assignee_display_name: r.assignee_display_name,
+            actor_display_name: r.actor_display_name,
+            created_at: r.created_at,
+        })
+        .collect();
     let staff_access = if staff {
         let allow_reopen: bool =
             sqlx::query_scalar("SELECT allow_reopening FROM organization WHERE id")
                 .fetch_one(&mut *tx)
                 .await?;
+        let can = |p| authz::authorize_ticket(&actor, &scope, p).is_ok();
+        let (can_dispatch, can_assign) = (
+            can(Permission::DispatchTicket),
+            can(Permission::AssignTicket),
+        );
+        let dispatch_teams = if can_dispatch {
+            sqlx::query_as(
+                "SELECT id, name FROM teams WHERE archived_at IS NULL AND id IS DISTINCT FROM $1
+                 ORDER BY name, id",
+            )
+            .bind(row.team_id)
+            .fetch_all(&mut *tx)
+            .await?
+        } else {
+            vec![]
+        };
+        let assignees = if can_assign {
+            sqlx::query_as(
+                "SELECT a.id, a.display_name AS name FROM team_memberships m
+                 JOIN accounts a ON a.id = m.account_id
+                 WHERE m.team_id = $1 AND a.is_active AND a.role NOT IN ('user', 'admin')
+                   AND a.id <> $2 AND a.id IS DISTINCT FROM $3
+                 ORDER BY a.display_name, a.id",
+            )
+            .bind(row.team_id)
+            .bind(row.requester_account_id)
+            .bind(row.assignee_account_id)
+            .fetch_all(&mut *tx)
+            .await?
+        } else {
+            vec![]
+        };
         Some(StaffAccess {
-            can_handle: authz::authorize_ticket(&actor, &scope, Permission::ReplyAsStaff).is_ok(),
+            can_handle: can(Permission::ReplyAsStaff),
             can_reopen: allow_reopen
                 && status == TicketStatus::Closed
                 && authz::is_staff_writer(&actor, &scope),
+            can_dispatch,
+            can_claim: can(Permission::ClaimTicket),
+            can_assign,
+            dispatch_teams,
+            assignees,
         })
     } else {
         None
@@ -314,6 +442,7 @@ pub async fn ticket_detail(
         updated_at: row.updated_at,
         transitions,
         priority_changes,
+        assignment_changes,
         staff_access,
     }))
 }

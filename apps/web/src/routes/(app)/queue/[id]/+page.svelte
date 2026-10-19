@@ -10,7 +10,7 @@
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
   import { publicText } from '#lib/requester.ts'
-  import { readOnlyReason, routeOf, type StaffInput } from '#lib/staff.ts'
+  import { readOnlyReason, routeOf, type AssignmentInput, type StaffInput } from '#lib/staff.ts'
   import type { PageProps } from './$types'
 
   let { data }: PageProps = $props()
@@ -30,6 +30,10 @@
   let uploading = $state(false)
   let summary = $state('')
   let priorityId = $state('')
+  let teamId = $state('')
+  let assigneeId = $state('')
+  // Set when a transfer took the ticket out of the caller's sight: show the receipt, not the ticket.
+  let moved = $state<Schemas['AssignmentReceipt'] | null>(null)
   let busy = $state(false)
   let failure = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
@@ -41,7 +45,7 @@
     const id = data.ticket?.id
     if (id && id !== activeTicketId) {
       activeTicketId = id
-      kind = 'public'; body = ''; screenshots = []; summary = ''; priorityId = ''
+      kind = 'public'; body = ''; screenshots = []; summary = ''; priorityId = ''; teamId = ''; assigneeId = ''; moved = null
       failure = null; fields = {}; feedback = null; changed = false; attempt = null
     }
   })
@@ -80,6 +84,20 @@
       await refresh()
     } catch (e) { await failed(e) } finally { busy = false }
   }
+  async function change(input: AssignmentInput) {
+    if (busy || !ticket) return
+    start(); busy = true
+    try {
+      const receipt = await api(data.locale).request('post', '/api/tickets/{id}/assignment', {
+        path: { id: ticket.id },
+        body: { ...input, expected_updated_at: ticket.updated_at } as Schemas['AssignmentAction'],
+      })
+      teamId = ''; assigneeId = ''
+      if (!receipt.visible) { moved = receipt; return }
+      feedback = 'action'
+      await refresh()
+    } catch (e) { await failed(e) } finally { busy = false }
+  }
   async function send() {
     if (busy || uploading || !ticket || !canHandle) return
     start()
@@ -113,6 +131,10 @@
   <h1>{s.unavailable}</h1>
   <Alert>{errorText(t, { code: 'unavailable' })}</Alert>
   <button onclick={refresh}>{s.refresh}</button>
+{:else if moved}
+  <h1>#{moved.reference}</h1>
+  <Alert kind="success">{s.movedAway.replace('{reference}', String(moved.reference)).replace('{team}', moved.team_name ?? '')}</Alert>
+  <p><a href="/queue">{s.back}</a></p>
 {:else}
   <h1>#{ticket.reference} · {ticket.subject}</h1>
   <div class="actions"><StatusBadge status={ticket.status} label={t.statuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{s.refresh}</button></div>
@@ -127,6 +149,34 @@
     <div><dt>{s.priority}</dt><dd>{ticket.priority_name}</dd></div>
     <div><dt>{s.created}</dt><dd><time datetime={ticket.created_at}>{when(ticket.created_at)}</time></dd></div>
   </dl>
+
+  {#if access && (access.can_claim || access.can_assign || access.can_dispatch)}
+    <section aria-labelledby="routing-title">
+      <h2 id="routing-title">{s.routing}</h2>
+      {#if access.can_claim}
+        <p><button disabled={busy} onclick={() => change({ action: 'claim' })}>{s.claim}</button></p>
+        <p class="hint">{s.claimHint}</p>
+      {/if}
+      {#if access.can_assign}
+        <form aria-label={s.assign} onsubmit={(e) => { e.preventDefault(); if (assigneeId) change({ action: 'assign', assignee_account_id: assigneeId }) }} novalidate>
+          <Field name="assignee_account_id" label={s.assignTo} options={[{ value: '', label: s.chooseAssignee }, ...access.assignees.map((a) => ({ value: a.id, label: a.name }))]} bind:value={assigneeId} error={fieldText(t, fields.assignee_account_id?.[0])} />
+          <div class="actions">
+            <button disabled={busy || !assigneeId}>{s.assign}</button>
+            {#if ticket.assignment.assignee_display_name}<button type="button" class="secondary" disabled={busy} onclick={() => change({ action: 'unassign' })}>{s.unassign}</button>{/if}
+          </div>
+        </form>
+      {/if}
+      {#if access.can_dispatch}
+        <form aria-label={s.dispatch} onsubmit={(e) => { e.preventDefault(); if (teamId) change({ action: 'dispatch', team_id: teamId }) }} novalidate>
+          <Field name="team_id" label={s.dispatchTeam} hint={s.dispatchHint} options={[{ value: '', label: s.chooseTeam }, ...access.dispatch_teams.map((team) => ({ value: team.id, label: team.name }))]} bind:value={teamId} error={fieldText(t, fields.team_id?.[0])} />
+          <div class="actions">
+            <button disabled={busy || !teamId}>{s.dispatch}</button>
+            {#if ticket.assignment.team_name}<button type="button" class="secondary" disabled={busy} onclick={() => change({ action: 'return_to_general' })}>{s.returnToGeneral}</button>{/if}
+          </div>
+        </form>
+      {/if}
+    </section>
+  {/if}
 
   <section aria-labelledby="intake-title">
     <h2 id="intake-title">{s.intake}</h2>
@@ -252,6 +302,24 @@
             <p><strong>{s.priorityChanged}</strong>: {change.previous_priority_name} → {change.priority_name}</p>
             <time datetime={change.created_at}>{when(change.created_at)}</time>
             <p class="muted">{s.actor}: {change.actor_display_name ?? s.system}</p>
+          </li>
+        {/each}
+      </ol>
+    {/if}
+    {#if ticket.assignment_changes.length}
+      <h3>{s.assignmentHistory}</h3>
+      <ol class="timeline">
+        {#each ticket.assignment_changes as entry (entry.id)}
+          <li>
+            <p><strong>{s.assignmentActions[entry.action as keyof typeof s.assignmentActions] ?? entry.action}</strong>:
+              {#if entry.action === 'dispatch' || entry.action === 'return_to_general'}
+                {entry.previous_team_name ?? s.generalQueue} → {entry.team_name ?? s.generalQueue}
+              {:else}
+                {entry.previous_assignee_display_name ?? s.unassigned} → {entry.assignee_display_name ?? s.unassigned}
+              {/if}
+            </p>
+            <time datetime={entry.created_at}>{when(entry.created_at)}</time>
+            <p class="muted">{s.actor}: {entry.actor_display_name ?? s.system}</p>
           </li>
         {/each}
       </ol>

@@ -73,18 +73,33 @@ const TICKETS = [
 // Staff detail: the queue fixtures plus tickets reachable only by link. Desk members are the operator and
 // the lead; Admins see everything. State is per session, like the form's.
 const DESK = ['operator', 'lead']
+const TEAMS = [{ id: '50000000-0000-4000-8000-000000000001', name: 'Desk' }, { id: '50000000-0000-4000-8000-000000000002', name: 'Field' }]
 const LINK_ONLY = [
   ticket(104, 'Desk claimed by lead', { status: 'in_progress', assignment: { team_name: 'Desk', assignee_display_name: 'lead' } }),
   ticket(105, 'Desk human closed', { status: 'closed', assignment: { team_name: 'Desk', assignee_display_name: 'operator' }, resolution_source: 'operator', closure_reason: 'requester_confirmed' }),
 ]
 const STAFF_TICKETS = [...TICKETS, ...LINK_ONLY]
-const isMember = (user) => DESK.includes(user) || ROLES[user] === 'admin'
+// Only Desk has members here; the Field team has none, so a dispatch there drops the dispatcher.
+const isMember = (user, t) => ROLES[user] === 'admin' || (t.assignment.team_name === 'Desk' && DESK.includes(user))
 const staffCanSee = (user, t) =>
-  ['ai_processing', 'awaiting_ai_decision', 'ai_solved'].includes(t.status) ? ROLES[user] === 'admin' : !t.assignment.team_name || isMember(user)
+  ['ai_processing', 'awaiting_ai_decision', 'ai_solved'].includes(t.status) ? ROLES[user] === 'admin' : !t.assignment.team_name || isMember(user, t)
 // Writers: open, in a team, and unclaimed or the actor is the assignee, the lead, or an Admin.
+const leads = (user, t) => ROLES[user] === 'admin' || (user === 'lead' && t.assignment.team_name === 'Desk')
 const inCharge = (user, t) =>
-  !!t.assignment.team_name && isMember(user) && (!t.assignment.assignee_display_name || t.assignment.assignee_display_name === user || user === 'lead' || ROLES[user] === 'admin')
+  !!t.assignment.team_name && isMember(user, t) && (!t.assignment.assignee_display_name || t.assignment.assignee_display_name === user || leads(user, t))
 const canHandle = (user, t) => OPEN.includes(t.status) && inCharge(user, t)
+const access = (user, t) => {
+  const open = OPEN.includes(t.status), team = t.assignment.team_name
+  const canAssign = open && !!team && leads(user, t)
+  const canDispatch = open && (!team || inCharge(user, t))
+  return {
+    can_dispatch: canDispatch,
+    can_claim: open && !!team && !t.assignment.assignee_display_name && isMember(user, t) && ROLES[user] !== 'admin',
+    can_assign: canAssign,
+    dispatch_teams: canDispatch ? TEAMS.filter((x) => x.name !== team) : [],
+    assignees: canAssign && team === 'Desk' ? DESK.filter((u) => u !== t.assignment.assignee_display_name).map((u) => ({ id: u, name: u })) : [],
+  }
+}
 
 const account = (username, token) => ({
   id: `00000000-0000-4000-8000-${String(Object.keys(ROLES).indexOf(username)).padStart(12, '0')}`,
@@ -256,8 +271,10 @@ createServer(async (req, res) => {
     const admin = ROLES[user] === 'admin'
     const dispatched = (t) => !!t.assignment.team_name
     const inView = (t, view) =>
-      view === 'general' ? !dispatched(t) : view === 'team' ? dispatched(t) && (admin || user !== 'specialist') : view === 'all' ? admin : false
-    const open = TICKETS.filter((t) => OPEN.includes(t.status))
+      view === 'general' ? !dispatched(t) : view === 'team' ? dispatched(t) && isMember(user, t) : view === 'all' ? admin : false
+    // Dispatches and claims made in this session move the queue fixtures.
+    const live = TICKETS.map((t) => stateOf(req).staff?.get(t.id) ?? t)
+    const open = live.filter((t) => OPEN.includes(t.status))
     if (pathname === '/api/queue/counts')
       return reply(res, 200, {
         general: open.filter((t) => inView(t, 'general')).length,
@@ -269,7 +286,7 @@ createServer(async (req, res) => {
     const view = q.get('view') ?? 'general'
     if (view === 'all' && !admin) return fail(res, 403, 'forbidden')
     const status = q.get('status')
-    let items = TICKETS.filter((t) => (view === 'all' ? true : inView(t, view)) && (status ? t.status === status : OPEN.includes(t.status)))
+    let items = live.filter((t) => (view === 'all' ? true : inView(t, view)) && (status ? t.status === status : OPEN.includes(t.status)))
     if (q.get('unassigned') === 'true') items = items.filter((t) => !t.assignment.assignee_display_name)
     if (q.get('priority_id')) items = items.filter((t) => t.priority_id === q.get('priority_id'))
     const sort = q.get('sort') ?? 'newest'
@@ -303,12 +320,12 @@ createServer(async (req, res) => {
     return reply(res, 200, { items: items.slice(from, from + limit), next_cursor: from + limit < items.length ? String(from + limit) : null })
   }
   // --- Staff ticket detail and handling (docs/lifecycle.md "Staff HTTP actions")
-  const staffRoute = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|notes|staff-actions))?$/.exec(pathname)
+  const staffRoute = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|notes|staff-actions|assignment))?$/.exec(pathname)
   const staffSource = staffRoute && ROLES[user] !== 'user' && STAFF_TICKETS.find((t) => t.id === staffRoute[1])
   if (staffSource) {
     const store = (st.staff ??= new Map())
     if (!store.has(staffSource.id))
-      store.set(staffSource.id, { ...structuredClone(staffSource), proposal_version: 0, confirmation_deadline: null, transitions: [], priority_changes: [], messages: [
+      store.set(staffSource.id, { ...structuredClone(staffSource), proposal_version: 0, confirmation_deadline: null, transitions: [], priority_changes: [], assignment_changes: [], messages: [
         { id: randomUUID(), kind: 'public_reply', author_kind: 'requester', author_account_id: null, author_display_name: 'requester', created_at: '2026-10-20T08:05:00Z', body: 'The printer jams on every page.', screenshot_ids: [] },
         { id: randomUUID(), kind: 'internal_note', author_kind: 'staff', author_account_id: null, author_display_name: 'lead', created_at: '2026-10-20T08:10:00Z', body: 'Same model failed last month.', screenshot_ids: [] },
       ] })
@@ -324,7 +341,7 @@ createServer(async (req, res) => {
         ...t, messages: undefined, view: 'staff', category_id: CATEGORY, requester: t.requester,
         intake_snapshot: { subject: t.subject, description: 'Printer jams', catalog: { category_id: CATEGORY, category_name: 'Hardware', skip_ai: false, priority_id: t.priority_id, priority_name: t.priority_name, answers: [{ field_id: PROGRAM, label: 'Program', value: 'Word' }] }, screenshot_ids: [] },
         description: 'Printer jams', resolution_source: t.resolution_source ?? null, closure_reason: t.closure_reason ?? null,
-        staff_access: { can_handle: canHandle(user, t), can_reopen: t.status === 'closed' && !!{ ...settings, ...st.policy }.allow_reopening && inCharge(user, t) },
+        staff_access: { can_handle: canHandle(user, t), can_reopen: t.status === 'closed' && !!{ ...settings, ...st.policy }.allow_reopening && inCharge(user, t), ...access(user, t) },
       })
     if (endpoint === 'messages') {
       const q = new URL(req.url, 'http://stub').searchParams, start = Number(q.get('cursor') ?? 0), limit = Number(q.get('limit') ?? 25)
@@ -340,6 +357,28 @@ createServer(async (req, res) => {
       t.messages.push(message)
       if (endpoint === 'replies') touch()
       return reply(res, 201, message)
+    }
+    if (endpoint === 'assignment') {
+      const a = input.action, can = access(user, t), before = { ...t.assignment }
+      if (input.expected_updated_at !== t.updated_at) return fail(res, 409, 'conflict')
+      if (a === 'dispatch' || a === 'return_to_general') {
+        if (!can.can_dispatch) return fail(res, 403, 'forbidden')
+        const team = a === 'dispatch' ? can.dispatch_teams.find((x) => x.id === input.team_id) : null
+        if (a === 'dispatch' && !team) return validation(res, { team_id: ['invalid'] })
+        if (a === 'return_to_general' && !before.team_name) return fail(res, 409, 'conflict')
+        t.assignment = { team_name: team?.name ?? null, assignee_display_name: null }
+      } else if (a === 'claim') {
+        if (!can.can_claim) return fail(res, 403, 'forbidden')
+        t.assignment = { ...t.assignment, assignee_display_name: user }
+      } else if (a === 'assign' || a === 'unassign') {
+        if (!can.can_assign) return fail(res, 403, 'forbidden')
+        if (a === 'assign' && !can.assignees.some((m) => m.id === input.assignee_account_id)) return validation(res, { assignee_account_id: ['invalid'] })
+        if (a === 'unassign' && !before.assignee_display_name) return fail(res, 409, 'conflict')
+        t.assignment = { ...t.assignment, assignee_display_name: a === 'assign' ? input.assignee_account_id : null }
+      } else return validation(res, { action: ['invalid'] })
+      t.assignment_changes.push({ id: t.assignment_changes.length + 1, action: a, reason: null, previous_team_name: before.team_name, team_name: t.assignment.team_name, previous_assignee_display_name: before.assignee_display_name, assignee_display_name: t.assignment.assignee_display_name, actor_display_name: user, created_at: new Date().toISOString() })
+      touch()
+      return reply(res, 200, { reference: t.reference, ...t.assignment, visible: staffCanSee(user, t) })
     }
     // staff-actions
     const a = input.action

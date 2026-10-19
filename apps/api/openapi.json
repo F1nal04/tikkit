@@ -3471,6 +3471,98 @@
         }
       }
     },
+    "/api/tickets/{id}/assignment": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Dispatch, transfer, return to general intake, claim, assign, or unassign.\nChecks: visibility (`404`), self-handling (`403`), stale `expected_updated_at`\n(`409`), the rest of the ticket policy (`403`), then the target (`422`).\nConcurrent changes serialize on the ticket row; the later one is stale (`409`).",
+        "operationId": "change_assignment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed on this ticket (role, team, claim, self-handling, status)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale `expected_updated_at`, or nothing to return/unassign",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`team_id` or `assignee_account_id` is not an eligible target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tickets/{id}/messages": {
       "get": {
         "tags": [
@@ -3992,6 +4084,218 @@
           "value": {
             "type": "string",
             "description": "The choice label or the typed text."
+          }
+        }
+      },
+      "AssignmentAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Send the ticket to an active team (from the general queue or another team).\nLeaves the individual assignee empty.",
+            "required": [
+              "expected_updated_at",
+              "team_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "dispatch"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "team_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Put a team ticket back into shared intake: no team, no assignee.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "return_to_general"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Take an unclaimed ticket of the caller's team.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "claim"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Team Lead (own team) or Admin: (re)assign to an active member of the ticket's team.",
+            "required": [
+              "expected_updated_at",
+              "assignee_account_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "assign"
+                ]
+              },
+              "assignee_account_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Team Lead (own team) or Admin: clear the individual assignee.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "unassign"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "description": "One explicit team or assignee change, with the `updated_at` the client last\nloaded (`TicketDetail.updated_at`); a newer change is `409 conflict`."
+      },
+      "AssignmentChange": {
+        "type": "object",
+        "description": "One immutable team/assignee change (`assignment_changed` event). Names are current.",
+        "required": [
+          "id",
+          "action",
+          "reason",
+          "previous_team_name",
+          "team_name",
+          "previous_assignee_display_name",
+          "assignee_display_name",
+          "actor_display_name",
+          "created_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`dispatch`, `return_to_general`, `claim`, `assign`, or `unassign` (also\nwhen an account lost eligibility; then `reason` says why)."
+          },
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "previous_assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "previous_team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AssignmentReceipt": {
+        "type": "object",
+        "description": "What changed, safe to show even when the caller lost access by the change.",
+        "required": [
+          "reference",
+          "team_name",
+          "assignee_display_name",
+          "visible"
+        ],
+        "properties": {
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "The caller can still open the ticket as staff. False after a transfer to a\nteam the caller is not in: further reads are `404`."
           }
         }
       },
@@ -4772,6 +5076,22 @@
           "public_reply",
           "internal_note"
         ]
+      },
+      "NamedId": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "NewCategory": {
         "type": "object",
@@ -6052,9 +6372,33 @@
         "description": "Affordances for the staff view, from the same rules the write endpoints\nenforce. Clients hide controls with them; the server rechecks every write.",
         "required": [
           "can_handle",
-          "can_reopen"
+          "can_reopen",
+          "can_dispatch",
+          "can_claim",
+          "can_assign",
+          "dispatch_teams",
+          "assignees"
         ],
         "properties": {
+          "assignees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "description": "Eligible assignees: active staff members of the ticket's team other than\nthe requester and the current assignee (empty unless `can_assign`)."
+          },
+          "can_assign": {
+            "type": "boolean",
+            "description": "(Re)assign or unassign within the ticket's team (its Team Lead or an Admin)."
+          },
+          "can_claim": {
+            "type": "boolean",
+            "description": "Take this unclaimed team ticket."
+          },
+          "can_dispatch": {
+            "type": "boolean",
+            "description": "Send to another team or return to the general queue."
+          },
           "can_handle": {
             "type": "boolean",
             "description": "Staff reply, internal note, status work, resolution proposal, and priority\nchanges: the ticket is open, in a team, and the caller is in charge of it."
@@ -6062,6 +6406,13 @@
           "can_reopen": {
             "type": "boolean",
             "description": "The ticket is closed with operator resolution, the Admin toggle is on, and\nthe caller is in charge of it."
+          },
+          "dispatch_teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "description": "Active teams the ticket can be sent to (empty unless `can_dispatch`)."
           }
         }
       },
@@ -6349,11 +6700,19 @@
           "updated_at",
           "transitions",
           "priority_changes",
+          "assignment_changes",
           "staff_access"
         ],
         "properties": {
           "assignment": {
             "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "assignment_changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssignmentChange"
+            },
+            "description": "Dispatch and assignment history, oldest first; staff view only (empty for the requester)."
           },
           "category_id": {
             "type": "string",

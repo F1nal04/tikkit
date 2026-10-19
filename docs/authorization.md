@@ -73,9 +73,10 @@ checks, for actions on finished tickets (reopening). Status changes combine
 these rules with ticket ownership and policy in `lifecycle::decide`
 ([lifecycle.md](lifecycle.md)).
 
-Assignment targets are checked by the schema (assignee is a member of the
-ticket's team and never its requester); `authz::active_team_members` lists
-eligible accounts.
+Assignment targets are checked by the assignment handler (an active staff member of
+the ticket's active team, never its requester; see [queues.md](queues.md#dispatch-and-assignment))
+and backed by the schema (assignee is a member of the ticket's team and never its
+requester); `authz::active_team_members` lists eligible accounts.
 
 ## Denials
 

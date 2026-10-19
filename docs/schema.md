@@ -29,6 +29,10 @@ language; translations map them to display text.
   `propose_resolution`, `accept_resolution`, `reject_resolution`,
   `confirmation_timeout`, `reopen`, `cancel` (see [lifecycle.md](lifecycle.md));
   `priority_changed` (no status columns; payload holds previous/new priority ID and name);
+  `assignment_changed` (no status columns; payload `action`: `dispatch`,
+  `return_to_general`, `claim`, `assign`, `unassign`, with `previous_team_id`,
+  `team_id`, `previous_assignee_account_id`, `assignee_account_id`; membership
+  clean-ups carry `reason` instead of `action`, see [queues.md](queues.md));
   queue entry `payload.route`: `ai`, `ai_disabled`, `category_exempt`,
   `requester_skip`, `ai_failed`, `not_solved`
 - `tickets.resolution_source`: `ai`, `operator`; `tickets.closure_reason`:

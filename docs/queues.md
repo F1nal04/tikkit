@@ -3,7 +3,8 @@
 `GET /api/queue` and `GET /api/queue/counts` (`apps/api/src/queues.rs`) list the
 tickets staff may work on. Any staff role may call them (`view_general_queue`);
 a User gets `403`. Ticket detail is `GET /api/tickets/{id}`
-([lifecycle.md](lifecycle.md)); claiming and dispatching are separate actions.
+([lifecycle.md](lifecycle.md)); dispatch, claim, and assignment are separate
+explicit actions (below).
 Queue rows open the staff detail page `/queue/{id}` (intake, conversation with
 internal notes, history, status work, resolution proposals, priority); a ticket
 the caller submitted redirects to their requester page `/tickets/{id}`. Staff
@@ -69,6 +70,46 @@ work in creation order.
 
 Rows carry reference, subject, status, category, priority, requester, team and
 assignee display names, `created_at` (age), and `updated_at`.
+
+## Dispatch and assignment
+
+`POST /api/tickets/{id}/assignment` (`apps/api/src/assignment.rs`) takes one tagged
+action plus the `expected_updated_at` the client loaded. Nothing routes on its
+own: no category, priority, or AI outcome picks a team or person.
+
+| Action | Who (ticket policy, [authorization.md](authorization.md)) | Effect |
+| --- | --- | --- |
+| `dispatch {team_id}` | `dispatch_ticket`: any staff on general intake; on a team ticket, a member if unclaimed, else its assignee, the Lead, or an Admin | Sets the team, clears the assignee. Also transfers between teams. |
+| `return_to_general` | as `dispatch` | Clears team and assignee. |
+| `claim` | `claim_ticket`: a member of the ticket's team, ticket unclaimed (never Admins) | Assignee = caller. |
+| `assign {assignee_account_id}` | `assign_ticket`: the team's Lead or an Admin, even over another member's claim | Assignee = target. |
+| `unassign` | as `assign` | Clears the assignee. |
+
+Order of checks: visibility (`404`), self-handling (`403`), stale
+`expected_updated_at` (`409 conflict`, nothing written), the rest of the ticket
+policy (`403`), then the target (`422`): `team_id` must be an active team other
+than the current one; `assignee_account_id` an active Operator/Specialist/Team
+Lead member of the ticket's active team, not its requester and not the current
+assignee. Nothing to return or unassign is `409`. A caller who cannot see the
+ticket gets `404` even when the timestamp is wrong; the ticket's requester gets
+`403` even then. The handler locks the actor and the target team or member
+(`FOR SHARE`) before the ticket row — the same order as staff work and
+membership edits — so concurrent claims and transfers serialize: the first
+commits, every other one is stale (`409`), or `404` if the winner moved the
+ticket out of the caller's sight. Status, reference, intake, messages,
+screenshots, priority and transition history are untouched; `updated_at` moves.
+
+Each change appends one `assignment_changed` event with the actor, the action, and
+previous/new team and assignee; `TicketDetail.assignment_changes` lists them for
+staff. The response is a receipt (`reference`, new `team_name` and
+`assignee_display_name`, `visible`): after a transfer to a team the caller is not
+in, `visible` is false and every later read is `404`. Visibility follows the
+columns directly, so queues, counts, detail, messages, and screenshots change in
+the same commit. The requester keeps their view and sees the team name and
+assignee display name (`null` until someone claims or is assigned).
+
+`TicketDetail.staff_access` adds `can_dispatch`, `can_claim`, `can_assign`, the
+active `dispatch_teams`, and eligible `assignees` from the same rules.
 
 ## Counts
 

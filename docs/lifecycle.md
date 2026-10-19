@@ -63,7 +63,8 @@ current policy and the category; nothing the client sends can force it.
 Tickets before human support and AI-solved records never have a team
 (`tickets_pre_triage_unrouted`), so every entry into `queued` lands in the
 shared general queue with no team or assignee. Dispatch and assignment are
-separate team/assignee changes, not status transitions.
+separate team/assignee changes, not status transitions
+([queues.md](queues.md#dispatch-and-assignment)).
 
 ## Resolution and closure
 
