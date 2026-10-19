@@ -15,7 +15,7 @@
   // Initial value only; the select owns it afterwards.
   // svelte-ignore state_referenced_locally
   let language = $state<Language>(data.locale)
-  let error = $state<string | null>(null)
+  let error = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
   let busy = $state(false)
 
@@ -30,7 +30,7 @@
       })
       await goto('/', { invalidateAll: true })
     } catch (e) {
-      error = errorText(t, e)
+      error = e
       if (e instanceof ApiError) fields = e.fields
     } finally {
       busy = false
@@ -54,8 +54,8 @@
   <Field label={t.language} name="language" bind:value={language} options={languages} />
   {#if error}
     <Alert>
-      {error}
-      {#if error === t.errors.setup_already_completed}<a href="/login">{t.signIn}</a>{/if}
+      {errorText(t, error)}
+      {#if error instanceof ApiError && error.code === 'setup_already_completed'}<a href="/login">{t.signIn}</a>{/if}
     </Alert>
   {/if}
   <button type="submit" disabled={busy}>{t.setupSubmit}</button>

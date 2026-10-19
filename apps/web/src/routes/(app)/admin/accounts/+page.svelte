@@ -16,7 +16,7 @@
   let hours = $state(168)
   let created = $state<{ url: string; emailed: boolean } | null>(null)
   let copied = $state(false)
-  let error = $state<string | null>(null)
+  let error = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
 
   const api = () => apiClient(data.locale)
@@ -32,7 +32,7 @@
       await action()
       await invalidateAll()
     } catch (e) {
-      error = errorText(t, e)
+      error = e
       if (e instanceof ApiError) fields = e.fields
     }
   }
@@ -68,7 +68,7 @@
 <svelte:head><title>{t.accountsTitle}</title></svelte:head>
 
   <h1>{t.accountsTitle}</h1>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if error}<p class="error" role="alert">{errorText(t, error)}</p>{/if}
 
   <h2>{t.invite}</h2>
   <form onsubmit={createInvitation} novalidate>

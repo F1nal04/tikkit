@@ -27,8 +27,11 @@ export const NAV: readonly { section: NavSection; key: NavKey; href: string }[] 
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`)
 
-export const canAccess = (role: Role, path: string) =>
-  GUARDS.every(([prefix, roles]) => !under(path, prefix) || roles.includes(role))
+export function canAccess(role: Role, path: string) {
+  // Match the decoded path SvelteKit routes, including encoded unreserved characters.
+  path = decodeURI(path)
+  return GUARDS.every(([prefix, roles]) => !under(path, prefix) || roles.includes(role))
+}
 
 /** Sidebar entries for a role, grouped in section order; empty sections are dropped. */
 export function navFor(role: Role) {
@@ -40,6 +43,7 @@ export function navFor(role: Role) {
 
 /** The current page's entry: the longest matching href (`/` only matches exactly). */
 export function activeHref(path: string) {
+  path = decodeURI(path)
   return NAV.filter(({ href }) => (href === '/' ? path === '/' : under(path, href)))
     .map(({ href }) => href)
     .sort((a, b) => b.length - a.length)[0]

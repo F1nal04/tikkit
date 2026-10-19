@@ -16,7 +16,7 @@
   let language = $state<Language>(data.invitation?.language ?? data.locale)
   let username = $state('')
   let password = $state('')
-  let error = $state<string | null>(null)
+  let error = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
   let busy = $state(false)
 
@@ -32,7 +32,7 @@
       })
       await goto('/', { invalidateAll: true })
     } catch (e) {
-      error = errorText(t, e)
+      error = e
       if (e instanceof ApiError) fields = e.fields
     } finally {
       busy = false
@@ -57,7 +57,7 @@
     <Field label={t.email} name="email" type="email" autocomplete="email" required bind:value={email} hint={t.emailHint} error={fieldText(t, fields.email?.[0])} />
     <Field label={t.password} name="password" type="password" autocomplete="new-password" required bind:value={password} hint={t.passwordHint} error={fieldText(t, fields.password?.[0])} />
     <Field label={t.language} name="language" bind:value={language} options={languages} />
-    {#if error}<Alert>{error}</Alert>{/if}
+    {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
     <button type="submit" disabled={busy}>{t.inviteSubmit}</button>
   </form>
 {/if}

@@ -10,7 +10,7 @@
   let t = $derived(messages[data.locale])
   let password = $state('')
   let done = $state(false)
-  let error = $state<string | null>(null)
+  let error = $state<unknown>(null)
   let expired = $state(false)
   let fieldError = $state<string | undefined>()
   let busy = $state(false)
@@ -26,9 +26,9 @@
       })
       done = true
     } catch (e) {
-      error = errorText(t, e)
+      error = e
       expired = e instanceof ApiError && e.code === 'reset_token_invalid'
-      if (e instanceof ApiError) fieldError = fieldText(t, e.fields.new_password?.[0])
+      if (e instanceof ApiError) fieldError = e.fields.new_password?.[0]
     } finally {
       busy = false
     }
@@ -51,11 +51,11 @@
       required
       bind:value={password}
       hint={t.passwordHint}
-      error={fieldError}
+      error={fieldText(t, fieldError)}
     />
     {#if error}
       <Alert>
-        {error}
+        {errorText(t, error)}
         {#if expired}<a href="/forgot-password">{t.requestNewLink}</a>{/if}
       </Alert>
     {/if}

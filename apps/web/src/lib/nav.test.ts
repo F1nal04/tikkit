@@ -30,6 +30,10 @@ test('route guards deny by prefix, including pages that have no nav entry yet', 
   expect(canAccess('user', '/profile')).toBe(true)
   // A prefix match needs a path boundary.
   expect(canAccess('user', '/administration')).toBe(true)
+  expect(canAccess('user', '/%61dmin')).toBe(false)
+  expect(canAccess('operator', '/%61dmin/accounts')).toBe(false)
+  expect(canAccess('user', '/%71ueue')).toBe(false)
+  expect(canAccess('user', '/%74eam')).toBe(false)
 })
 
 test('the active entry is the most specific one', () => {
@@ -38,6 +42,7 @@ test('the active entry is the most specific one', () => {
   expect(activeHref('/admin')).toBe('/admin')
   expect(activeHref('/tickets/new')).toBe('/tickets/new')
   expect(activeHref('/profile')).toBeUndefined()
+  expect(activeHref('/%61dmin/accounts')).toBe('/admin/accounts')
 })
 
 test('next only accepts same-origin paths', () => {

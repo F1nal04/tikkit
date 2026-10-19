@@ -16,8 +16,8 @@
   let language = $state<Language>(data.user?.language ?? data.locale)
   let currentPassword = $state('')
   let newPassword = $state('')
-  let profile = $state<{ ok?: string; error?: string; fields?: Record<string, string[]> }>({})
-  let password = $state<{ ok?: string; error?: string; fields?: Record<string, string[]> }>({})
+  let profile = $state<{ ok?: boolean; error?: unknown; fields?: Record<string, string[]> }>({})
+  let password = $state<{ ok?: boolean; error?: unknown; fields?: Record<string, string[]> }>({})
 
   const api = () => apiClient(data.locale)
   const languages = $derived([
@@ -25,7 +25,7 @@
     { value: 'de', label: t.languages.de },
   ])
   const failure = (e: unknown) => ({
-    error: errorText(t, e),
+    error: e,
     fields: e instanceof ApiError ? e.fields : {},
   })
 
@@ -35,7 +35,7 @@
       await api().request('patch', '/api/auth/me', { body: { email, language } })
       // Reloads the layout, which switches the interface to the new language.
       await invalidateAll()
-      profile = { ok: messages[language].saved }
+      profile = { ok: true }
     } catch (e) {
       profile = failure(e)
     }
@@ -48,7 +48,7 @@
         body: { current_password: currentPassword, new_password: newPassword },
       })
       currentPassword = newPassword = ''
-      password = { ok: t.passwordChanged }
+      password = { ok: true }
     } catch (e) {
       password = failure(e)
     }
@@ -70,8 +70,8 @@
     error={fieldText(t, profile.fields?.email?.[0])}
   />
   <Field label={t.language} name="language" bind:value={language} options={languages} />
-  {#if profile.ok}<Alert kind="success">{profile.ok}</Alert>{/if}
-  {#if profile.error}<Alert>{profile.error}</Alert>{/if}
+  {#if profile.ok}<Alert kind="success">{t.saved}</Alert>{/if}
+  {#if profile.error}<Alert>{errorText(t, profile.error)}</Alert>{/if}
   <button type="submit">{t.save}</button>
 </form>
 
@@ -94,7 +94,7 @@
     hint={t.passwordHint}
     error={fieldText(t, password.fields?.new_password?.[0])}
   />
-  {#if password.ok}<Alert kind="success">{password.ok}</Alert>{/if}
-  {#if password.error}<Alert>{password.error}</Alert>{/if}
+  {#if password.ok}<Alert kind="success">{t.passwordChanged}</Alert>{/if}
+  {#if password.error}<Alert>{errorText(t, password.error)}</Alert>{/if}
   <button type="submit">{t.changePassword}</button>
 </form>

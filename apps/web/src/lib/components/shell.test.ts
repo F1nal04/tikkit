@@ -97,7 +97,7 @@ test('switching language persists the choice and reloads data without navigating
   vi.stubGlobal('fetch', fetch)
   render(LanguageSelect, { props: { locale: 'en', user: account('user') } })
   await fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'de' } })
-  expect(document.cookie).toContain('lang=de')
+  await waitFor(() => expect(document.cookie).toContain('lang=de'))
   const [url, init] = fetch.mock.calls[0]
   expect(url).toBe('/api/auth/me')
   expect(init.method).toBe('PATCH')
@@ -114,4 +114,20 @@ test('before sign-in the language is only a cookie', async () => {
   expect(document.cookie).toContain('lang=en')
   expect(fetch).not.toHaveBeenCalled()
   await waitFor(() => expect(invalidateAll).toHaveBeenCalled())
+})
+
+test.each([401, 503])('a failed language save (%s) leaves the mounted form in place and reports the failure', async (status) => {
+  const code = status === 401 ? 'unauthorized' : 'unavailable'
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code }, request_id: 'r' }), {
+    status, headers: { 'content-type': 'application/json' },
+  })))
+  document.cookie = 'lang=en; path=/'
+  render(LanguageSelect, { props: { locale: 'en', user: account('user') } })
+  await fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'de' } })
+  await screen.findByRole('alert')
+  expect(invalidateAll).not.toHaveBeenCalled()
+  expect(goto).not.toHaveBeenCalled()
+  expect(document.cookie).toContain('lang=en')
+  expect((screen.getByLabelText('Language') as HTMLSelectElement).value).toBe('en')
+  expect(session.expired).toBe(status === 401)
 })

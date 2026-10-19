@@ -52,3 +52,9 @@ test('explains rate limiting', async () => {
   await signIn('en', json(429, { error: { code: 'rate_limited', message: 'x' }, request_id: 'r' }))
   expect((await screen.findByRole('alert')).textContent).toContain('Too many attempts')
 })
+
+test('keeps the entered password when a temporary outage prevents sign-in', async () => {
+  await signIn('en', json(503, { error: { code: 'unavailable', message: 'x' }, request_id: 'r' }))
+  await screen.findByRole('alert')
+  expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('correct horse battery')
+})

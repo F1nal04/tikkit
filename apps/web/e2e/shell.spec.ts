@@ -51,12 +51,14 @@ test('a Team Lead gets team tools, an Admin gets administration', async ({ page 
 
 test('denied pages fail safely inside the shell without leaking content', async ({ page }) => {
   await signIn(page, 'requester')
-  for (const path of ['/admin/accounts', '/queue', '/team']) {
+  for (const path of ['/admin/accounts', '/queue', '/team', '/%61dmin', '/%71ueue', '/%74eam', '/%61dmin/accounts']) {
     const response = await page.goto(path)
     expect(response?.status()).toBe(403)
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Access denied')
     await expect(page.getByRole('table')).toHaveCount(0)
     await expect(page.getByRole('main')).not.toContainText('Accounts')
+    // Include serialized page data, not only the visible DOM.
+    expect(await response!.text()).not.toContain('operator@example.com')
   }
   const missing = await page.goto('/nowhere')
   expect(missing?.status()).toBe(404)
@@ -125,4 +127,54 @@ test('keyboard users can skip straight to the content', async ({ page }) => {
   await expect(skip).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('main')).toBeFocused()
+})
+
+test('language changes after session expiry keep unsent input on the page', async ({ page }) => {
+  await signIn(page, 'requester')
+  await page.goto('/profile')
+  await page.getByLabel('Email').fill('unsent@example.com')
+  await page.evaluate(() => fetch('/api/test/expire', { method: 'POST' }))
+  await openMenu(page)
+  await page.getByLabel('Language', { exact: true }).first().selectOption('de')
+  await expect(page.getByRole('alert').first()).toContainText('Your session has expired.')
+  await expect(page).toHaveURL('/profile')
+  await expect(page.getByLabel('Email')).toHaveValue('unsent@example.com')
+})
+
+test('a failed logout reports the failure and keeps unsent input', async ({ page }) => {
+  await signIn(page, 'requester')
+  await page.goto('/profile')
+  await page.getByLabel('Email').fill('unsent@example.com')
+  await page.route('**/api/auth/logout', (route) => route.fulfill({
+    status: 503, contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'unavailable' }, request_id: 'r' }),
+  }))
+  await openMenu(page)
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(page.getByRole('alert')).toContainText('The service is unavailable.')
+  await expect(page).toHaveURL('/profile')
+  await expect(page.getByLabel('Email')).toHaveValue('unsent@example.com')
+})
+
+test('sign-in redirects reject external destinations in SSR and client navigation', async ({ page }) => {
+  await signIn(page, 'requester')
+  for (const next of ['//evil.example', '/\\evil.example', 'https://evil.example', '/a\nb']) {
+    const path = `/login?next=${encodeURIComponent(next)}`
+    const response = await page.request.get(path, { maxRedirects: 0 })
+    expect(response.status()).toBe(303)
+    expect(response.headers().location).toBe('/')
+    await page.goto(path)
+    await expect(page).toHaveURL('/')
+  }
+})
+
+test('the language selector overrides a language previously selected by URL', async ({ page }) => {
+  await page.goto('/login?lang=de')
+  await page.getByLabel('Benutzername').fill('unsent-username')
+  await page.getByLabel('Sprache').selectOption('en')
+  await expect(page).toHaveURL('/login')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sign in')
+  await expect(page.getByLabel('Username')).toHaveValue('unsent-username')
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 })

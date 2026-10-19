@@ -55,4 +55,5 @@ test('says the service is unavailable when the API is down', async ({ page }) =>
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByRole('alert')).toHaveText('The service is unavailable. Please try again later.')
   await expect(page.getByLabel('Username')).toHaveValue('admin')
+  await expect(page.getByLabel('Password')).toHaveValue('whatever')
 })

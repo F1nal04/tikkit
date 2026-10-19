@@ -9,7 +9,7 @@
   let t = $derived(messages[data.locale])
   let username = $state('')
   let sent = $state(false)
-  let error = $state<string | null>(null)
+  let error = $state<unknown>(null)
   let busy = $state(false)
 
   async function submit(event: SubmitEvent) {
@@ -21,7 +21,7 @@
       await api(data.locale).request('post', '/api/auth/recovery', { body: { username } })
       sent = true
     } catch (e) {
-      error = errorText(t, e)
+      error = e
     } finally {
       busy = false
     }
@@ -38,7 +38,7 @@
   <p>{t.recoveryIntro}</p>
   <form onsubmit={submit} novalidate>
     <Field label={t.username} name="username" autocomplete="username" required bind:value={username} />
-    {#if error}<Alert>{error}</Alert>{/if}
+    {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
     <button type="submit" disabled={busy}>{t.recoverySubmit}</button>
   </form>
   <p><a href="/login">{t.backToSignIn}</a></p>
