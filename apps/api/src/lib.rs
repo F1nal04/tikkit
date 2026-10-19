@@ -26,6 +26,7 @@ pub mod db;
 pub mod lifecycle;
 pub mod mail;
 pub mod management;
+pub mod queues;
 pub mod screenshots;
 pub mod smtp;
 pub mod submission;
@@ -96,6 +97,8 @@ pub struct AppState {
         catalog::reorder_intake_fields,
         tickets::ticket_detail,
         tickets::list_own_tickets,
+        queues::list_queue,
+        queues::queue_counts,
         submission::create_draft,
         submission::list_drafts,
         submission::get_draft,
@@ -116,6 +119,8 @@ pub struct AppState {
         api::Role,
         api::TicketStatus,
         api::TicketAssignmentView,
+        queues::QueueView,
+        queues::QueueSort,
     ))
 )]
 pub struct ApiDoc;
@@ -310,6 +315,8 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route("/api/screenshots/{id}/preview", get(screenshots::preview))
         .route("/api/screenshots/{id}/download", get(screenshots::download))
+        .route("/api/queue", get(queues::list_queue))
+        .route("/api/queue/counts", get(queues::queue_counts))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,

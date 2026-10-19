@@ -225,6 +225,36 @@ pub fn ticket_view(actor: &Actor, ticket: &TicketScope) -> Option<TicketView> {
     visible.then_some(TicketView::Staff)
 }
 
+/// Bind values for [`staff_visible_sql`]: actor ID, role (`user` … `admin`), team ID.
+pub type VisibilityBinds = (Uuid, String, Option<Uuid>);
+
+impl Actor {
+    pub fn visibility_binds(&self) -> VisibilityBinds {
+        (
+            self.id,
+            crate::auth::ident_str(self.role),
+            self.team.map(|t| t.team_id),
+        )
+    }
+}
+
+/// SQL twin of `ticket_view(actor, ticket) == Some(TicketView::Staff)` over
+/// `tickets` aliased `t`: the one predicate for staff lists, counts, search, and
+/// exports (docs/authorization.md). `n` is the first of three consecutive bind
+/// parameters filled from [`Actor::visibility_binds`]; keep it in step with
+/// `ticket_view` (a database test compares them on every status and team).
+pub fn staff_visible_sql(n: usize) -> String {
+    let (actor, role, team) = (n, n + 1, n + 2);
+    format!(
+        "(t.requester_account_id <> ${actor}::uuid AND t.status <> 'draft'
+          AND ${role}::text <> 'user'
+          AND (${role}::text = 'admin' OR (
+               t.status NOT IN ('ai_processing', 'awaiting_ai_decision', 'ai_solved')
+               AND CASE WHEN t.team_id IS NULL THEN t.status <> 'cancelled'
+                        ELSE t.team_id = ${team}::uuid END)))"
+    )
+}
+
 /// Staff action on one ticket. `404` if invisible, `403` if visible but denied.
 ///
 /// Rules, in order: the role must hold `action`; the requester can never act as

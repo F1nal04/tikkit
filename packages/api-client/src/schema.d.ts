@@ -552,6 +552,43 @@ export interface paths {
         patch: operations["update_priority"];
         trace?: never;
     };
+    "/api/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Staff queue page, filtered and ordered as requested. `view=team` for a
+         *     non-Admin is always their own team (another `team_id` is `404`).
+         */
+        get: operations["list_queue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open work counts for the caller's queue tabs. */
+        get: operations["queue_counts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ready": {
         parameters: {
             query?: never;
@@ -1220,6 +1257,38 @@ export interface components {
             next_cursor: string | null;
         };
         /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_QueueTicket: {
+            items: {
+                assignment: components["schemas"]["TicketAssignmentView"];
+                category_name: string;
+                /**
+                 * Format: date-time
+                 * @description Age is derived from this.
+                 */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /**
+                 * Format: uuid
+                 * @description The current effective priority; the requester's original choice stays in
+                 *     the ticket's intake snapshot.
+                 */
+                priority_id: string;
+                priority_name: string;
+                /**
+                 * Format: int64
+                 * @description Stable human-facing number.
+                 */
+                reference: number;
+                requester: components["schemas"]["TicketRequester"];
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_Team: {
             items: {
                 archived: boolean;
@@ -1271,6 +1340,62 @@ export interface components {
             archived?: boolean | null;
             name?: string | null;
         };
+        /** @description Open work counts per view, under the same visibility as the lists. */
+        QueueCounts: {
+            /**
+             * Format: int64
+             * @description Admin only.
+             */
+            all: number | null;
+            /** Format: int64 */
+            general: number;
+            /** Format: int64 */
+            mine: number;
+            /**
+             * Format: int64
+             * @description The caller's team; for an Admin, every dispatched ticket.
+             */
+            team: number;
+        };
+        /**
+         * @description Fixed orders; ties break on `(created_at, id)`.
+         * @enum {string}
+         */
+        QueueSort: "newest" | "oldest" | "priority";
+        /** @description One queue row. */
+        QueueTicket: {
+            assignment: components["schemas"]["TicketAssignmentView"];
+            category_name: string;
+            /**
+             * Format: date-time
+             * @description Age is derived from this.
+             */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description The current effective priority; the requester's original choice stays in
+             *     the ticket's intake snapshot.
+             */
+            priority_id: string;
+            priority_name: string;
+            /**
+             * Format: int64
+             * @description Stable human-facing number.
+             */
+            reference: number;
+            requester: components["schemas"]["TicketRequester"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description Which slice of the visible tickets a queue shows.
+         * @enum {string}
+         */
+        QueueView: "general" | "team" | "mine" | "all";
         Readiness: {
             checks: components["schemas"]["Checks"];
             /** @description `ready` or `unavailable`. */
@@ -3020,6 +3145,114 @@ export interface operations {
             };
             /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_queue: {
+        parameters: {
+            query?: {
+                /** @description Default `general`. */
+                view?: components["schemas"]["QueueView"];
+                /** @description `team` view, Admin only: restrict to one team. */
+                team_id?: string;
+                /** @description One of the open statuses, `closed`, or `cancelled`; default: all open statuses. */
+                status?: components["schemas"]["TicketStatus"];
+                category_id?: string;
+                priority_id?: string;
+                /** @description Only tickets without an individual assignee. */
+                unassigned?: boolean;
+                sort?: components["schemas"]["QueueSort"];
+                /** @description Page size, 1-100 (default 25). */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_QueueTicket"];
+                };
+            };
+            /** @description `invalid_query` (unknown or non-queue filter value) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff, or `view=all` without Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (another team's `team_id`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    queue_counts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueCounts"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -206,3 +206,11 @@ and any change of a pending row's content columns (`23001`). Partial indexes
 cover ticket lookup and per-account pending uploads. Audit events
 `screenshot_uploaded`, `screenshot_deleted`, `screenshots_expired` carry IDs,
 type, and size only. See [screenshots.md](screenshots.md).
+
+## Operator queues
+
+Migration `0011_operator_queues.sql` adds the partial index
+`tickets_open_work_idx (created_at, id)` over tickets in an open human-work status
+(`queued`, `in_progress`, `waiting_for_requester`, `awaiting_confirmation`). No
+new columns: queue membership is derived from `status`, `team_id`, and
+`assignee_account_id` (see [queues.md](queues.md)).
