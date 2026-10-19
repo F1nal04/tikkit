@@ -13,7 +13,7 @@ const GUARDS: readonly (readonly [prefix: string, roles: readonly Role[]])[] = [
 ]
 
 export type NavSection = 'portal' | 'workspace' | 'admin'
-export type NavKey = 'myTickets' | 'newTicket' | 'queue' | 'team' | 'adminHome' | 'accounts' | 'teams' | 'settings'
+export type NavKey = 'myTickets' | 'newTicket' | 'queue' | 'team' | 'adminHome' | 'accounts' | 'teams' | 'settings' | 'email'
 
 /** Add a page to the sidebar here; it shows only to roles that may open `href`. */
 export const NAV: readonly { section: NavSection; key: NavKey; href: string }[] = [
@@ -25,6 +25,7 @@ export const NAV: readonly { section: NavSection; key: NavKey; href: string }[] 
   { section: 'admin', key: 'accounts', href: '/admin/accounts' },
   { section: 'admin', key: 'teams', href: '/admin/teams' },
   { section: 'admin', key: 'settings', href: '/admin/settings' },
+  { section: 'admin', key: 'email', href: '/admin/email' },
 ]
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`)

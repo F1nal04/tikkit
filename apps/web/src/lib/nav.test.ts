@@ -16,7 +16,7 @@ test('navigation follows the role', () => {
   expect(hrefs('operator')).toEqual(['/', '/tickets/new', '/queue'])
   // Team management only for Team Lead; global administration only for Admin.
   expect(hrefs('team_lead')).toEqual(['/', '/tickets/new', '/queue', '/team'])
-  expect(hrefs('admin')).toEqual(['/', '/tickets/new', '/queue', '/admin', '/admin/accounts', '/admin/teams', '/admin/settings'])
+  expect(hrefs('admin')).toEqual(['/', '/tickets/new', '/queue', '/admin', '/admin/accounts', '/admin/teams', '/admin/settings', '/admin/email'])
 })
 
 test('route guards deny by prefix, including pages that have no nav entry yet', () => {
