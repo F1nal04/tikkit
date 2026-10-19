@@ -31,7 +31,7 @@
 <a class="skip-link" href="#main">{t.skipToContent}</a>
 {#if navigating.to}<Loading label={t.loading} />{/if}
 {#if data.user}
-  <Shell user={data.user} locale={data.locale} path={page.url.pathname} brand={data.organization?.name} onlogout={logout}>
+  <Shell user={data.user} locale={data.locale} path={page.url.pathname} brand={data.organization?.name} unread={data.unread} onlogout={logout}>
     {#if logoutError}<Alert>{errorText(t, logoutError)}</Alert>{/if}
     {@render children()}
   </Shell>

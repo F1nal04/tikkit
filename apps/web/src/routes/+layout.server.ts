@@ -30,5 +30,8 @@ export const load: LayoutServerLoad = async ({ locals, fetch, url }) => {
   }
   locals.locale = pageLocale(locals.locale, url.searchParams.get('lang'), user?.language)
   const organization = user ? await api.request('get', '/api/organization').catch(() => null) : null
-  return { locale: locals.locale, user, ...(organization ? { organization } : {}) }
+  const unread = user
+    ? await api.request('get', '/api/notifications/unread').then((r) => r.count).catch(() => 0)
+    : 0
+  return { locale: locals.locale, user, ...(unread ? { unread } : {}), ...(organization ? { organization } : {}) }
 }

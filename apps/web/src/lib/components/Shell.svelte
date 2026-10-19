@@ -13,10 +13,12 @@
     path: string
     /** The organization's name; falls back to the product name. */
     brand?: string
+    /** Unread in-app notifications. */
+    unread?: number
     onlogout: () => void
     children: Snippet
   }
-  let { user, locale, path, brand = 'Tikkit', onlogout, children }: Props = $props()
+  let { user, locale, path, brand = 'Tikkit', unread = 0, onlogout, children }: Props = $props()
   let t = $derived(messages[locale])
   let groups = $derived(navFor(user.role))
   let current = $derived(activeHref(path))
@@ -35,6 +37,9 @@
 <div class="app">
   <header class="topbar">
     <a href="/" class="brand">{brand}</a>
+    <a href="/notifications" class="bell" aria-current={path === '/notifications' ? 'page' : undefined}>
+      {t.notifications.bell}{#if unread > 0}<span class="badge">{unread}<span class="sr-only"> {t.notifications.unread}</span></span>{/if}
+    </a>
     {#if mounted}
       <button type="button" class="menu-toggle secondary" aria-expanded={open} aria-controls="app-menu" onclick={() => (open = !open)}>
         {t.menu}
