@@ -11,6 +11,9 @@ export type ErrorCode = Schemas["ErrorCode"];
 export type Language = Schemas["Language"];
 export type Account = Schemas["Account"];
 export type Role = Schemas["Role"];
+export type TicketStatus = Schemas["TicketStatus"];
+export type TicketDetail = Schemas["TicketDetail"];
+export type ClosureReason = Schemas["ClosureReason"];
 export type AccountSummary = Schemas["AccountSummary"];
 export type Invitation = Schemas["Invitation"];
 /** API error codes plus `unavailable`, synthesized when the API could not be

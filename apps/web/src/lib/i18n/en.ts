@@ -1,3 +1,5 @@
+import type { ClosureReason, TicketStatus } from '@tikkit/api-client'
+
 export default {
   home: 'Home',
   username: 'Username',
@@ -26,6 +28,22 @@ export default {
     team_lead: 'Team Lead',
     admin: 'Admin',
   },
+  ticketStatuses: {
+    draft: 'Draft',
+    ai_processing: 'AI suggestion in progress',
+    awaiting_ai_decision: 'Awaiting your decision on the AI suggestion',
+    queued: 'Queued',
+    in_progress: 'In progress',
+    waiting_for_requester: 'Waiting for requester information',
+    awaiting_confirmation: 'Awaiting requester confirmation',
+    closed: 'Closed',
+    cancelled: 'Cancelled',
+    ai_solved: 'Solved by AI',
+  } satisfies Record<TicketStatus, string>,
+  closureReasons: {
+    requester_confirmed: 'Confirmed by the requester',
+    confirmation_timeout: 'Closed automatically: no response before the confirmation deadline',
+  } satisfies Record<ClosureReason, string>,
   save: 'Save',
   saved: 'Saved.',
   inviteTitle: 'Create your Tikkit account',
