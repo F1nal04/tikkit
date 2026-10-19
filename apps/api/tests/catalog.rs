@@ -329,6 +329,13 @@ async fn conditional_fields_keep_stable_choice_ids() {
     assert_eq!(names(&program["choices"], "label"), ["Word", "Excel"]);
     let word = id(&program["choices"][0]);
     let excel = id(&program["choices"][1]);
+    // Once omitted, Excel retains the same sort order as renamed Word. Make
+    // its tie-breaker win so active-first ordering cannot pass by UUID luck.
+    sqlx::query("UPDATE intake_field_choices SET created_at = created_at - interval '1 second' WHERE id = $1")
+        .bind(excel)
+        .execute(&t.pool)
+        .await
+        .unwrap();
 
     // Invalid definitions.
     let base = json!({ "label": "Version", "kind": "text", "category_ids": [software] });
