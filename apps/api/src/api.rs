@@ -57,6 +57,18 @@ pub enum ApiError {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    /// No outbound SMTP connection has been saved.
+    SmtpNotConfigured,
+    /// The relay rejected the username or password.
+    SmtpAuthFailed,
+    /// TLS could not be negotiated or the certificate did not verify.
+    SmtpTlsFailed,
+    /// DNS, connect, or timeout. The portal itself is still up.
+    SmtpNetworkFailed,
+    /// The relay accepted the connection but refused the message.
+    SmtpDeliveryFailed,
+    /// The stored password cannot be decrypted with the current encryption key.
+    SmtpCredentialUnreadable,
     Internal,
 }
 
@@ -85,6 +97,12 @@ pub enum ErrorCode {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    SmtpNotConfigured,
+    SmtpAuthFailed,
+    SmtpTlsFailed,
+    SmtpNetworkFailed,
+    SmtpDeliveryFailed,
+    SmtpCredentialUnreadable,
     Internal,
 }
 
@@ -218,6 +236,36 @@ impl ApiError {
                 StatusCode::PAYLOAD_TOO_LARGE,
                 ErrorCode::PayloadTooLarge,
                 "The request body is too large.",
+            ),
+            SmtpNotConfigured => (
+                StatusCode::CONFLICT,
+                ErrorCode::SmtpNotConfigured,
+                "Outbound email is not configured.",
+            ),
+            SmtpAuthFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpAuthFailed,
+                "The mail server rejected the username or password.",
+            ),
+            SmtpTlsFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpTlsFailed,
+                "Could not establish a verified TLS connection to the mail server.",
+            ),
+            SmtpNetworkFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpNetworkFailed,
+                "The mail server could not be reached.",
+            ),
+            SmtpDeliveryFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpDeliveryFailed,
+                "The mail server refused the message.",
+            ),
+            SmtpCredentialUnreadable => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpCredentialUnreadable,
+                "The stored mail password could not be read. Enter it again.",
             ),
             Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,

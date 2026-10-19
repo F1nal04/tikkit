@@ -8,6 +8,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+aes-gcm = "0.10"
 anyhow = "1"
 argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["macros"] }
@@ -29,5 +30,9 @@ utoipa = { version = "5", features = ["uuid"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
+base64 = "0.22"
+rcgen = "0.13"
+rustls = { version = "0.23", features = ["ring"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio-rustls = "0.26"
 tower = { version = "0.5", features = ["util"] }

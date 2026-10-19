@@ -1117,6 +1117,229 @@
         }
       }
     },
+    "/api/settings/smtp": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "The saved outbound connection, or `connection: null` (Admin only).",
+        "operationId": "get_smtp",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Creates or replaces the outbound connection (Admin only).\nA missing `password` keeps the stored one. The response never contains it.",
+        "operationId": "put_smtp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpSettingsWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Removes the outbound connection (Admin only). Later mail is not sent.",
+        "operationId": "delete_smtp",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/smtp/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Sends a test message through the saved connection (Admin only).\nThe recipient must be this Admin's email or the configured sender address.\nTransport security is the saved STARTTLS or implicit TLS setting; it is not\ntaken from the request. Failures use stable codes and do not echo credentials.",
+        "operationId": "test_smtp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpTestResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`smtp_not_configured`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`to`: `invalid` or `not_allowed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`smtp_auth_failed`, `smtp_tls_failed`, `smtp_network_failed`, `smtp_delivery_failed`, or `smtp_credential_unreadable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/setup": {
       "get": {
         "tags": [
@@ -1709,6 +1932,12 @@
           "method_not_allowed",
           "conflict",
           "payload_too_large",
+          "smtp_not_configured",
+          "smtp_auth_failed",
+          "smtp_tls_failed",
+          "smtp_network_failed",
+          "smtp_delivery_failed",
+          "smtp_credential_unreadable",
           "internal"
         ]
       },
@@ -2253,6 +2482,180 @@
         ],
         "properties": {
           "setup_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SmtpConnection": {
+        "type": "object",
+        "description": "Masked connection. The password is never included.",
+        "required": [
+          "host",
+          "port",
+          "security",
+          "sender_name",
+          "sender_address",
+          "username",
+          "password_set",
+          "enabled",
+          "updated_at",
+          "last_delivery_error",
+          "last_delivery_error_at",
+          "last_test_at",
+          "last_test_error"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "last_delivery_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code from the last background delivery failure, if any."
+          },
+          "last_delivery_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_test_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_test_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password_set": {
+            "type": "boolean",
+            "description": "Always true when a connection exists. The value itself is not returned."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SmtpSecurity"
+          },
+          "sender_address": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpSecurity": {
+        "type": "string",
+        "description": "How the relay expects the connection to be encrypted. There is no plaintext\nor opportunistic mode: certificate verification stays on.",
+        "enum": [
+          "starttls",
+          "implicit_tls"
+        ]
+      },
+      "SmtpSettings": {
+        "type": "object",
+        "required": [
+          "connection"
+        ],
+        "properties": {
+          "connection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpConnection"
+              }
+            ]
+          }
+        }
+      },
+      "SmtpSettingsWrite": {
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "security",
+          "sender_name",
+          "sender_address",
+          "username",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required when creating the connection. Omit to keep the stored password."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SmtpSecurity"
+          },
+          "sender_address": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SmtpTestRequest": {
+        "type": "object",
+        "required": [
+          "to"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Recipient. Must be the acting Admin's email or the configured sender address."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SmtpTestResult": {
+        "type": "object",
+        "required": [
+          "delivered"
+        ],
+        "properties": {
+          "delivered": {
             "type": "boolean"
           }
         }
