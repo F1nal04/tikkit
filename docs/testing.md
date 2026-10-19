@@ -37,7 +37,8 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `TestDb::new().await -> Option<TestDb>` (`.pool`, `.name`)
 - `test_app(&pool) -> Router`: the real app; send requests with `tower::ServiceExt::oneshot`
   (state-changing requests need `x-requested-with: tikkit`); `test_app_with(&pool, Settings)`
-  for other auth settings, e.g. `Secure` cookies
+  for other auth settings, e.g. `Secure` cookies. Screenshots go to
+  `screenshot_dir(&pool)`, a temp directory removed with the `TestDb`
 - `test_config() -> Config`: a valid configuration with fixed test secrets
 - `fixtures::account(&pool, Role::Operator, "name") -> Uuid` for any of the
   five roles (`User`, `Operator`, `Specialist`, `TeamLead`, `Admin`); all share

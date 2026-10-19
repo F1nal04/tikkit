@@ -235,6 +235,23 @@ export default {
     taken: 'This name is already in use.',
     archivedHint: 'Archived entries are hidden from new tickets. Existing tickets keep them.',
   },
+  screenshots: {
+    label: 'Screenshots',
+    hint: 'Optional. PNG, JPEG, or WebP images, up to 10 MiB each and 10 per ticket.',
+    add: 'Add screenshots',
+    uploading: 'Uploading…',
+    remove: 'Remove',
+    errors: {
+      unsupported_type: 'Only PNG, JPEG, and WebP images can be attached.',
+      type_mismatch: 'The file type does not match its content or file name.',
+      corrupt: 'This image is damaged or cannot be read.',
+      animated: 'Animated images cannot be attached.',
+      dimensions_too_large: 'This image is too large: at most 16,384 pixels per side and 40 megapixels.',
+      payload_too_large: 'This file is larger than 10 MiB.',
+      too_many: 'You have too many unsent screenshots. Submit or remove some first.',
+      limit: 'At most 10 screenshots per ticket.',
+    },
+  },
   errors: {
     unauthorized: 'Your session has expired. Please sign in again.',
     invitation_invalid: 'This invitation link is invalid, expired, revoked, or already used. Ask an administrator for a new one.',

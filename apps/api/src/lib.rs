@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use axum::{
     Extension, Router,
@@ -26,6 +26,7 @@ pub mod db;
 pub mod lifecycle;
 pub mod mail;
 pub mod management;
+pub mod screenshots;
 pub mod smtp;
 pub mod submission;
 pub mod tickets;
@@ -35,6 +36,8 @@ use api::{ApiError, Json};
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    /// Private screenshot volume (`SCREENSHOT_DIR`); never served directly.
+    pub screenshot_dir: Arc<Path>,
 }
 
 #[derive(OpenApi)]
@@ -100,6 +103,11 @@ pub struct AppState {
         submission::delete_draft,
         submission::submit_ticket,
         submission::submit_draft,
+        screenshots::upload,
+        screenshots::metadata,
+        screenshots::preview,
+        screenshots::download,
+        screenshots::delete,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -292,6 +300,16 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             post(submission::submit_draft),
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
+        .route(
+            "/api/screenshots",
+            post(screenshots::upload).layer(DefaultBodyLimit::max(screenshots::MAX_BYTES)),
+        )
+        .route(
+            "/api/screenshots/{id}",
+            get(screenshots::metadata).delete(screenshots::delete),
+        )
+        .route("/api/screenshots/{id}/preview", get(screenshots::preview))
+        .route("/api/screenshots/{id}/download", get(screenshots::download))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,
@@ -349,7 +367,10 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(200))
             .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
             .unwrap();
-        super::AppState { pool }
+        super::AppState {
+            pool,
+            screenshot_dir: std::env::temp_dir().into(),
+        }
     }
 
     #[derive(Deserialize)]

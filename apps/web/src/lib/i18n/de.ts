@@ -239,6 +239,23 @@ export default {
     taken: 'Dieser Name wird bereits verwendet.',
     archivedHint: 'Archivierte Einträge erscheinen nicht in neuen Tickets. Bestehende Tickets behalten sie.',
   },
+  screenshots: {
+    label: 'Screenshots',
+    hint: 'Optional. PNG-, JPEG- oder WebP-Bilder, bis zu 10 MiB pro Bild und 10 pro Ticket.',
+    add: 'Screenshots hinzufügen',
+    uploading: 'Wird hochgeladen …',
+    remove: 'Entfernen',
+    errors: {
+      unsupported_type: 'Nur PNG-, JPEG- und WebP-Bilder können angehängt werden.',
+      type_mismatch: 'Der Dateityp passt nicht zum Inhalt oder Dateinamen.',
+      corrupt: 'Dieses Bild ist beschädigt oder nicht lesbar.',
+      animated: 'Animierte Bilder können nicht angehängt werden.',
+      dimensions_too_large: 'Dieses Bild ist zu groß: höchstens 16.384 Pixel pro Seite und 40 Megapixel.',
+      payload_too_large: 'Diese Datei ist größer als 10 MiB.',
+      too_many: 'Sie haben zu viele nicht gesendete Screenshots. Senden oder entfernen Sie zuerst einige.',
+      limit: 'Höchstens 10 Screenshots pro Ticket.',
+    },
+  },
   errors: {
     unauthorized: 'Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.',
     invitation_invalid:

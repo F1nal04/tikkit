@@ -16,6 +16,7 @@ use crate::{
     auth::{CurrentUser, audit, ident, ident_str},
     catalog::{self, IntakeAnswer, IntakeSnapshot},
     lifecycle::{self, By, Transition},
+    screenshots,
 };
 
 pub const SUBJECT_MAX: usize = 200;
@@ -38,7 +39,7 @@ pub struct TicketIntake {
     /// Up to 100 conditional answers, keyed by field ID.
     #[serde(default)]
     pub answers: BTreeMap<Uuid, IntakeAnswer>,
-    /// Must be empty until validated screenshot uploads (#19) are available.
+    /// Up to 10 distinct pending uploads of this account (`POST /api/screenshots`).
     #[serde(default)]
     pub screenshot_ids: Vec<Uuid>,
 }
@@ -171,11 +172,9 @@ impl TicketIntake {
                 }
             }
         }
-        // No uploaded reference is trustworthy before #19 provides ownership,
-        // decoded-image validation and limits. Never silently drop screenshots.
-        if !self.screenshot_ids.is_empty() {
-            errors.insert("screenshot_ids".into(), vec!["invalid"]);
-        }
+        // Ownership and pending state are checked against the database by the
+        // caller (screenshots::keep_pending / attach). Never silently drop one.
+        screenshots::check_ids(&mut errors, &self.screenshot_ids);
         check(errors)
     }
 }
@@ -205,7 +204,7 @@ async fn audit_draft(
     responses(
         (status = 201, body = Draft),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
-        (status = 422, description = "`validation_failed` (input bounds, unsupported screenshots)", body = crate::api::ErrorEnvelope),
+        (status = 422, description = "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn create_draft(
     State(state): State<AppState>,
@@ -214,6 +213,7 @@ pub async fn create_draft(
 ) -> Result<(StatusCode, Json<Draft>), ApiError> {
     body.validate(false)?;
     let mut tx = state.pool.begin().await?;
+    screenshots::keep_pending(&mut tx, user.account_id(), &body.screenshot_ids).await?;
     let draft: Draft = sqlx::query_as(&format!("INSERT INTO ticket_drafts (requester_account_id, intake) VALUES ($1, $2) RETURNING {DRAFT_COLUMNS}"))
         .bind(user.account_id()).bind(sqlx::types::Json(body)).fetch_one(&mut *tx).await?;
     audit_draft(&mut tx, &user, "draft_created", draft.id, draft.version).await?;
@@ -286,6 +286,7 @@ pub async fn update_draft(
     let mut tx = state.pool.begin().await?;
     lock_draft(&mut tx, user.account_id(), id, body.version).await?;
     body.intake.validate(false)?;
+    screenshots::keep_pending(&mut tx, user.account_id(), &body.intake.screenshot_ids).await?;
     let draft: Draft = sqlx::query_as(&format!("UPDATE ticket_drafts SET intake = $2, version = version + 1, updated_at = now() WHERE id = $1 RETURNING {DRAFT_COLUMNS}"))
         .bind(id).bind(sqlx::types::Json(body.intake)).fetch_one(&mut *tx).await?;
     audit_draft(&mut tx, &user, "draft_updated", id, draft.version).await?;
@@ -381,6 +382,7 @@ async fn persist_submission(
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, reference")
         .bind(owner).bind(snapshot.catalog.category_id).bind(snapshot.catalog.priority_id)
         .bind(&snapshot.subject).bind(&snapshot.description).bind(sqlx::types::Json(&snapshot)).fetch_one(&mut **db).await?;
+    screenshots::attach(db, owner, &snapshot.screenshot_ids, id).await?;
     let status = lifecycle::transition(
         db,
         id,
