@@ -19,6 +19,19 @@
   let profile = $state<{ ok?: boolean; error?: unknown; fields?: Record<string, string[]> }>({})
   let password = $state<{ ok?: boolean; error?: unknown; fields?: Record<string, string[]> }>({})
 
+  // Initial values only; the checkboxes own them afterwards.
+  // svelte-ignore state_referenced_locally
+  let prefs = $state(data.prefs ?? { email: true, in_app: true })
+  let prefsState = $state<{ ok?: boolean; error?: unknown }>({})
+  async function savePrefs(event: SubmitEvent) {
+    event.preventDefault()
+    try {
+      prefs = await api().request('put', '/api/notification-preferences', { body: prefs })
+      prefsState = { ok: true }
+    } catch (e) {
+      prefsState = { error: e }
+    }
+  }
   const api = () => apiClient(data.locale)
   const languages = $derived([
     { value: 'en', label: t.languages.en },
@@ -98,3 +111,15 @@
   {#if password.error}<Alert>{errorText(t, password.error)}</Alert>{/if}
   <button type="submit">{t.changePassword}</button>
 </form>
+
+{#if data.prefs}
+<h2>{t.notifications.preferences}</h2>
+<form onsubmit={savePrefs} novalidate>
+  <p class="checkbox"><label><input type="checkbox" name="email" bind:checked={prefs.email} /> {t.notifications.email}</label></p>
+  <p class="checkbox"><label><input type="checkbox" name="in_app" bind:checked={prefs.in_app} /> {t.notifications.inApp}</label></p>
+  <p class="hint">{t.notifications.hint}</p>
+  {#if prefsState.ok}<Alert kind="success">{t.saved}</Alert>{/if}
+  {#if prefsState.error}<Alert>{errorText(t, prefsState.error)}</Alert>{/if}
+  <button type="submit">{t.notifications.savePreferences}</button>
+</form>
+{/if}

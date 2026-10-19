@@ -127,3 +127,13 @@ Reply retries reuse the idempotency key for identical content and screenshots;
 changed input gets a new key. Uploads finish before sending. Language changes
 keep mounted input. A reply that becomes unavailable is retained, disabled,
 until the current lifecycle permits sending again.
+
+## Notifications
+
+The shell's top bar links to `/notifications` with the unread count (`unread`
+in the root layout data, fetched with the account and omitted when zero). The
+page lists the in-app inbox newest first, with a portal link per entry, "Mark as
+read", and "Load more". Text is already localized by the API, in the recipient's
+account language. Notification preferences (email, in-app) are on `/profile`.
+Opening a link while signed out goes through `/login?next=…` and back; the ticket
+page then applies the current access rules. See [notifications.md](notifications.md).
