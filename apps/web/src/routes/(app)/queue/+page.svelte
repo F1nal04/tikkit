@@ -4,11 +4,24 @@
   import { onMount } from 'svelte'
   import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import Table from '#lib/components/Table.svelte'
-  import { errorText, messages } from '#lib/i18n.ts'
+  import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import { poll } from '#lib/poll.ts'
-  import { age, FILTER_STATUSES, queueHref, SORTS, viewsFor } from '#lib/queue.ts'
+  import {
+    age,
+    BULK_ACTIONS,
+    type BulkAction,
+    bulkChange,
+    FILTER_STATUSES,
+    needsTarget,
+    queueHref,
+    savedViewHref,
+    SORTS,
+    viewFilters,
+    viewsFor,
+  } from '#lib/queue.ts'
   import type { PageProps } from './$types'
 
   let { data }: PageProps = $props()
@@ -21,6 +34,93 @@
   let items = $derived(data.page?.items ?? [])
   let nextCursor = $derived(data.page?.next_cursor ?? null)
   let retrying = $state(false)
+
+  // Saved views: the API reports filters that no longer apply; links leave them out.
+  let viewName = $state('')
+  let viewError = $state<unknown>(null)
+  let viewNameError = $state<string | undefined>()
+  let viewSaved = $state(false)
+  let saving = $state(false)
+  const staleText = (stale: string[]) =>
+    q.staleView.replace('{names}', stale.map((f) => q.staleNames[f as keyof typeof q.staleNames]).join(', '))
+  async function saveView(e: SubmitEvent) {
+    e.preventDefault()
+    saving = true
+    viewError = null
+    viewNameError = undefined
+    viewSaved = false
+    try {
+      await api(data.locale).request('post', '/api/saved-views', { body: { name: viewName, filters: viewFilters(params) } })
+      viewName = ''
+      viewSaved = true
+      await invalidateAll()
+    } catch (err) {
+      const fields = err instanceof ApiError ? err.fields : {}
+      viewNameError = fieldText(t, fields.name?.[0])
+      if (!viewNameError) viewError = err
+    } finally {
+      saving = false
+    }
+  }
+  async function deleteView(id: string) {
+    viewError = null
+    viewSaved = false
+    try {
+      await api(data.locale).request('delete', '/api/saved-views/{id}', { path: { id } })
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === 'not_found')) viewError = err
+    }
+    await invalidateAll()
+  }
+
+  // Bulk actions: each ticket is authorized and checked on its own; failures are listed per ticket.
+  let selected = $state<string[]>([])
+  let chosen = $derived(items.filter((ticket) => selected.includes(ticket.id)))
+  let allChosen = $derived(items.length > 0 && chosen.length === items.length)
+  let actions = $derived(BULK_ACTIONS.filter((a) => (a !== 'claim' || role !== 'admin') && ((a !== 'assign' && a !== 'unassign') || data.options?.assignees.length)))
+  let action = $state<BulkAction>('start_work')
+  let target = $state('')
+  let applying = $state(false)
+  let bulkError = $state<unknown>(null)
+  let outcome = $state<{ ok: number; total: number; failed: { reference: number; code: string }[] } | null>(null)
+  let targets = $derived(
+    action === 'dispatch'
+      ? (data.options?.teams ?? []).map((team) => ({ id: team.id, name: team.name }))
+      : action === 'assign'
+        ? (data.options?.assignees ?? []).map((a) => ({ id: a.id, name: `${a.display_name} (${a.team_name})` }))
+        : action === 'set_priority'
+          ? (data.catalog?.priorities ?? []).map((p) => ({ id: p.id, name: p.name }))
+          : [],
+  )
+  let targetLabel = $derived(action === 'dispatch' ? q.teamColumn : action === 'assign' ? q.assignee : q.priority)
+  const toggleAll = () => (selected = allChosen ? [] : items.map((ticket) => ticket.id))
+  const toggle = (id: string) => (selected = selected.includes(id) ? selected.filter((s) => s !== id) : [...selected, id])
+  async function applyBulk(e: SubmitEvent) {
+    e.preventDefault()
+    applying = true
+    bulkError = null
+    outcome = null
+    const tickets = chosen
+    try {
+      const { results } = await api(data.locale).request('post', '/api/tickets/bulk', {
+        body: { change: bulkChange(action, target), tickets: tickets.map((ticket) => ({ id: ticket.id, expected_updated_at: ticket.updated_at })) },
+      })
+      const failed = results.filter((r) => r.error)
+      outcome = {
+        ok: results.length - failed.length,
+        total: results.length,
+        failed: failed.map((r) => ({ reference: tickets.find((ticket) => ticket.id === r.id)!.reference, code: r.error! })),
+      }
+      // Keep failures selected so they can be retried after the reload brings fresh versions.
+      selected = failed.map((r) => r.id)
+      await invalidateAll()
+    } catch (err) {
+      bulkError = err
+    } finally {
+      applying = false
+    }
+  }
+  const failureText = (code: string) => q.bulkErrors[code as keyof typeof q.bulkErrors] ?? q.bulkErrors.generic
 
   // Relative ages depend on the clock, so they appear after mount; until then the creation time shows.
   let now = $state<number | null>(null)
@@ -91,6 +191,14 @@
 {:else}
   <form method="get" class="filters" aria-label={q.filters}>
     <input type="hidden" name="view" value={params.view} />
+    <Field
+      label={q.search}
+      name="q"
+      type="search"
+      value={params.q}
+      hint={q.searchHint}
+      error={data.searchError ? fieldText(t, data.searchError) : undefined}
+    />
     <div class="field">
       <label for="status">{q.status}</label>
       <select id="status" name="status" value={params.status}>
@@ -128,9 +236,69 @@
     </div>
   </form>
 
+  <section aria-labelledby="saved-views">
+    <h2 id="saved-views">{q.savedViews}</h2>
+    {#if viewError}<Alert>{errorText(t, viewError)}</Alert>{/if}
+    {#if data.views?.length}
+      <ul class="saved-views">
+        {#each data.views as view (view.id)}
+          <li>
+            <a href={savedViewHref(view)}>{view.name}</a>
+            <button type="button" class="secondary" onclick={() => deleteView(view.id)}>
+              <span aria-hidden="true">×</span><span class="sr-only">{q.deleteView.replace('{name}', view.name)}</span>
+            </button>
+            {#if view.stale.length}<p class="hint">{staleText(view.stale)}</p>{/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <form class="filters" onsubmit={saveView} aria-label={q.saveView}>
+      <Field label={q.viewName} name="view_name" bind:value={viewName} error={viewNameError} required />
+      <div class="actions"><button type="submit" disabled={saving}>{q.save}</button></div>
+    </form>
+    {#if viewSaved}<Alert kind="success">{q.viewSaved}</Alert>{/if}
+  </section>
+
+  {#if chosen.length}
+    <form class="filters bulk" onsubmit={applyBulk} aria-label={q.bulk}>
+      <p class="count-selected">{q.selected.replace('{count}', String(chosen.length))}</p>
+      <div class="field">
+        <label for="bulk-action">{q.bulkAction}</label>
+        <select id="bulk-action" bind:value={action} onchange={() => (target = '')}>
+          {#each actions as a (a)}<option value={a}>{q.bulkActions[a]}</option>{/each}
+        </select>
+      </div>
+      {#if needsTarget(action)}
+        <div class="field">
+          <label for="bulk-target">{targetLabel}</label>
+          <select id="bulk-target" bind:value={target} required>
+            <option value="">{q.chooseTarget}</option>
+            {#each targets as option (option.id)}<option value={option.id}>{option.name}</option>{/each}
+          </select>
+        </div>
+      {/if}
+      <div class="actions"><button type="submit" disabled={applying}>{q.applyBulk}</button></div>
+    </form>
+  {/if}
+  <div aria-live="polite">
+    {#if bulkError}<Alert>{errorText(t, bulkError)}</Alert>{/if}
+    {#if outcome}
+      <Alert kind={outcome.failed.length ? 'info' : 'success'}>
+        {q.bulkDone.replace('{ok}', String(outcome.ok)).replace('{total}', String(outcome.total))}
+        {#if outcome.failed.length}
+          {q.bulkFailed}
+          <ul>
+            {#each outcome.failed as f (f.reference)}<li>#{f.reference}: {failureText(f.code)}</li>{/each}
+          </ul>
+        {/if}
+      </Alert>
+    {/if}
+  </div>
+
   <Table caption="{viewLabel(params.view)}: {q.caption}" empty={q.empty[params.view]} isEmpty={items.length === 0}>
     {#snippet head()}
       <tr>
+        <td><input type="checkbox" aria-label={q.selectPage} checked={allChosen} onchange={toggleAll} /></td>
         <th scope="col">{q.reference}</th>
         <th scope="col">{q.subject}</th>
         <th scope="col">{q.category}</th>
@@ -144,6 +312,14 @@
     {/snippet}
     {#each items as ticket (ticket.id)}
       <tr>
+        <td>
+          <input
+            type="checkbox"
+            aria-label={q.select.replace('{reference}', String(ticket.reference))}
+            checked={selected.includes(ticket.id)}
+            onchange={() => toggle(ticket.id)}
+          />
+        </td>
         <th scope="row">#{ticket.reference}</th>
         <td class="wrap"><a href="/queue/{ticket.id}">{ticket.subject}</a></td>
         <td>{ticket.category_name}</td>

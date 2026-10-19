@@ -4,6 +4,7 @@
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -667,9 +668,21 @@ pub async fn staff_action(
     Json(action): Json<StaffAction>,
 ) -> Result<Json<ActionResult>, ApiError> {
     authz::require_permission(&user, Permission::ReplyAsStaff)?;
-    let mut tx = state.pool.begin().await?;
+    let status = apply_staff_action(&state.pool, user.account_id(), id, action).await?;
+    Ok(Json(ActionResult { status }))
+}
+
+/// One staff action in its own transaction: the single-ticket endpoint and each
+/// item of a bulk action (`bulk.rs`) run exactly this.
+pub(crate) async fn apply_staff_action(
+    pool: &PgPool,
+    account_id: Uuid,
+    id: Uuid,
+    action: StaffAction,
+) -> Result<TicketStatus, ApiError> {
+    let mut tx = pool.begin().await?;
     // Same lock order as the lifecycle: actor, then ticket.
-    let actor = lifecycle::lock_actor(&mut tx, user.account_id()).await?;
+    let actor = lifecycle::lock_actor(&mut tx, account_id).await?;
     let (requester, team_id, assignee, status, updated_at, priority_id): (
         Uuid,
         Option<Uuid>,
@@ -790,7 +803,7 @@ pub async fn staff_action(
         }
     };
     tx.commit().await?;
-    Ok(Json(ActionResult { status }))
+    Ok(status)
 }
 
 /// A cheap change marker for an open ticket page (docs/lifecycle.md "Refreshing").

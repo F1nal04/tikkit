@@ -68,6 +68,66 @@ nothing, and reprioritizing the last row between pages skips no rows.
 Index `tickets_open_work_idx` (migration `0011_operator_queues.sql`) serves open
 work in creation order.
 
+## Search
+
+`q=` narrows any view (same filters, sorts, and cursor paging) to tickets whose
+reference, subject, description, category, requester username or display name,
+or readable message text matches. Text is trimmed and bounded to 200 characters
+(`422 q: too_long`). A number, optionally after `#`, matches that reference;
+otherwise at least 3 characters are needed (`422 q: too_short`), matched as a
+literal case-insensitive substring: `%`, `_`, and `\` are escaped and every value
+is a bind parameter, never SQL text. The category is the name frozen in the
+intake snapshot (what rows show). Public replies match for every staff viewer;
+internal notes only where the caller may read them (a team ticket, or an Admin),
+so a ticket returned to general intake is not found through its notes.
+
+`queues::search_sql` only narrows: the list query still applies
+`authz::staff_visible_sql`, the view, and the status filter, so a match can never
+reveal a ticket the caller could not open (another team's, the caller's own,
+drafts, AI stages, AI-solved records). Search adds no counts, facets, or
+suggestions. Each branch of the match is an index scan (`pg_trgm` GIN indexes and
+the reference key, migration `0017_search_saved_views.sql`); `tests/search.rs`
+checks the plan uses them. Page size stays bounded at 100.
+
+The search box searches the selected tab; operators search general intake and
+their team separately, like the lists.
+
+## Saved views
+
+`GET/POST /api/saved-views`, `DELETE /api/saved-views/{id}` (`views.rs`): named
+sets of queue filters (`view`, `team_id`, `status`, `category_id`, `priority_id`,
+`unassigned`, `sort`, `q`) per staff account, at most 50, sorted by name. Only the
+owner lists or deletes a view; anyone else gets `404`. Saving checks every
+filter now (`422 filters.<field>: invalid`). Listing re-checks the stored filters
+against the current catalog, teams, and the caller's role and returns `stale`: the
+filters to drop (archived category or priority, archived team or one the caller
+left, a view the role no longer has). The rest still apply, so a view never
+breaks; applying it is a normal queue request under current visibility.
+
+## Bulk actions
+
+`POST /api/tickets/bulk` (`bulk.rs`) applies one change, `dispatch {team_id}`,
+`return_to_general`, `claim`, `assign {assignee_account_id}`, `unassign`,
+`start_work`, `request_information`, or `set_priority {priority_id}`, to 1-50
+distinct tickets, each with the `updated_at` it was listed with (`422 tickets:
+required | too_many | duplicate` otherwise; non-staff `403`).
+
+There is no bulk write path: each item runs the single-ticket assignment or staff
+action code in its own transaction, with its own locks, staleness check, and
+ticket policy, in request order. Items succeed or fail independently; the
+response lists every item with `error: null` or the code the single-ticket
+endpoint would return (`not_found`, `forbidden`, `conflict`, `validation_failed`),
+and a failed item writes nothing. So an Operator or Specialist changes only what
+they may change alone (claiming unclaimed team tickets, working their own or
+unclaimed ones), a Team Lead manages only their team's tickets, and an Admin
+manages every team, checked per ticket in mixed batches; read access never
+authorizes a write. Retrying is safe: an applied item moved its `updated_at`, so
+repeating it is `conflict` with nothing written.
+
+`GET /api/queue/bulk-options` lists dispatch targets (active teams) and the
+assignees the bulk bar offers: a Lead's own team, every active team for Admins,
+nobody for others. They are affordances; every item is rechecked.
+
 Rows carry reference, subject, status, category, priority, requester, team and
 assignee display names, `created_at` (age), and `updated_at`.
 
