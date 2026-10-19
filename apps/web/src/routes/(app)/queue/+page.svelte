@@ -125,7 +125,7 @@
     {#each items as ticket (ticket.id)}
       <tr>
         <th scope="row">#{ticket.reference}</th>
-        <td class="wrap">{ticket.subject}</td>
+        <td class="wrap"><a href="/queue/{ticket.id}">{ticket.subject}</a></td>
         <td>{ticket.category_name}</td>
         <td>{ticket.requester.display_name}</td>
         <td>{ticket.priority_name}</td>

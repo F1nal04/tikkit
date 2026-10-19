@@ -70,6 +70,22 @@ const TICKETS = [
   ticket(202, 'Still with the AI', { status: 'ai_processing' }),
 ]
 
+// Staff detail: the queue fixtures plus tickets reachable only by link. Desk members are the operator and
+// the lead; Admins see everything. State is per session, like the form's.
+const DESK = ['operator', 'lead']
+const LINK_ONLY = [
+  ticket(104, 'Desk claimed by lead', { status: 'in_progress', assignment: { team_name: 'Desk', assignee_display_name: 'lead' } }),
+  ticket(105, 'Desk human closed', { status: 'closed', assignment: { team_name: 'Desk', assignee_display_name: 'operator' }, resolution_source: 'operator', closure_reason: 'requester_confirmed' }),
+]
+const STAFF_TICKETS = [...TICKETS, ...LINK_ONLY]
+const isMember = (user) => DESK.includes(user) || ROLES[user] === 'admin'
+const staffCanSee = (user, t) =>
+  ['ai_processing', 'awaiting_ai_decision', 'ai_solved'].includes(t.status) ? ROLES[user] === 'admin' : !t.assignment.team_name || isMember(user)
+// Writers: open, in a team, and unclaimed or the actor is the assignee, the lead, or an Admin.
+const inCharge = (user, t) =>
+  !!t.assignment.team_name && isMember(user) && (!t.assignment.assignee_display_name || t.assignment.assignee_display_name === user || user === 'lead' || ROLES[user] === 'admin')
+const canHandle = (user, t) => OPEN.includes(t.status) && inCharge(user, t)
+
 const account = (username, token) => ({
   id: `00000000-0000-4000-8000-${String(Object.keys(ROLES).indexOf(username)).padStart(12, '0')}`,
   username,
@@ -285,6 +301,77 @@ createServer(async (req, res) => {
     if (q.get('created_before')) items = items.filter((t) => new Date(t.created_at) < new Date(q.get('created_before')))
     const from = Number(q.get('cursor') ?? 0), limit = Math.min(100, Math.max(1, Number(q.get('limit') ?? 25)))
     return reply(res, 200, { items: items.slice(from, from + limit), next_cursor: from + limit < items.length ? String(from + limit) : null })
+  }
+  // --- Staff ticket detail and handling (docs/lifecycle.md "Staff HTTP actions")
+  const staffRoute = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|notes|staff-actions))?$/.exec(pathname)
+  const staffSource = staffRoute && ROLES[user] !== 'user' && STAFF_TICKETS.find((t) => t.id === staffRoute[1])
+  if (staffSource) {
+    const store = (st.staff ??= new Map())
+    if (!store.has(staffSource.id))
+      store.set(staffSource.id, { ...structuredClone(staffSource), proposal_version: 0, confirmation_deadline: null, transitions: [], priority_changes: [], messages: [
+        { id: randomUUID(), kind: 'public_reply', author_kind: 'requester', author_account_id: null, author_display_name: 'requester', created_at: '2026-10-20T08:05:00Z', body: 'The printer jams on every page.', screenshot_ids: [] },
+        { id: randomUUID(), kind: 'internal_note', author_kind: 'staff', author_account_id: null, author_display_name: 'lead', created_at: '2026-10-20T08:10:00Z', body: 'Same model failed last month.', screenshot_ids: [] },
+      ] })
+    const t = store.get(staffSource.id), endpoint = staffRoute[2]
+    if (!staffCanSee(user, t)) return fail(res, 404, 'not_found')
+    const touch = () => (t.updated_at = new Date().toISOString())
+    const transition = (event, to, payload = {}) => {
+      t.transitions.push({ id: t.transitions.length + 1, event_type: event, from_status: t.status, to_status: to, actor_account_id: account(user, null).id, actor_display_name: user, payload, created_at: new Date().toISOString() })
+      t.status = to; touch()
+    }
+    if (!endpoint)
+      return reply(res, 200, {
+        ...t, messages: undefined, view: 'staff', category_id: CATEGORY, ai_solution: null, requester: t.requester,
+        intake_snapshot: { subject: t.subject, description: 'Printer jams', catalog: { category_id: CATEGORY, category_name: 'Hardware', skip_ai: false, priority_id: t.priority_id, priority_name: t.priority_name, answers: [{ field_id: PROGRAM, label: 'Program', value: 'Word' }] }, screenshot_ids: [] },
+        description: 'Printer jams', resolution_source: t.resolution_source ?? null, closure_reason: t.closure_reason ?? null,
+        staff_access: { can_handle: canHandle(user, t), can_reopen: t.status === 'closed' && !!{ ...settings, ...st.policy }.allow_reopening && inCharge(user, t) },
+      })
+    if (endpoint === 'messages') {
+      const q = new URL(req.url, 'http://stub').searchParams, start = Number(q.get('cursor') ?? 0), limit = Number(q.get('limit') ?? 25)
+      return reply(res, 200, { items: t.messages.slice(start, start + limit), next_cursor: start + limit < t.messages.length ? String(start + limit) : null })
+    }
+    const input = await readBody(req)
+    if (endpoint === 'replies' || endpoint === 'notes') {
+      const prior = t.messages.find((m) => m.key === input.idempotency_key)
+      if (prior) return reply(res, 201, prior)
+      if (!canHandle(user, t)) return fail(res, 403, 'forbidden')
+      if (!input.body?.trim()) return validation(res, { body: ['required'] })
+      const message = { id: randomUUID(), kind: endpoint === 'notes' ? 'internal_note' : 'public_reply', author_kind: 'staff', author_account_id: account(user, null).id, author_display_name: user, created_at: new Date().toISOString(), body: input.body, screenshot_ids: input.screenshot_ids ?? [], key: input.idempotency_key }
+      t.messages.push(message)
+      if (endpoint === 'replies') touch()
+      return reply(res, 201, message)
+    }
+    // staff-actions
+    const a = input.action
+    if (!['start_work', 'request_information', 'propose_resolution', 'reopen', 'set_priority'].includes(a)) return validation(res, { action: ['invalid'] })
+    const needsOpen = a !== 'reopen'
+    if (needsOpen ? !canHandle(user, t) : !(t.status === 'closed' && inCharge(user, t))) return fail(res, 403, 'forbidden')
+    if (a === 'reopen' && !{ ...settings, ...st.policy }.allow_reopening) return fail(res, 403, 'forbidden')
+    const from = { start_work: ['queued', 'waiting_for_requester'], request_information: ['in_progress'], propose_resolution: ['in_progress', 'waiting_for_requester', 'awaiting_confirmation'], reopen: ['closed'], set_priority: OPEN }[a]
+    if (!from.includes(t.status)) return fail(res, 409, 'conflict')
+    if (a === 'propose_resolution' && !input.summary?.trim()) return validation(res, { summary: ['required'] })
+    if (a === 'set_priority' && (input.priority_id === t.priority_id || !CATALOG.priorities.some((p) => p.id === input.priority_id))) return validation(res, { priority_id: ['invalid'] })
+    if (input.expected_updated_at !== t.updated_at) return fail(res, 409, 'conflict')
+    if (a === 'set_priority') {
+      const next = CATALOG.priorities.find((p) => p.id === input.priority_id)
+      t.priority_changes.push({ id: t.priority_changes.length + 1, previous_priority_name: t.priority_name, priority_name: next.name, actor_account_id: account(user, null).id, actor_display_name: user, created_at: new Date().toISOString() })
+      Object.assign(t, { priority_id: next.id, priority_name: next.name }); touch()
+    } else if (a === 'propose_resolution') {
+      t.proposal_version++; t.confirmation_deadline = new Date(Date.now() + 168 * 3600_000).toISOString()
+      transition('propose_resolution', 'awaiting_confirmation', { summary: input.summary.trim(), proposal_version: t.proposal_version })
+    } else if (a === 'request_information') transition(a, 'waiting_for_requester')
+    else { if (a === 'reopen') (t.closure_reason = null, t.resolution_source = null); transition(a, 'in_progress') }
+    if (a !== 'propose_resolution') t.confirmation_deadline = null
+    return reply(res, 200, { status: t.status })
+  }
+  // Test hooks: a concurrent change by someone else, and a mid-session reassignment.
+  if (route === 'POST /api/test/concurrent') {
+    const { id, assignee } = await readBody(req), t = (st.staff ??= new Map()).get(id)
+    if (!t) return fail(res, 404, 'not_found')
+    if (assignee !== undefined) t.assignment = { ...t.assignment, assignee_display_name: assignee }
+    t.messages.push({ id: randomUUID(), kind: 'public_reply', author_kind: 'requester', author_account_id: null, author_display_name: 'requester', created_at: new Date().toISOString(), body: 'Newer reply from the requester', screenshot_ids: [] })
+    t.updated_at = new Date().toISOString()
+    return reply(res, 204)
   }
   const ownTicket = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|actions))?$/.exec(pathname)
   if (ownTicket) {
