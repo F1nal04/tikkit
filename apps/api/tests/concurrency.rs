@@ -282,6 +282,57 @@ async fn stale_writes_conflict_before_the_policy_and_write_nothing() {
     assert_eq!(r.status, 404);
 }
 
+/// The ticket's requester, including a staff member who submitted it, is `403`
+/// before the stale check. A wrong timestamp must not say the ticket moved, and
+/// another team's wrong timestamp stays `404`.
+#[tokio::test]
+async fn self_handling_is_forbidden_before_the_stale_check() {
+    let Some(w) = world().await else { return };
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description,
+            status, team_id)
+         VALUES ($1, $2, $3, 'Mine', 'Own ticket', 'queued', $4) RETURNING id",
+    )
+    .bind(w.ids["op"])
+    .bind(w.category)
+    .bind(w.normal)
+    .bind(w.desk)
+    .fetch_one(&w.db.pool)
+    .await
+    .unwrap();
+    let wrong = json!("2000-01-01T00:00:00Z");
+    let start = json!({ "action": "start_work" });
+    for at in [wrong, w.updated_at(id).await] {
+        let r = w.write(id, "op", "staff-actions", start.clone(), &at).await;
+        assert_eq!(
+            (r.status.as_u16(), r.code()),
+            (403, "forbidden"),
+            "{}",
+            r.body
+        );
+        let r = w
+            .write(id, "op", "assignment", json!({ "action": "claim" }), &at)
+            .await;
+        assert_eq!(
+            (r.status.as_u16(), r.code()),
+            (403, "forbidden"),
+            "{}",
+            r.body
+        );
+    }
+    let r = w
+        .write(
+            id,
+            "net_op",
+            "staff-actions",
+            start,
+            &json!("2000-01-01T00:00:00Z"),
+        )
+        .await;
+    assert_eq!(r.status, 404);
+    assert_eq!(w.events(id).await, 0);
+}
+
 /// The ticket marker moves with every change the caller can see and only then;
 /// polling again (a reconnect) returns the same marker, so nothing is re-delivered.
 #[tokio::test]
@@ -290,6 +341,11 @@ async fn ticket_activity_follows_visible_changes() {
     let id = w.seed("in_progress", Some(w.desk), None).await;
     let staff = w.activity(id, "op").await.unwrap();
     let requester = w.activity(id, "owner").await.unwrap();
+    // A digest, not a counter: the event total is not readable from either marker.
+    for version in [&staff, &requester] {
+        assert_eq!(version.len(), 32, "{version}");
+        assert!(version.bytes().all(|b| b.is_ascii_hexdigit()), "{version}");
+    }
     assert_eq!(w.activity(id, "op").await.unwrap(), staff);
 
     // An internal note: staff refresh, the requester's marker reveals nothing.

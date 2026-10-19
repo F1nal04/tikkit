@@ -691,9 +691,16 @@ pub async fn staff_action(
         assignee_account_id: assignee,
         status: ident(status)?,
     };
-    authz::ticket_view(&actor, &scope).ok_or(ApiError::NotFound)?;
-    // Before the policy and status checks, as for assignment changes: the loser of
-    // any concurrent staff write gets one recoverable `409`, never a partial write.
+    // Invisible tickets are `404` before any stale or policy result. The requester
+    // is `403` before the stale check, so a wrong timestamp never reveals that a
+    // ticket they must not handle has moved. Same order as assignment changes.
+    match authz::ticket_view(&actor, &scope) {
+        None => return Err(ApiError::NotFound),
+        Some(TicketView::Requester) => return Err(ApiError::Forbidden),
+        Some(TicketView::Staff) => {}
+    }
+    // Before the policy and status checks: the loser of a concurrent staff write
+    // gets one recoverable `409`, never a partial write or a `403` from the winner.
     let (StaffAction::StartWork {
         expected_updated_at,
     }
@@ -789,9 +796,10 @@ pub async fn staff_action(
 /// A cheap change marker for an open ticket page (docs/lifecycle.md "Refreshing").
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TicketActivity {
-    /// Opaque; compare for equality only. Changes with every status, team, assignee,
-    /// or priority change, every message the caller may read, and the caller's own
-    /// role or team (so open pages refresh their capabilities).
+    /// Opaque digest; compare for equality only. Changes with every status, team,
+    /// assignee, or priority change, every message the caller may read, and the
+    /// caller's own role or team (so open pages refresh their capabilities). It is
+    /// not a counter, so it does not reveal how many staff-only events exist.
     pub version: String,
 }
 
@@ -812,23 +820,26 @@ pub async fn ticket_activity(
     Path(id): Path<Uuid>,
 ) -> Result<Json<TicketActivity>, ApiError> {
     let actor = Actor::load(&state.pool, &user).await?;
-    // One statement, one snapshot. Every ticket write appends an event under the
-    // ticket lock, so the count only grows; notes leave `updated_at` alone.
-    let (requester, team_id, assignee, status, updated_at, events): (
+    // One statement, one snapshot. The digest mixes the count of events this caller
+    // may read with `updated_at` and their own capability. Notes are left out for
+    // the requester (they do not move `updated_at` either), and the count itself is
+    // not returned: priority and assignment history stay staff-only.
+    let (requester, team_id, assignee, status, version): (
         Uuid,
         Option<Uuid>,
         Option<Uuid>,
         String,
-        OffsetDateTime,
-        i64,
+        String,
     ) = sqlx::query_as(
-        "SELECT t.requester_account_id, t.team_id, t.assignee_account_id, t.status::text, t.updated_at,
-                (SELECT count(*) FROM ticket_events e WHERE e.ticket_id = t.id
-                   AND (e.event_type <> 'internal_note_added' OR t.requester_account_id <> $2))
+        "SELECT t.requester_account_id, t.team_id, t.assignee_account_id, t.status::text,
+                md5((SELECT count(*) FROM ticket_events e WHERE e.ticket_id = t.id
+                       AND (e.event_type <> 'internal_note_added' OR t.requester_account_id <> $2))::text
+                    || '@' || t.updated_at::text || '@' || $3)
          FROM tickets t WHERE t.id = $1",
     )
     .bind(id)
     .bind(actor.id)
+    .bind(authz::capability_key(&actor))
     .fetch_optional(&state.pool)
     .await?
     .ok_or(ApiError::NotFound)?;
@@ -839,11 +850,5 @@ pub async fn ticket_activity(
         status: ident(status)?,
     };
     authz::ticket_view(&actor, &scope).ok_or(ApiError::NotFound)?;
-    Ok(Json(TicketActivity {
-        version: format!(
-            "{events}.{}.{}",
-            updated_at.unix_timestamp_nanos(),
-            authz::capability_key(&actor)
-        ),
-    }))
+    Ok(Json(TicketActivity { version }))
 }
