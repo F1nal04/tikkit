@@ -22,7 +22,6 @@ use crate::{
     api::{ApiError, Cursor, Json, Page, Pagination, Path, Query, TicketStatus},
     auth::{CurrentUser, Settings, audit, ident, ident_str},
     authz::{self, Actor, Permission, TicketScope, TicketView, require_permission},
-    lifecycle,
     mail::{self, DeliverOptions, MailError, OutboundMessage},
 };
 
@@ -210,7 +209,7 @@ pub async fn process_one(pool: &PgPool, settings: &Settings) -> Result<bool, Api
         Err(error) => {
             // The transaction may be aborted; record the attempt outside it so a
             // poison row cannot be retried forever.
-            drop(tx);
+            let _ = tx.rollback().await;
             tracing::error!(notification_id = %job.id, "notification processing failed");
             record(pool, &job, &Outcome::Failed("internal")).await?;
             return Err(error);
@@ -262,33 +261,37 @@ async fn deliver(
     job: &Job,
     settings: &Settings,
 ) -> Result<Outcome, ApiError> {
-    // Share locks: a concurrent revocation waits until this delivery commits.
-    let actor = match lifecycle::lock_actor(&mut *tx, job.account_id).await {
-        Ok(actor) => actor,
-        Err(ApiError::Forbidden) => return Ok(Outcome::Suppressed), // deactivated
-        Err(error) => return Err(error),
+    // Plain reads, no row locks: this transaction stays open while SMTP talks
+    // (up to `mail::SMTP_TIMEOUT`), and a lock would stall portal writes on the
+    // ticket, the account, or its team. Like a detail read, this is the access
+    // as of now.
+    let account: Option<(String, String, String, String, bool)> = sqlx::query_as(
+        "SELECT role::text, email, username, language,
+                CASE WHEN $2 = 'email' THEN notify_email ELSE notify_in_app END
+         FROM accounts WHERE id = $1 AND is_active",
+    )
+    .bind(job.account_id)
+    .bind(&job.channel)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some((role, email, username, language, wanted)) = account else {
+        return Ok(Outcome::Suppressed); // deactivated
+    };
+    let actor = Actor {
+        id: job.account_id,
+        role: ident(role)?,
+        team: authz::team_of(&mut **tx, job.account_id).await?,
     };
     let event: Event = sqlx::query_as(
         "SELECT e.ticket_id, e.event_type, e.payload, t.requester_account_id, t.team_id,
                 t.assignee_account_id, t.status::text AS status, t.reference
          FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id
-         WHERE e.id = $1 FOR SHARE OF t",
+         WHERE e.id = $1",
     )
     .bind(job.event_id)
     .fetch_one(&mut **tx)
     .await?;
-    if !permitted(&event, &actor, &job.audience)? {
-        return Ok(Outcome::Suppressed);
-    }
-    let (email, username, language, wanted): (String, String, String, bool) = sqlx::query_as(
-        "SELECT email, username, language, CASE WHEN $2 = 'email' THEN notify_email ELSE notify_in_app END
-         FROM accounts WHERE id = $1",
-    )
-    .bind(job.account_id)
-    .bind(&job.channel)
-    .fetch_one(&mut **tx)
-    .await?;
-    if !wanted {
+    if !permitted(&event, &actor, &job.audience)? || !wanted {
         return Ok(Outcome::Suppressed);
     }
     if job.channel == "in_app" {

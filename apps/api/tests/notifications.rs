@@ -1033,3 +1033,49 @@ async fn preferences_apply_per_account_and_each_account_gets_its_own_mail() {
         "in-app opt-out suppresses new entries"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_relay_never_blocks_portal_writes() {
+    let Some(w) = world().await else { return };
+    let ticket = w.ticket("in_progress", Some(w.desk), Some(w.op)).await;
+    // Only the requester's email is due: a relay that accepts and then never answers.
+    sqlx::query("UPDATE accounts SET notify_in_app = false WHERE id = $1")
+        .bind(w.requester)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    sqlx::query("UPDATE smtp_connection SET port = $1")
+        .bind(i32::from(silent.local_addr().unwrap().port()))
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    w.event(
+        ticket,
+        Some(w.op),
+        "public_reply_added",
+        json!({ "message_id": Uuid::new_v4() }),
+    )
+    .await;
+    let worker = tokio::spawn({
+        let (pool, settings) = (w.db.pool.clone(), w.settings.clone());
+        async move { while process_one(&pool, &settings).await.unwrap() {} }
+    });
+    // Wait until the email delivery is in flight (the in-app row is suppressed first).
+    let (_held, _) = silent.accept().await.unwrap();
+
+    // Writers on the ticket and the recipient's account do not wait for the relay.
+    let mut tx = w.db.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM tickets WHERE id = $1 FOR UPDATE NOWAIT")
+        .bind(ticket)
+        .execute(&mut *tx)
+        .await
+        .expect("ticket row is not locked during SMTP");
+    sqlx::query("SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE NOWAIT")
+        .bind(w.requester)
+        .execute(&mut *tx)
+        .await
+        .expect("account row is not locked during SMTP");
+    tx.rollback().await.unwrap();
+    worker.abort();
+}
