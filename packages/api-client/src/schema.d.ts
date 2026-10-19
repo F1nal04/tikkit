@@ -727,7 +727,10 @@ export interface components {
             team_id: string | null;
             username: string;
         };
-        /** @enum {string} */
+        /**
+         * @description When the owning requester may cancel a submitted open ticket.
+         * @enum {string}
+         */
         CancellationPolicy: "anytime_while_open" | "before_work_starts" | "disabled";
         /** @description Everything in display order. */
         Catalog: {

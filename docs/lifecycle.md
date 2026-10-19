@@ -92,10 +92,12 @@ deadline is cleared, and late AI results or timeouts get `409`.
 
 ## Policy
 
-`lifecycle::policy` returns the organization settings above, read in the
-transition's transaction. Until organization settings and AI configuration are
-persisted it returns the spec defaults: AI unavailable, requester skip off,
-reopening off, cancellation anytime while open, 168-hour confirmation timeout.
+`lifecycle::policy` reads the Admin's organization settings (`organization`
+row: `allow_reopening`, `requester_cancellation_policy`,
+`resolution_confirmation_hours`, `allow_requester_ai_skip`) `FOR SHARE` in the
+transition's transaction, so a concurrent settings change waits until the
+transition that relied on the old values commits. AI stays unavailable until AI
+configuration is persisted.
 
 ## Concurrency
 

@@ -2474,6 +2474,7 @@
       },
       "CancellationPolicy": {
         "type": "string",
+        "description": "When the owning requester may cancel a submitted open ticket.",
         "enum": [
           "anytime_while_open",
           "before_work_starts",
