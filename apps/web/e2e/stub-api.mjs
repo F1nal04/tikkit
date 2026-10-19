@@ -291,6 +291,13 @@ createServer(async (req, res) => {
     let items = live.filter((t) => (view === 'all' ? true : inView(t, view)) && (status ? t.status === status : OPEN.includes(t.status)))
     if (q.get('unassigned') === 'true') items = items.filter((t) => !t.assignment.assignee_display_name)
     if (q.get('priority_id')) items = items.filter((t) => t.priority_id === q.get('priority_id'))
+    // Search: a reference, or 3+ characters of the subject (the real API also searches more fields).
+    const text = q.get('q')?.trim()
+    if (text) {
+      const reference = /^#?(\d+)$/.exec(text)?.[1]
+      if (!reference && text.length < 3) return validation(res, { q: ['too_short'] })
+      items = items.filter((t) => String(t.reference) === reference || (text.length >= 3 && t.subject.toLowerCase().includes(text.toLowerCase())))
+    }
     const sort = q.get('sort') ?? 'newest'
     items = [...items].sort((a, b) =>
       sort === 'priority'
@@ -303,8 +310,45 @@ createServer(async (req, res) => {
     return reply(res, 200, { items: page, next_cursor: from + limit < items.length ? String(from + limit) : null })
   }
 
-  // --- Ticket form
+  // --- Saved views and bulk actions (docs/queues.md)
   const st = stateOf(req)
+  if (pathname.startsWith('/api/saved-views') || pathname === '/api/queue/bulk-options' || route === 'POST /api/tickets/bulk') {
+    if (ROLES[user] === 'user') return fail(res, 403, 'forbidden')
+    st.views ??= []
+    if (route === 'GET /api/saved-views') return reply(res, 200, st.views)
+    if (route === 'POST /api/saved-views') {
+      const { name, filters } = await readBody(req)
+      if (!name?.trim()) return validation(res, { name: ['required'] })
+      if (st.views.some((v) => v.name === name.trim())) return validation(res, { name: ['taken'] })
+      const view = { id: randomUUID(), name: name.trim(), filters, stale: [], created_at: new Date().toISOString() }
+      st.views.push(view)
+      return reply(res, 201, view)
+    }
+    if (req.method === 'DELETE') {
+      const before = st.views.length
+      st.views = st.views.filter((v) => `/api/saved-views/${v.id}` !== pathname)
+      return before === st.views.length ? fail(res, 404, 'not_found') : reply(res, 204)
+    }
+    if (pathname === '/api/queue/bulk-options') {
+      const assignees = ['team_lead', 'admin'].includes(ROLES[user]) ? DESK.map((u) => ({ id: u, display_name: u, team_id: TEAMS[0].id, team_name: 'Desk' })) : []
+      return reply(res, 200, { teams: TEAMS, assignees })
+    }
+    // Like the real API, each item runs the single-ticket endpoint on its own.
+    const { change, tickets } = await readBody(req)
+    const endpoint = ['dispatch', 'return_to_general', 'claim', 'assign', 'unassign'].includes(change.action) ? 'assignment' : 'staff-actions'
+    const results = []
+    for (const t of tickets) {
+      const r = await fetch(`http://127.0.0.1:${process.env.PORT}/api/tickets/${t.id}/${endpoint}`, {
+        method: 'POST',
+        headers: { cookie: req.headers.cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...change, expected_updated_at: t.expected_updated_at }),
+      })
+      results.push({ id: t.id, error: r.ok ? null : (await r.json()).error.code })
+    }
+    return reply(res, 200, { results })
+  }
+
+  // --- Ticket form
   const draftId = /^\/api\/ticket-drafts\/([^/]+)(\/submit)?$/.exec(pathname)
   const shotId = /^\/api\/screenshots\/([^/]+)(\/(?:preview|download))?$/.exec(pathname)
   st.policy ??= {}

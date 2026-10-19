@@ -45,7 +45,7 @@ signed in, and reloads only layout data, so mounted forms keep their input.
 
 One page serves every queue view (`general`, `team`, `mine`, and the Admin-only
 `all`), as tabs with open-work counts from `GET /api/queue/counts`. The address bar
-is the whole state: `?view=&status=&category_id=&priority_id=&unassigned=true&sort=&cursor=`.
+is the whole state: `?view=&q=&status=&category_id=&priority_id=&unassigned=true&sort=&cursor=`.
 `src/lib/queue.ts` parses it (unknown values fall back to defaults) and builds the
 tab, filter-reset, and pagination links; the filter form is a plain `GET`, so it
 works before hydration. Pages go forward with the API's cursor ("Next page") or back
@@ -55,6 +55,16 @@ and shows an alert with a retry button that reruns the load; any other error is 
 real answer and goes to the error page. Ages render after mount (relative to the
 clock), so server and client markup agree; until then the UTC creation time shows.
 Server rules, filters, and visibility: [queues.md](queues.md).
+
+The search box is a field of the same form (`q`); a search the API rejects as too
+short or long keeps the page and shows the field error. Saved views list as links
+built from their filters minus the `stale` ones the API reports (with a note naming
+them); saving posts the current filters without the cursor. Row checkboxes and a
+page-wide checkbox select tickets; the bulk bar then offers the actions the role can
+use (assignment only with `GET /api/queue/bulk-options` assignees, no claiming for
+Admins) and sends each ticket with the `updated_at` it was listed with. The result
+names each ticket that did not change and why, in a polite live region; failed
+tickets stay selected and the page reloads for fresh versions.
 
 Open queue and staff detail pages stay current with `poll` (`src/lib/poll.ts`):
 every 15 seconds while the tab is visible, and at once when it becomes visible or

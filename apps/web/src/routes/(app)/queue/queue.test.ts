@@ -35,6 +35,9 @@ function show(search = '', role: Role = 'operator', over: Record<string, unknown
     page: { items: [ticket(1), ticket(2, { assignment: { team_name: 'Desk', assignee_display_name: 'Olga' }, status: 'in_progress' })], next_cursor: null },
     counts: { general: 2, team: 5, mine: 1, all: null },
     catalog,
+    views: [],
+    options: { teams: [{ id: 't1', name: 'Desk' }], assignees: [] },
+    searchError: null,
     unavailable: false,
     ...over,
   }
@@ -136,4 +139,93 @@ test('polls the counts marker and reloads the queue only when it changed', async
     vi.unstubAllGlobals()
     invalidateAll.mockClear()
   }
+})
+
+test('searches through the filter form and shows bounds errors at the field', () => {
+  show('q=printer')
+  const search = screen.getByRole('searchbox', { name: 'Search' }) as HTMLInputElement
+  expect(search.value).toBe('printer')
+  expect(search.getAttribute('aria-describedby')).toBe('q-hint')
+  expect(search.form?.getAttribute('aria-label')).toBe('Filter and sort')
+  document.body.innerHTML = ''
+  show('q=ab', 'operator', { searchError: 'too_short', page: { items: [], next_cursor: null } })
+  const invalid = screen.getByRole('searchbox', { name: 'Search' })
+  expect(invalid.getAttribute('aria-invalid')).toBe('true')
+  expect(screen.getByText('This value is too short.')).toBeTruthy()
+})
+
+test('lists saved views, skipping stale filters, and saves the current filters', async () => {
+  const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({}), { status: 201 }))
+  vi.stubGlobal('fetch', fetch)
+  try {
+    const views = [
+      { id: 'v1', name: 'Urgent VPN', created_at: '', filters: { view: 'team', priority_id: 'p1', category_id: 'gone', q: 'vpn' }, stale: ['category_id'] },
+    ]
+    show('view=team&q=printer&status=queued', 'operator', { views })
+    const section = screen.getByRole('region', { name: 'Saved views' })
+    expect(within(section).getByRole('link', { name: 'Urgent VPN' }).getAttribute('href')).toBe('/queue?view=team&priority_id=p1&q=vpn')
+    expect(section.textContent).toContain('Some filters no longer apply and are skipped: category.')
+    expect(within(section).getByRole('button', { name: 'Delete view Urgent VPN' })).toBeTruthy()
+    await fireEvent.input(screen.getByLabelText('View name'), { target: { value: 'Printers' } })
+    await fireEvent.submit(screen.getByRole('form', { name: 'Save these filters as a view' }))
+    const [url, init] = fetch.mock.calls[0]
+    expect(String(url)).toContain('/api/saved-views')
+    expect(JSON.parse(init.body)).toEqual({ name: 'Printers', filters: { view: 'team', status: 'queued', q: 'printer' } })
+    expect(await screen.findByText('View saved.')).toBeTruthy()
+    expect(invalidateAll).toHaveBeenCalled()
+  } finally {
+    vi.unstubAllGlobals()
+    invalidateAll.mockClear()
+  }
+})
+
+test('bulk actions send each ticket with its listed version and report failures per ticket', async () => {
+  const fetch = vi.fn().mockImplementation(async () =>
+    new Response(JSON.stringify({ results: [
+      { id: ticket(1).id, error: null },
+      { id: ticket(2).id, error: 'forbidden' },
+    ] })),
+  )
+  vi.stubGlobal('fetch', fetch)
+  try {
+    show()
+    expect(screen.queryByRole('form', { name: 'Change selected tickets' })).toBeNull()
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select all tickets on this page' }))
+    const bar = screen.getByRole('form', { name: 'Change selected tickets' })
+    expect(bar.textContent).toContain('2 selected')
+    const action = within(bar).getByLabelText('Action') as HTMLSelectElement
+    // Operators get no assignment management; Admin-only overview never offers claiming to Admins.
+    expect([...action.options].map((o) => o.value)).toEqual(['start_work', 'request_information', 'set_priority', 'claim', 'dispatch', 'return_to_general'])
+    await fireEvent.change(action, { target: { value: 'dispatch' } })
+    await fireEvent.change(within(bar).getByLabelText('Team'), { target: { value: 't1' } })
+    await fireEvent.submit(bar)
+    const [url, init] = fetch.mock.calls[0]
+    expect(String(url)).toContain('/api/tickets/bulk')
+    expect(JSON.parse(init.body)).toEqual({
+      change: { action: 'dispatch', team_id: 't1' },
+      tickets: [
+        { id: ticket(1).id, expected_updated_at: '2026-10-20T10:00:00Z' },
+        { id: ticket(2).id, expected_updated_at: '2026-10-20T10:00:00Z' },
+      ],
+    })
+    const status = await screen.findByText(/1 of 2 tickets changed/)
+    expect(status.textContent).toContain('#102: you may not do this on this ticket')
+    expect(invalidateAll).toHaveBeenCalled()
+    // The failed ticket stays selected for a retry.
+    expect((screen.getByRole('checkbox', { name: 'Select #102' }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('checkbox', { name: 'Select #101' }) as HTMLInputElement).checked).toBe(false)
+  } finally {
+    vi.unstubAllGlobals()
+    invalidateAll.mockClear()
+  }
+})
+
+test('leads and Admins get assignment in the bulk menu; Admins never claim', async () => {
+  const options = { teams: [], assignees: [{ id: 'a1', display_name: 'Olga', team_id: 't1', team_name: 'Desk' }] }
+  show('view=all', 'admin', { options, counts: { general: 2, team: 9, mine: 0, all: 11 } })
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Select #101' }))
+  const action = screen.getByLabelText('Action') as HTMLSelectElement
+  expect([...action.options].map((o) => o.value)).toEqual(['start_work', 'request_information', 'set_priority', 'dispatch', 'return_to_general', 'assign', 'unassign'])
+  await fireEvent.change(action, { target: { value: 'assign' } })
+  expect([...(screen.getByLabelText('Assignee') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(['Choose…', 'Olga (Desk)'])
 })

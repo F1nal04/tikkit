@@ -1,6 +1,6 @@
 import type { Role } from '@tikkit/api-client'
 import { expect, test } from 'vitest'
-import { age, parseQueue, queueHref, queueQuery, viewsFor } from '#lib/queue.ts'
+import { age, bulkChange, parseQueue, queueHref, queueQuery, savedViewHref, viewFilters, viewsFor } from '#lib/queue.ts'
 
 const parse = (search: string, role: Role = 'operator') => parseQueue(new URLSearchParams(search), role)
 
@@ -12,6 +12,7 @@ test('defaults to open general-queue work, newest first', () => {
     priority_id: '',
     unassigned: false,
     sort: 'newest',
+    q: '',
     cursor: '',
   })
 })
@@ -43,4 +44,29 @@ test('age uses minutes, then hours, then days', () => {
   expect(age('2026-10-20T07:00:00Z', now)).toEqual({ value: 5, unit: 'hour' })
   expect(age('2026-10-17T12:00:00Z', now)).toEqual({ value: 3, unit: 'day' })
   expect(age('2026-10-21T12:00:00Z', now)).toEqual({ value: 0, unit: 'minute' })
+})
+
+test('search text travels trimmed in links and queries', () => {
+  expect(parse('q=%20printer%20').q).toBe('printer')
+  expect(queueHref({ view: 'team', q: '#12' })).toBe('/queue?view=team&q=%2312')
+})
+
+test('saved views store filters without the page and skip stale ones when applied', () => {
+  expect(viewFilters(parse('view=team&q=vpn&status=queued&cursor=abc'))).toEqual({ view: 'team', status: 'queued', q: 'vpn' })
+  const view = {
+    id: 'v1',
+    name: 'VPN',
+    created_at: '2026-10-20T10:00:00Z',
+    filters: { view: 'team', category_id: 'c-old', priority_id: 'p1', q: 'vpn', team_id: null },
+    stale: ['category_id'],
+  } as const
+  expect(savedViewHref({ ...view, stale: [...view.stale] })).toBe('/queue?view=team&priority_id=p1&q=vpn')
+  expect(savedViewHref({ ...view, stale: ['view', 'category_id', 'priority_id', 'q'] })).toBe('/queue')
+})
+
+test('bulk changes carry exactly their target', () => {
+  expect(bulkChange('claim', 'ignored')).toEqual({ action: 'claim' })
+  expect(bulkChange('dispatch', 't1')).toEqual({ action: 'dispatch', team_id: 't1' })
+  expect(bulkChange('assign', 'a1')).toEqual({ action: 'assign', assignee_account_id: 'a1' })
+  expect(bulkChange('set_priority', 'p1')).toEqual({ action: 'set_priority', priority_id: 'p1' })
 })
