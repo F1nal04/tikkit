@@ -141,6 +141,10 @@ pub struct QueueCounts {
     /// Admin only.
     #[schema(required = true)]
     pub all: Option<i64>,
+    /// Opaque change marker, compare for equality only: changes whenever an open
+    /// ticket the caller may see enters, leaves, or changes, or the caller's role or
+    /// team changes. Queue pages poll this endpoint and reload when it differs.
+    pub version: String,
 }
 
 /// Staff queue page, filtered and ordered as requested. `view=team` for a
@@ -340,11 +344,15 @@ pub async fn queue_counts(
     let actor = Actor::load(&state.pool, &user).await?;
     let admin = actor.role == Role::Admin;
     let (id, role, team) = actor.visibility_binds();
-    let (general, team_count, mine, all): (i64, i64, i64, i64) = sqlx::query_as(&format!(
+    // Finished tickets only change by leaving or re-entering open work (or by the
+    // caller's team changing), so open work alone moves the marker for every view.
+    // ponytail: hashes every visible open ticket per poll; fine for one organization.
+    let (general, team_count, mine, all, digest): (i64, i64, i64, i64, String) = sqlx::query_as(&format!(
         "SELECT count(*) FILTER (WHERE t.team_id IS NULL),
                 count(*) FILTER (WHERE t.team_id IS NOT NULL),
                 count(*) FILTER (WHERE t.assignee_account_id = $1),
-                count(*)
+                count(*),
+                md5(COALESCE(string_agg(t.id::text || '@' || t.updated_at::text, ',' ORDER BY t.id), ''))
          FROM tickets t
          WHERE {visible} AND t.status = ANY($4::ticket_status[])",
         visible = authz::staff_visible_sql(1),
@@ -360,5 +368,6 @@ pub async fn queue_counts(
         team: team_count,
         mine,
         all: admin.then_some(all),
+        version: format!("{digest}.{}", authz::capability_key(&actor)),
     }))
 }

@@ -3471,6 +3471,58 @@
         }
       }
     },
+    "/api/tickets/{id}/activity": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Poll target for open ticket pages: reload the ticket when `version` differs\nfrom the one loaded with it. Same visibility as `GET /api/tickets/{id}`, checked\non every call, so a transfer, team removal, or revoked session stops it (`404`/`401`).\nInternal notes count only in the staff view.",
+        "operationId": "ticket_activity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketActivity"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible to the caller)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tickets/{id}/assignment": {
       "post": {
         "tags": [
@@ -5843,7 +5895,8 @@
           "general",
           "team",
           "mine",
-          "all"
+          "all",
+          "version"
         ],
         "properties": {
           "all": {
@@ -5866,6 +5919,10 @@
             "type": "integer",
             "format": "int64",
             "description": "The caller's team; for an Admin, every dispatched ticket."
+          },
+          "version": {
+            "type": "string",
+            "description": "Opaque change marker, compare for equality only: changes whenever an open\nticket the caller may see enters, leaves, or changes, or the caller's role or\nteam changes. Queue pages poll this endpoint and reload when it differs."
           }
         }
       },
@@ -6650,6 +6707,19 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "TicketActivity": {
+        "type": "object",
+        "description": "A cheap change marker for an open ticket page (docs/lifecycle.md \"Refreshing\").",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Opaque; compare for equality only. Changes with every status, team, assignee,\nor priority change, every message the caller may read, and the caller's own\nrole or team (so open pages refresh their capabilities)."
           }
         }
       },

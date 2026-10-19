@@ -117,3 +117,11 @@ active `dispatch_teams`, and eligible `assignees` from the same rules.
 `all` (Admin only, else `null`), computed with the same predicate and the same
 view definitions as the lists, so a count always equals the length of walking
 that view's default list.
+
+It also returns `version`, an opaque change marker (compare for equality): a
+digest of the visible open tickets' IDs and `updated_at`, plus the caller's role
+and team. Anything entering, leaving, or changing in the caller's open work moves
+it; work on tickets the caller cannot see never does. Finished tickets only change
+by leaving or re-entering open work, so the marker covers the `closed` and
+`cancelled` filters too. Queue pages poll this endpoint and reload when it
+differs ([lifecycle.md](lifecycle.md#concurrent-edits-and-refreshing)).
