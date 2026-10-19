@@ -3180,9 +3180,35 @@
         "operationId": "list_own_tickets",
         "parameters": [
           {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TicketStatus"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive creation timestamp.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive creation timestamp.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "description": "Page size, 1–100 (default 25).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3192,7 +3218,6 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3343,6 +3368,98 @@
           },
           "404": {
             "description": "`not_found` (missing or not visible to the caller)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/actions": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Apply one lifecycle decision atomically. Stale/duplicate proposal decisions\nreturn 409; policy is read again by the lifecycle inside the transaction.",
+        "operationId": "requester_action",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequesterAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current policy or actor denies the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale state or proposal version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3743,6 +3860,17 @@
           },
           "username": {
             "type": "string"
+          }
+        }
+      },
+      "ActionResult": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
           }
         }
       },
@@ -5394,6 +5522,81 @@
         },
         "additionalProperties": false
       },
+      "RequesterAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "proposal_version",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "accept_resolution"
+                ]
+              },
+              "proposal_version": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "proposal_version",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reject_resolution"
+                ]
+              },
+              "proposal_version": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "cancel"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reopen"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Explicit decisions only: replies and views never implicitly accept a proposal."
+      },
       "ResetPasswordRequest": {
         "type": "object",
         "required": [
@@ -5868,6 +6071,7 @@
           "view",
           "subject",
           "description",
+          "ai_solution",
           "category_id",
           "category_name",
           "priority_id",
@@ -5884,6 +6088,13 @@
           "transitions"
         ],
         "properties": {
+          "ai_solution": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The single persisted AI suggestion, plain text; null for tickets without one."
+          },
           "assignment": {
             "$ref": "#/components/schemas/TicketAssignmentView"
           },

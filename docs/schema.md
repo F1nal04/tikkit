@@ -236,3 +236,13 @@ record the actor and `{message_id}` only, without content or screenshot IDs;
 they have no status columns. Requester transition history never includes
 these events. See [conversations.md](conversations.md) for endpoints,
 authorization, rendering, ordering, retries, and notification integration.
+
+## Requester history
+
+Migration `0013_requester_history.sql` adds nullable `tickets.ai_solution` for
+the single persisted plain-text suggestion (nonblank, at most 100,000
+characters). Its trigger permits the first write only during an AI stage and
+rejects replacements/removal or writes to finished records (`23001`). There is
+no API to set it here; provider processing remains separate work. Existing
+records without a persisted suggestion remain readable with an explicit
+unavailable-suggestion message. No new configuration variables are required.
