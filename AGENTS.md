@@ -4,7 +4,7 @@ Tikkit is a self-hosted IT ticketing system (one organization per deployment) wi
 
 ## Commands
 
-Requires Bun ≥ 1.4.3, Node ≥ 22.17, Rust ≥ 1.85 (with rustfmt + clippy). Run from the repo root; Turbo fans out to `apps/*`.
+Requires Bun ≥ 1.4.3, Node ≥ 22.17, Rust ≥ 1.88 (with rustfmt + clippy). Run from the repo root; Turbo fans out to `apps/*`.
 
 ```sh
 bun install
@@ -12,7 +12,8 @@ bun run dev                          # web on :3000, API on 127.0.0.1:3001
 bun run dev --filter=@tikkit/web     # or --filter=@tikkit/api
 bun run check                        # svelte-kit sync + svelte-check, cargo fmt --check, cargo clippy -D warnings
 bun run build                        # vite build (adapter-node) + cargo build --release
-bun run test                         # vitest (web) + cargo test
+bun run test                         # vitest (web, api-client) + cargo test
+bun run test:e2e                     # Playwright browser tests (builds first; separate from test)
 bun run start                        # run production builds (build first)
 ```
 
@@ -25,11 +26,23 @@ cargo clippy --locked --all-targets -- -D warnings     # must be warning-free; C
 cargo fmt --all
 ```
 
+Database (PostgreSQL 17, see `docs/schema.md`):
+
+```sh
+docker compose -f docker-compose.dev.yml up -d --wait   # dev Postgres on 127.0.0.1:5432
+cp .env.example .env                                     # API and tests load .env
+TEST_DATABASE_URL=postgres://tikkit:tikkit@127.0.0.1:5432/tikkit cargo test --locked -p tikkit-api
+```
+
 Notes:
 
 - Always use `--locked` with Cargo (the package.json scripts do); don't let Cargo rewrite `Cargo.lock` silently.
 - `.svelte-kit/` holds generated types and build output; `check` runs `svelte-kit sync` first, so it doesn't depend on `build`. Don't hand-edit it.
 - SvelteKit 3 conventions: config is passed to `sveltekit(...)` in `vite.config.ts` (no `svelte.config.js`), `src/lib` is imported as `#lib/...` (package.json subpath imports, explicit `.ts` extension), and env vars are declared in `src/env.ts` and read from `$app/env/private`.
+- Migrations are `apps/api/migrations/NNNN_*.sql`, embedded via `sqlx::migrate!` and applied at API startup. Never edit an applied migration. Use runtime `sqlx::query`/`query_as`, not the compile-time `query!` macros.
+- Runtime config is validated in `apps/api/src/config.rs` (all errors at once, values never printed); document new variables in `docs/configuration.md` and `.env.example`. `/api/health` is liveness, `/api/ready` checks DB + migrations.
+- API conventions (error envelope, extractors, pagination, OpenAPI): `docs/api-conventions.md`. Use `api::{Json, Path, Query, ApiError}`, not raw axum extractors. After changing routes/schemas run `cargo run --locked -p tikkit-api --bin openapi > apps/api/openapi.json` and `bun run --cwd packages/api-client generate`; tests/checks fail on drift.
+- Testing layers, commands, and fixtures: `docs/testing.md`. DB integration tests live in `apps/api/tests/`; use `mod support;` for `TestDb` (own database per test, skipped without `TEST_DATABASE_URL`/`DATABASE_URL`), `test_app`, and the five-role `fixtures`. First-time browser setup: `cd apps/web && bunx playwright install --with-deps chromium`.
 - The dev server does not hot-reload Rust. Restart `bun run dev` (or just the api filter) after backend changes.
 
 ## Architecture
@@ -40,7 +53,7 @@ Bun + Turborepo monorepo, two apps, same-origin routing by path prefix:
 - `apps/api` — Rust crate `tikkit-api` (Axum 0.8, Tokio, serde). `lib.rs` exposes `app() -> Router`; `main.rs` only binds the listener (`API_ADDR`, default `127.0.0.1:3001`) and handles graceful shutdown. Keep routes/handlers in the lib so tests can drive the router with `tower::ServiceExt::oneshot` without a socket (see the existing health test). The `package.json` in this dir exists solely to let Turbo invoke Cargo.
 - All backend routes are mounted under `/api/*`. In production a reverse proxy sends `/api/*` to Rust and everything else to the Node frontend; changing the API dev port means also changing the Vite proxy.
 
-Planned per `spec.md` (not yet present): PostgreSQL with a single migration path, private filesystem volume for screenshots, durable job processing (AI attempts, notification outbox, resolution-confirmation timeouts), Docker Compose deployment. Validation and authorization are enforced in Rust, not the frontend.
+Planned per `spec.md` (not yet present): private filesystem volume for screenshots, durable job processing (AI attempts, notification outbox, resolution-confirmation timeouts), Docker Compose deployment. Validation and authorization are enforced in Rust, not the frontend.
 
 ## Product invariants that code must preserve
 

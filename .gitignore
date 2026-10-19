@@ -12,3 +12,5 @@ coverage/
 *.pem
 *-debug.log*
 .vercel/
+test-results/
+playwright-report/

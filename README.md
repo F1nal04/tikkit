@@ -6,7 +6,7 @@ A Bun + Turborepo workspace with a SvelteKit frontend and Rust backend.
 
 - Bun 1.4.3 or newer
 - Node.js 22.17 or newer
-- Rust 1.85 or newer, including Cargo, rustfmt, and Clippy
+- Rust 1.88 or newer, including Cargo, rustfmt, and Clippy
 
 ## Getting started
 
@@ -19,8 +19,51 @@ Open <http://localhost:3000>. The page checks the Rust API through Vite's
 `/api` proxy. Add `?lang=de` for German. The API listens on `127.0.0.1:3001` and exposes
 `GET /api/health`, returning `{"status":"ok"}`.
 
+On a fresh database every page redirects to <http://localhost:3000/setup>:
+create the first Admin there (username, contact email, password, language) and
+you are signed in. Setup works exactly once; afterwards sign in at `/login`.
+In production, complete `/setup` before exposing the deployment publicly:
+until then whoever opens it first becomes the Admin.
+Sessions, cookies, CSRF, and rate limits are described in [docs/auth.md](docs/auth.md).
+
 The frontend reloads automatically. Restart `bun run dev` after Rust changes.
 Cargo downloads and compiles Rust dependencies on the first run.
+
+## Database
+
+The API needs PostgreSQL 17. For development, start the pinned container and
+copy the example environment (the API loads `.env` from the repository root):
+
+```sh
+docker compose -f docker-compose.dev.yml up -d --wait
+cp .env.example .env
+# then replace both CHANGE_ME values in .env with `openssl rand -base64 32` output
+```
+
+All API settings, probes (`/api/health`, `/api/ready`), graceful shutdown, and a
+production Compose sketch are described in
+[docs/configuration.md](docs/configuration.md).
+
+The API applies migrations from `apps/api/migrations/` on startup, so
+`bun run dev` or `cargo run -p tikkit-api` migrates a fresh database; it exits
+with an error if `DATABASE_URL` is missing, the database is unreachable, or the
+schema is newer than the build. Integration tests create and drop a throwaway
+database per test through `TEST_DATABASE_URL` and are skipped when it is unset:
+
+```sh
+TEST_DATABASE_URL=postgres://tikkit:tikkit@127.0.0.1:5432/tikkit cargo test --locked -p tikkit-api
+```
+
+Stop with `docker compose -f docker-compose.dev.yml down` (add `-v` to delete
+the data volume). See [docs/schema.md](docs/schema.md) for identifiers and
+database-enforced invariants.
+
+## API contract
+
+The API publishes OpenAPI at `/api/openapi.json` (committed as
+`apps/api/openapi.json`); `packages/api-client` is the typed client generated
+from it. Error format, pagination, and regeneration commands are in
+[docs/api-conventions.md](docs/api-conventions.md).
 
 ## Layout
 
@@ -28,6 +71,8 @@ Cargo downloads and compiles Rust dependencies on the first run.
 apps/
   web/      SvelteKit, Svelte, TypeScript, Vite (adapter-node)
   api/      Axum and Tokio; package.json connects Cargo to Turbo
+packages/
+  api-client/  Typed API client generated from apps/api/openapi.json
 Cargo.toml  Rust workspace (shared target directory and lockfile)
 turbo.json  Workspace tasks and caching
 ```
@@ -38,7 +83,8 @@ turbo.json  Workspace tasks and caching
 bun run dev       # Run both applications
 bun run build     # Build the frontend and release API binary
 bun run check     # svelte-check, rustfmt, and Clippy
-bun run test      # Vitest component tests and Rust API tests
+bun run test      # Vitest and Rust API tests (see docs/testing.md)
+bun run test:e2e  # Playwright browser tests
 bun run start     # Run both production builds (build first)
 ```
 

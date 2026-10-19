@@ -1,0 +1,1641 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tikkit API",
+    "description": "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; lists use `limit`/`cursor` and return a Page. Authentication is the HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send `X-Requested-With: tikkit` or is rejected with 403 `csrf_rejected` (docs/auth.md).",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "1"
+  },
+  "paths": {
+    "/api/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "All accounts, newest first (Admin only).",
+        "operationId": "list_accounts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AccountSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/deactivate": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Deactivates an account (Admin only): login is refused and all its sessions\nend immediately. Tickets and audit history are kept. The last active Admin\ncannot be deactivated.",
+        "operationId": "deactivate_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deactivated (or already inactive)"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`last_active_admin`, `active_team_lead`, or `conflict` (concurrent change)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/reactivate": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Reactivates an account (Admin only).",
+        "operationId": "reactivate_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Reactivated (or already active)"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs in with username and password. Every failure is the same\n`invalid_credentials`, whether the account is unknown, deactivated, or the password wrong.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in; a new session cookie is set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`invalid_credentials`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Revokes the current session and clears the cookie. Idempotent.",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Signed out; cookie cleared"
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The signed-in account.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Updates the signed-in account's email and/or language.",
+        "operationId": "update_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`email: invalid`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Changes the password, revokes every session of this account, and issues a fresh one.",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password changed; new session cookie set"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`current_password: incorrect`, `new_password: too_short|too_long|too_common`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/recovery": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Starts password recovery for a username. Always `202` with no body, whether\nor not the account exists, so the response reveals nothing. An active\naccount gets a one-hour, single-use link at its stored email when SMTP is configured.",
+        "operationId": "request_recovery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted; identical for unknown usernames"
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/recovery/reset": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Sets a new password with a recovery token, invalidates every other recovery\ntoken of the account, and revokes all its sessions. Sign in afterwards.",
+        "operationId": "reset_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password changed; all sessions revoked"
+          },
+          "410": {
+            "description": "`reset_token_invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`new_password`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Liveness: the process is serving. Touches no dependencies.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invitations": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Pending (usable) invitations, newest first (Admin only).",
+        "operationId": "list_invitations",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Invitation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Creates a single-use invitation (Admin only). The role is fixed here and\napplied on acceptance; the invitee cannot change it.",
+        "operationId": "create_invitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInvitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedInvitation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`email`, `expires_in_hours`: `invalid`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invitations/accept": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Creates the invited account with the invitation's role and signs it in.\nThe invitation is consumed only when this commits; validation errors and\nusername collisions leave it usable. Concurrent acceptance has one winner.",
+        "operationId": "accept_invitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInvitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Account created; session cookie set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "`invitation_invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`username: taken|invalid|...`, `email`, `password`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invitations/lookup": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Checks an invitation token without consuming it. The token travels in the\nbody, never in the URL, so it stays out of request logs.",
+        "operationId": "lookup_invitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreview"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "`invitation_invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invitations/{id}/revoke": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Revokes a pending invitation (Admin only). Used or already revoked\ninvitations are `not_found`.",
+        "operationId": "revoke_invitation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "This OpenAPI document.",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/ready": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Readiness: the database answers and its schema matches this build.\nReports stable check identifiers only, never connection details.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "Ready to serve traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A required dependency is unavailable or incompatible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/setup": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Whether first-admin setup is still open.",
+        "operationId": "setup_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Creates the first Admin and signs them in. Works exactly once per deployment.",
+        "operationId": "setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Admin created; session cookie set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`setup_already_completed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcceptInvitationRequest": {
+        "type": "object",
+        "required": [
+          "token",
+          "username",
+          "email",
+          "password",
+          "language"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "password": {
+            "type": "string",
+            "description": "12-256 characters."
+          },
+          "token": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string",
+            "description": "3-64 characters: letters, digits, `.`, `_`, `-`. Case-insensitive."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Account": {
+        "type": "object",
+        "description": "Account of the current session.",
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "email",
+          "role",
+          "language"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact address only; never identifies an account."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "email",
+          "role",
+          "language",
+          "is_active",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string",
+            "description": "12-256 characters."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Checks": {
+        "type": "object",
+        "required": [
+          "database",
+          "migrations"
+        ],
+        "properties": {
+          "database": {
+            "type": "string",
+            "description": "`ok` or `unavailable`."
+          },
+          "migrations": {
+            "type": "string",
+            "description": "`ok`, `pending`, `incompatible`, or `unknown`."
+          }
+        }
+      },
+      "CreateInvitationRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional recipient. With SMTP configured the link is emailed there."
+          },
+          "expires_in_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Lifetime in hours, 1-720. Default 168 (7 days).",
+            "minimum": 0
+          },
+          "language": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Language",
+                "description": "Language of the email and preselected account language. Default `en`."
+              }
+            ]
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "Role of the account created from this invitation. Default `user`."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatedInvitation": {
+        "type": "object",
+        "required": [
+          "invitation",
+          "url",
+          "emailed"
+        ],
+        "properties": {
+          "emailed": {
+            "type": "boolean",
+            "description": "Whether an email was queued (SMTP configured and an email given)."
+          },
+          "invitation": {
+            "$ref": "#/components/schemas/Invitation"
+          },
+          "url": {
+            "type": "string",
+            "description": "Single-use acceptance link. Shown only now; only its hash is stored."
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "details": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorDetails"
+              }
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Safe English fallback text; translate by `code` instead of showing this."
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Stable machine-readable error codes. Never translated; clients map them to text.",
+        "enum": [
+          "validation_failed",
+          "invalid_json",
+          "unknown_field",
+          "invalid_identifier",
+          "invalid_query",
+          "bad_request",
+          "unsupported_media_type",
+          "unauthorized",
+          "invalid_credentials",
+          "csrf_rejected",
+          "rate_limited",
+          "setup_already_completed",
+          "invitation_invalid",
+          "reset_token_invalid",
+          "last_active_admin",
+          "active_team_lead",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "conflict",
+          "payload_too_large",
+          "internal"
+        ]
+      },
+      "ErrorDetails": {
+        "type": "object",
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "object",
+            "description": "Invalid input fields (dotted paths) and their stable error codes.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Same value as the `x-request-id` response header."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "Invitation": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "email",
+          "language",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "InvitationPreview": {
+        "type": "object",
+        "description": "What an invitee sees before accepting. Opening a link never consumes it.",
+        "required": [
+          "role",
+          "email",
+          "language",
+          "expires_at"
+        ],
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "Language": {
+        "type": "string",
+        "description": "Machine identifiers published in the contract; display text is localized by clients.",
+        "enum": [
+          "en",
+          "de"
+        ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Page_AccountSummary": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "username",
+                "display_name",
+                "email",
+                "role",
+                "language",
+                "is_active",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "is_active": {
+                  "type": "boolean"
+                },
+                "language": {
+                  "$ref": "#/components/schemas/Language"
+                },
+                "role": {
+                  "$ref": "#/components/schemas/Role"
+                },
+                "username": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Invitation": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "role",
+                "email",
+                "language",
+                "created_at",
+                "expires_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "language": {
+                  "$ref": "#/components/schemas/Language"
+                },
+                "role": {
+                  "$ref": "#/components/schemas/Role"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_TicketAssignmentView": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
+              "required": [
+                "team_name",
+                "assignee_display_name"
+              ],
+              "properties": {
+                "assignee_display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "team_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Readiness": {
+        "type": "object",
+        "required": [
+          "status",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/Checks"
+          },
+          "status": {
+            "type": "string",
+            "description": "`ready` or `unavailable`."
+          }
+        }
+      },
+      "RecoveryRequest": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "description": "12-256 characters."
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "user",
+          "operator",
+          "specialist",
+          "team_lead",
+          "admin"
+        ]
+      },
+      "SetupRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "email",
+          "password",
+          "language"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "password": {
+            "type": "string",
+            "description": "12-256 characters."
+          },
+          "username": {
+            "type": "string",
+            "description": "3-64 characters: letters, digits, `.`, `_`, `-`. Case-insensitive."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetupStatus": {
+        "type": "object",
+        "required": [
+          "setup_required"
+        ],
+        "properties": {
+          "setup_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TicketAssignmentView": {
+        "type": "object",
+        "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
+        "required": [
+          "team_name",
+          "assignee_display_name"
+        ],
+        "properties": {
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TicketStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "ai_processing",
+          "awaiting_ai_decision",
+          "queued",
+          "in_progress",
+          "waiting_for_requester",
+          "awaiting_confirmation",
+          "closed",
+          "cancelled",
+          "ai_solved"
+        ]
+      },
+      "TokenRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Contact address; omitted keeps the current one."
+          },
+          "language": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Language",
+                "description": "Interface and email language; omitted keeps the current one."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
