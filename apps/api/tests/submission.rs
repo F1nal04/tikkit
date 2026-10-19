@@ -73,6 +73,32 @@ async fn counts(w: &World) -> (i64, i64, i64) {
         .fetch_one(&w.db.pool).await.unwrap()
 }
 
+/// Hold the ticket insert open so a concurrent request must overlap the
+/// transaction instead of slipping in after commit.
+async fn hold_inserts(w: &World) {
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION slow_ticket_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN PERFORM pg_sleep(0.4); RETURN NEW; END $$",
+    )
+    .execute(&w.db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER slow_ticket_insert BEFORE INSERT ON tickets
+         FOR EACH ROW EXECUTE FUNCTION slow_ticket_insert()",
+    )
+    .execute(&w.db.pool)
+    .await
+    .unwrap();
+}
+
+async fn release_inserts(w: &World) {
+    sqlx::query("DROP TRIGGER IF EXISTS slow_ticket_insert ON tickets")
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn drafts_are_incomplete_owner_only_versioned_and_deletable() {
     let Some(w) = world().await else { return };
@@ -447,19 +473,47 @@ async fn duplicate_keys_are_atomic_payload_bound_and_account_scoped() {
     let Some(w) = world().await else { return };
     let key = Uuid::new_v4();
     let body = submission(&w, key);
+    // The insert sleeps inside the winner's transaction, so the loser has to
+    // block on the account/key advisory lock rather than run after commit.
+    hold_inserts(&w).await;
     let (a, b) = tokio::join!(
         send(&w, "POST", "/api/tickets", body.clone()),
         send(&w, "POST", "/api/tickets", body.clone())
     );
+    release_inserts(&w).await;
     assert!(a.status.is_success(), "{}", a.body);
     assert!(b.status.is_success(), "{}", b.body);
-    assert_ne!(a.status, b.status);
+    assert!(
+        (a.status == StatusCode::CREATED && b.status == StatusCode::OK)
+            || (a.status == StatusCode::OK && b.status == StatusCode::CREATED),
+        "one create and one replay, got {} and {}",
+        a.status,
+        b.status
+    );
     assert_eq!(a.body, b.body);
+    assert_eq!(a.body["status"], "queued");
     assert_eq!(counts(&w).await, (1, 1, 1));
     let mut changed = body.clone();
     changed["intake"]["subject"] = json!("different request");
     let r = send(&w, "POST", "/api/tickets", changed).await;
     assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.code(), "conflict");
+    let d = draft(&w, intake(&w)).await;
+    let r = send(
+        &w,
+        "POST",
+        &format!("/api/ticket-drafts/{}/submit", id(&d)),
+        json!({"version": 1, "idempotency_key": key}),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::CONFLICT,
+        "same key on the other endpoint: {}",
+        r.body
+    );
+    assert_eq!(r.code(), "conflict");
+    assert_eq!(counts(&w).await, (1, 1, 1));
     // Replay still returns the original receipt even after lifecycle state changes.
     let mut tx = w.db.pool.begin().await.unwrap();
     tikkit_api::lifecycle::transition(
@@ -474,7 +528,19 @@ async fn duplicate_keys_are_atomic_payload_bound_and_account_scoped() {
     .unwrap();
     tx.commit().await.unwrap();
     let retry = send(&w, "POST", "/api/tickets", body.clone()).await;
+    assert_eq!(retry.status, StatusCode::OK);
     assert_eq!(retry.body, a.body);
+    let live: String = sqlx::query_scalar("SELECT status::text FROM tickets WHERE id = $1")
+        .bind(id(&a.body))
+        .fetch_one(&w.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(live, "cancelled");
+    assert_eq!(
+        counts(&w).await,
+        (1, 2, 1),
+        "replay must not write another ticket or event"
+    );
     let other = fixtures::account(&w.db.pool, Role::User, "other").await;
     let cookie = login(&w.app, "other", PASSWORD).await.session();
     let r = call(&w.app, "POST", "/api/tickets", Some(body), Some(&cookie)).await;
@@ -497,6 +563,7 @@ async fn concurrent_draft_submit_and_edit_have_one_winner() {
     let d = draft(&w, intake(&w)).await;
     let path = format!("/api/ticket-drafts/{}", id(&d));
     let submit_path = format!("{path}/submit");
+    hold_inserts(&w).await;
     let a_key = Uuid::new_v4();
     let b_key = Uuid::new_v4();
     let (a, b) = tokio::join!(
@@ -550,6 +617,24 @@ async fn concurrent_draft_submit_and_edit_have_one_winner() {
         a.body,
         b.body
     );
+    release_inserts(&w).await;
+    let (tickets, events, keys) = counts(&w).await;
+    assert_eq!((events, keys), (tickets, tickets));
+    let row: (Option<String>, Option<Uuid>) = sqlx::query_as(
+        "SELECT intake->>'subject', submitted_ticket_id FROM ticket_drafts WHERE id = $1",
+    )
+    .bind(id(&d))
+    .fetch_one(&w.db.pool)
+    .await
+    .unwrap();
+    if a.status == StatusCode::CREATED {
+        assert_eq!(tickets, 2, "the edit must roll back when submit commits");
+        assert!(row.0.is_none() && row.1.is_some());
+    } else {
+        assert_eq!(tickets, 1, "submit must roll back when the edit commits");
+        assert_eq!(row.0.as_deref(), Some("new unsent text"));
+        assert!(row.1.is_none());
+    }
 }
 
 #[tokio::test]
