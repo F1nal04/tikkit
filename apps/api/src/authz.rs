@@ -125,6 +125,16 @@ impl Actor {
     }
 }
 
+/// Everything about the actor the ticket policy reads (role, team, leadership), as a
+/// string for change markers: open pages refresh their capabilities when it changes.
+pub fn capability_key(actor: &Actor) -> String {
+    let role = crate::auth::ident_str(actor.role);
+    match actor.team {
+        Some(t) => format!("{role}.{}.{}", t.team_id.simple(), u8::from(t.is_lead)),
+        None => role,
+    }
+}
+
 /// The one team an account belongs to (schema: at most one), ignoring archived teams.
 pub async fn team_of<'c>(
     db: impl PgExecutor<'c>,
