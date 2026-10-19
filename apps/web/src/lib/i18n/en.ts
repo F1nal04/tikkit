@@ -390,7 +390,7 @@ export default {
     replySent: 'Public reply sent.',
     noteSent: 'Internal note added.',
     appendOnly: 'Messages are permanent. They cannot be edited or deleted.',
-    unsentLocked: 'Your unsent message is kept here. Writing is unavailable for this ticket now.',
+    unsentLocked: 'Your unsent text is kept here. Writing is unavailable for this ticket now.',
     history: 'Status history',
     actor: 'By',
     reason: 'Reason',

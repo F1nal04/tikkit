@@ -391,7 +391,7 @@ export default {
     replySent: 'Öffentliche Antwort gesendet.',
     noteSent: 'Interne Notiz hinzugefügt.',
     appendOnly: 'Nachrichten sind dauerhaft. Sie können nicht bearbeitet oder gelöscht werden.',
-    unsentLocked: 'Ihre nicht gesendete Nachricht bleibt hier erhalten. Für dieses Ticket ist das Schreiben derzeit nicht möglich.',
+    unsentLocked: 'Ihr nicht gesendeter Text bleibt hier erhalten. Für dieses Ticket ist das Schreiben derzeit nicht möglich.',
     history: 'Statusverlauf',
     actor: 'Von',
     reason: 'Grund',

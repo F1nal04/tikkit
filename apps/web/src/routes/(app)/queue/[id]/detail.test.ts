@@ -117,3 +117,21 @@ test('AI handoff shows unavailable suggestion text without a stored solution fie
   show({ transitions: [{ id: 1, event_type: 'ai_not_solved', from_status: 'awaiting_ai_decision', to_status: 'queued', payload: { route: 'not_solved' }, created_at: '2026-10-02T10:00:00Z' }] })
   expect(screen.getByText('The AI suggestion text is unavailable for this record.')).toBeTruthy()
 })
+
+test('changing priority keeps an unrelated unsent resolution summary', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"status":"in_progress"}')))
+  show()
+  await fireEvent.input(screen.getByLabelText(/Resolution summary/), { target: { value: 'Unsent proposal' } })
+  await fireEvent.change(screen.getByLabelText('New priority'), { target: { value: 'p-urgent' } })
+  await fireEvent.click(screen.getByRole('button', { name: 'Save priority' }))
+  await waitFor(() => expect(screen.getByText('Ticket updated.')).toBeTruthy())
+  expect((screen.getByLabelText(/Resolution summary/) as HTMLTextAreaElement).value).toBe('Unsent proposal')
+})
+
+test('revoked write access leaves an unsent proposal visible for recovery', async () => {
+  const page = show()
+  await fireEvent.input(screen.getByLabelText(/Resolution summary/), { target: { value: 'Unsent proposal' } })
+  await page.rerender({ data: { ticket: { ...base, staff_access: { can_handle: false, can_reopen: false } }, locale: 'en', catalog, conversation: { items: [], next_cursor: null }, unavailable: false }, params: {} } as never)
+  expect((screen.getByLabelText(/Resolution summary/) as HTMLTextAreaElement).value).toBe('Unsent proposal')
+  expect(screen.queryByRole('button', { name: 'Propose resolution' })).toBeNull()
+})
