@@ -2292,6 +2292,58 @@
           }
         }
       }
+    },
+    "/api/tickets/{id}": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "A ticket the caller may see: their own (requester view, any status, any\nrole), or as staff under the ticket policy. Drafts, AI-stage and AI-solved\nrecords are hidden from operators; dispatched tickets from other teams.",
+        "operationId": "ticket_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible to the caller)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2422,6 +2474,7 @@
       },
       "CancellationPolicy": {
         "type": "string",
+        "description": "When the owning requester may cancel a submitted open ticket.",
         "enum": [
           "anytime_while_open",
           "before_work_starts",
@@ -2588,6 +2641,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "ClosureReason": {
+        "type": "string",
+        "description": "How a resolved ticket was closed (`tickets.closure_reason`). A timeout is never an acceptance.",
+        "enum": [
+          "requester_confirmed",
+          "confirmation_timeout"
+        ]
       },
       "CreateInvitationRequest": {
         "type": "object",
@@ -3495,6 +3556,14 @@
         },
         "additionalProperties": false
       },
+      "ResolutionSource": {
+        "type": "string",
+        "description": "Who resolved a finished ticket (`tickets.resolution_source`).",
+        "enum": [
+          "ai",
+          "operator"
+        ]
+      },
       "Role": {
         "type": "string",
         "enum": [
@@ -3770,6 +3839,153 @@
           }
         }
       },
+      "TicketDetail": {
+        "type": "object",
+        "description": "One ticket as the caller may see it.",
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "view",
+          "subject",
+          "description",
+          "category_id",
+          "category_name",
+          "priority_id",
+          "priority_name",
+          "assignment",
+          "resolution_source",
+          "closure_reason",
+          "proposal_version",
+          "confirmation_deadline",
+          "requester",
+          "created_at",
+          "updated_at",
+          "transitions"
+        ],
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "closure_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClosureReason",
+                "description": "Set on `closed` and `ai_solved` tickets."
+              }
+            ]
+          },
+          "confirmation_deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Auto-close time of the pending proposal; set only while `awaiting_confirmation`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "proposal_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Version of the latest staff resolution proposal (0 = none). Requester\ndecisions send it back."
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable human-facing number."
+          },
+          "requester": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketRequester",
+                "description": "Staff view only; `null` in the requester view."
+              }
+            ]
+          },
+          "resolution_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResolutionSource",
+                "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TicketTransition"
+            },
+            "description": "Status transitions, oldest first."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "view": {
+            "$ref": "#/components/schemas/TicketView",
+            "description": "`requester` when the caller submitted it (public data only, whatever their\nrole); `staff` for authorized staff."
+          }
+        }
+      },
+      "TicketRequester": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "TicketStatus": {
         "type": "string",
         "enum": [
@@ -3783,6 +3999,59 @@
           "closed",
           "cancelled",
           "ai_solved"
+        ]
+      },
+      "TicketTransition": {
+        "type": "object",
+        "description": "One immutable status transition (`ticket_events` row with a `to_status`).",
+        "required": [
+          "id",
+          "event_type",
+          "from_status",
+          "to_status",
+          "actor_account_id",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "actor_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Staff view only; `null` for background jobs and in the requester view."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "The transition, e.g. `submit`, `propose_resolution`, `confirmation_timeout`."
+          },
+          "from_status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Public details: `route` (queue entry reason), `resolution_source`,\n`closure_reason`, `proposal_version`, `summary`, `timeout_hours`,\n`deadline`, or the cancellation `reason`."
+          },
+          "to_status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "TicketView": {
+        "type": "string",
+        "description": "Which representation of a ticket the actor may read.",
+        "enum": [
+          "requester",
+          "staff"
         ]
       },
       "TokenRequest": {

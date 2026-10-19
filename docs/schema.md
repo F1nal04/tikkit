@@ -23,6 +23,15 @@ language; translations map them to display text.
 - `tickets.status`: `draft`, `ai_processing`, `awaiting_ai_decision`, `queued`,
   `in_progress`, `waiting_for_requester`, `awaiting_confirmation`, `closed`,
   `cancelled`, `ai_solved`
+- `ticket_events.event_type` for status transitions: `submit`,
+  `ai_suggestion_ready`, `ai_failed`, `skip_ai`, `ai_solved`, `ai_not_solved`,
+  `start_work`, `request_information`, `requester_responded`,
+  `propose_resolution`, `accept_resolution`, `reject_resolution`,
+  `confirmation_timeout`, `reopen`, `cancel` (see [lifecycle.md](lifecycle.md));
+  queue entry `payload.route`: `ai`, `ai_disabled`, `category_exempt`,
+  `requester_skip`, `ai_failed`, `not_solved`
+- `tickets.resolution_source`: `ai`, `operator`; `tickets.closure_reason`:
+  `requester_confirmed`, `confirmation_timeout`
 - `ticket_messages.kind`: `public_reply`, `internal_note`
 - `attachments.mime_type`: `image/png`, `image/jpeg`, `image/webp`
 - `team_membership_history.action`: `joined`, `left`
@@ -94,6 +103,14 @@ Rust validates and authorizes first; these constraints are the backstop.
   tickets and snapshots keep resolving their IDs. Category and priority names
   are unique (case-insensitive, trimmed) among active rows only. Only `select`
   fields may set `allow_other`.
+- Ticket lifecycle (`0008_ticket_lifecycle.sql`): `confirmation_deadline` is
+  set exactly while `awaiting_confirmation`; `resolution_source` and
+  `closure_reason` are set exactly on `closed` (`operator`) and `ai_solved`
+  (`ai`, `requester_confirmed`); drafts, AI-stage, and AI-solved tickets have no
+  team. A trigger rejects (`23001`) changing the requester, editing subject,
+  description, or category or returning to `draft` after submission, and any
+  status, team, or assignee change of an `ai_solved` or `cancelled` ticket.
+  Status changes go through `lifecycle::transition` only.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change.

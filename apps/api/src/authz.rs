@@ -14,6 +14,7 @@
 
 use serde::Serialize;
 use sqlx::PgExecutor;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
@@ -183,7 +184,8 @@ pub struct TicketScope {
 }
 
 /// Which representation of a ticket the actor may read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum TicketView {
     /// Public ticket data only: no internal notes or staff-only screenshots.
     Requester,
@@ -247,23 +249,38 @@ pub fn authorize_ticket(
         Queued | InProgress | WaitingForRequester | AwaitingConfirmation
     );
     let admin = actor.role == Role::Admin;
-    let in_charge = || match ticket.assignee_account_id {
-        None => true,
-        Some(assignee) => assignee == actor.id || admin || actor.leads(ticket.team_id),
-    };
     let ok = open
         && allows(actor.role, action)
         && match action {
             ClaimTicket => ticket.team_id.is_some() && ticket.assignee_account_id.is_none(),
             AssignTicket => ticket.team_id.is_some() && (admin || actor.leads(ticket.team_id)),
-            DispatchTicket => in_charge(),
+            DispatchTicket => in_charge(actor, ticket),
             // General-queue tickets are dispatch-only; work happens in a team.
             ReplyAsStaff | AddInternalNote | ChangePriority | ProposeResolution => {
-                ticket.team_id.is_some() && in_charge()
+                ticket.team_id.is_some() && in_charge(actor, ticket)
             }
             _ => false, // not a ticket action
         };
     if ok { Ok(()) } else { Err(ApiError::Forbidden) }
+}
+
+/// Unclaimed, or claimed by the actor, or the actor leads its team or is an Admin.
+fn in_charge(actor: &Actor, ticket: &TicketScope) -> bool {
+    match ticket.assignee_account_id {
+        None => true,
+        Some(assignee) => {
+            assignee == actor.id || actor.role == Role::Admin || actor.leads(ticket.team_id)
+        }
+    }
+}
+
+/// Staff who would hold write access to this team ticket whatever its status:
+/// it is visible to them as staff and they are [`in_charge`]. For actions on
+/// finished tickets (reopening); open-ticket actions use [`authorize_ticket`].
+pub fn is_staff_writer(actor: &Actor, ticket: &TicketScope) -> bool {
+    ticket_view(actor, ticket) == Some(TicketView::Staff)
+        && ticket.team_id.is_some()
+        && in_charge(actor, ticket)
 }
 
 #[cfg(test)]

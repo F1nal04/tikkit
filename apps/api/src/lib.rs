@@ -23,9 +23,11 @@ pub mod authz;
 pub mod catalog;
 pub mod config;
 pub mod db;
+pub mod lifecycle;
 pub mod mail;
 pub mod management;
 pub mod smtp;
+pub mod tickets;
 
 use api::{ApiError, Json};
 
@@ -88,6 +90,7 @@ pub struct AppState {
         catalog::create_intake_field,
         catalog::update_intake_field,
         catalog::reorder_intake_fields,
+        tickets::ticket_detail,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -261,6 +264,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/intake-fields/{id}",
             patch(catalog::update_intake_field),
         )
+        .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,

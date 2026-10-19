@@ -68,6 +68,11 @@ Staff actions (`authorize_ticket`), in order:
    member. General-queue tickets are dispatch-only: replies, notes, priority, and
    resolution happen after dispatch to a team, never in shared intake.
 
+`authz::is_staff_writer` is rule 4 without the open-status and permission
+checks, for actions on finished tickets (reopening). Status changes combine
+these rules with ticket ownership and policy in `lifecycle::decide`
+([lifecycle.md](lifecycle.md)).
+
 Assignment targets are checked by the schema (assignee is a member of the
 ticket's team and never its requester); `authz::active_team_members` lists
 eligible accounts.
