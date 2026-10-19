@@ -4,6 +4,12 @@
 tickets staff may work on. Any staff role may call them (`view_general_queue`);
 a User gets `403`. Ticket detail is `GET /api/tickets/{id}`
 ([lifecycle.md](lifecycle.md)); claiming and dispatching are separate actions.
+Queue rows open the staff detail page `/queue/{id}` (intake, conversation with
+internal notes, history, status work, resolution proposals, priority); a ticket
+the caller submitted redirects to their requester page `/tickets/{id}`. Staff
+writes use `POST /api/tickets/{id}/staff-actions` and the conversation endpoints.
+Controls follow `TicketDetail.staff_access`; other members of a claimed ticket
+read only.
 
 ## One visibility rule
 

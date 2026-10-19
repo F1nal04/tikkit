@@ -28,6 +28,7 @@ language; translations map them to display text.
   `start_work`, `request_information`, `requester_responded`,
   `propose_resolution`, `accept_resolution`, `reject_resolution`,
   `confirmation_timeout`, `reopen`, `cancel` (see [lifecycle.md](lifecycle.md));
+  `priority_changed` (no status columns; payload holds previous/new priority ID and name);
   queue entry `payload.route`: `ai`, `ai_disabled`, `category_exempt`,
   `requester_skip`, `ai_failed`, `not_solved`
 - `tickets.resolution_source`: `ai`, `operator`; `tickets.closure_reason`:

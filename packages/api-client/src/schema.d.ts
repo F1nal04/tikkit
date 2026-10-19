@@ -966,6 +966,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{id}/staff-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Staff status work and priority changes. Thin over [`lifecycle::transition`]
+         *     (visibility, self-handling, claimed-ticket and policy rules live there and in
+         *     [`authz::authorize_ticket`]); stale clients get `409` and nothing is written.
+         */
+        post: operations["staff_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1463,6 +1484,21 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @description One immutable change of the effective priority (`priority_changed` event). */
+        PriorityChange: {
+            /**
+             * Format: uuid
+             * @description Staff view only; `null` in the requester view.
+             */
+            actor_account_id: string | null;
+            actor_display_name: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            previous_priority_name: string;
+            priority_name: string;
+        };
         PriorityUpdate: {
             /** @description `true` hides it from new tickets; `false` restores it. Existing tickets are unaffected. */
             archived?: boolean | null;
@@ -1665,6 +1701,55 @@ export interface components {
             delivered: boolean;
         };
         /**
+         * @description Affordances for the staff view, from the same rules the write endpoints
+         *     enforce. Clients hide controls with them; the server rechecks every write.
+         */
+        StaffAccess: {
+            /**
+             * @description Staff reply, internal note, status work, resolution proposal, and priority
+             *     changes: the ticket is open, in a team, and the caller is in charge of it.
+             */
+            can_handle: boolean;
+            /**
+             * @description The ticket is closed with operator resolution, the Admin toggle is on, and
+             *     the caller is in charge of it.
+             */
+            can_reopen: boolean;
+        };
+        /**
+         * @description Staff work on a ticket. Every action carries the `updated_at` the client last
+         *     loaded; a newer change (reply, status, priority) is `409 conflict`.
+         */
+        StaffAction: {
+            /** @enum {string} */
+            action: "start_work";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "request_information";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "propose_resolution";
+            /** Format: date-time */
+            expected_updated_at: string;
+            summary: string;
+        } | {
+            /** @enum {string} */
+            action: "reopen";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "set_priority";
+            /** Format: date-time */
+            expected_updated_at: string;
+            /** Format: uuid */
+            priority_id: string;
+        };
+        /**
          * @description Immutable submission receipt. A replay returns the original submitted status;
          *     read `/api/tickets/{id}` for the current status.
          */
@@ -1738,6 +1823,8 @@ export interface components {
             /** Format: uuid */
             id: string;
             intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            /** @description Staff-only effective-priority history, oldest first; empty in requester responses. */
+            priority_changes: components["schemas"]["PriorityChange"][];
             /** Format: uuid */
             priority_id: string;
             priority_name: string;
@@ -1754,6 +1841,7 @@ export interface components {
             reference: number;
             requester: null | components["schemas"]["TicketRequester"];
             resolution_source: null | components["schemas"]["ResolutionSource"];
+            staff_access: null | components["schemas"]["StaffAccess"];
             status: components["schemas"]["TicketStatus"];
             subject: string;
             /** @description Status transitions, oldest first. */
@@ -1817,6 +1905,8 @@ export interface components {
              * @description Staff view only; `null` for background jobs and in the requester view.
              */
             actor_account_id: string | null;
+            /** @description Current display name of the actor; staff view only. */
+            actor_display_name: string | null;
             /** Format: date-time */
             created_at: string;
             /** @description The transition, e.g. `submit`, `propose_resolution`, `confirmation_timeout`. */
@@ -4815,6 +4905,73 @@ export interface operations {
                 };
             };
             /** @description Invalid body or screenshots */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    staff_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StaffAction"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not in charge of the ticket, self-handling, or policy denies */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale `expected_updated_at` or status */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             422: {
                 headers: {
                     [name: string]: unknown;

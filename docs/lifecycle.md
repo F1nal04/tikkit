@@ -148,3 +148,38 @@ is exposed by this endpoint.
 
 The persisted AI suggestion belongs to the AI attempt records (#35) and is not
 exposed yet; AI-solved history shows an explicit unavailable-suggestion message.
+
+## Staff HTTP actions
+
+`POST /api/tickets/{id}/staff-actions` takes one tagged action plus the
+`expected_updated_at` the client loaded (`TicketDetail.updated_at`):
+`start_work`, `request_information`, `propose_resolution {summary}`, `reopen`,
+or `set_priority {priority_id}`. Status actions call `lifecycle::transition`
+(so authorization precedes the source-status check, as in #16); there is no staff
+action that accepts, rejects, or closes. A newer reply, status, or priority change
+makes `expected_updated_at` stale: `409 conflict`, nothing written. Private
+notes do not move `updated_at`. The check runs after the ticket lock, so
+concurrent staff serialize and the second always loses.
+
+`set_priority` needs `change_priority` on the ticket (open, in a team, caller in
+charge; self-handling `403`). The level must be active and different from the
+current one (`422 priority_id: invalid`). It updates `tickets.priority_id` and
+appends a `priority_changed` event (no status columns) with the actor and
+`previous_priority_id/name`, `priority_id/name`. `TicketDetail.priority_changes`
+lists them with actor identity in the staff view; requester responses contain an
+empty history and the current effective priority only.
+
+`TicketDetail.staff_access` (staff view only) reports `can_handle` and
+`can_reopen` from the same rules, so clients can show read-only state. They are
+affordances; every write is rechecked. Transition and priority entries also carry
+`actor_display_name` (staff view), so cancellations and proposals show who and when.
+
+The staff endpoint first requires a staff capability and rejects the ticket's
+requester (`403`) before invoking the lifecycle, including for `reopen`.
+Requesters of any role use `/actions`. Ordinary staff work on finished tickets
+returns `403`, because `authorize_ticket` requires open human work before the
+lifecycle checks the transition's source status. This preserves #16 and the
+conversation API's authorization order. An authorized writer attempting an
+invalid transition between open states (or reopening a non-closed team ticket)
+gets `409`. Invisible tickets still return `404` to staff; stale authorized
+writes return `409` and roll back both state and events.

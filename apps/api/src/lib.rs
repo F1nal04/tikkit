@@ -99,6 +99,7 @@ pub struct AppState {
         tickets::ticket_detail,
         tickets::list_own_tickets,
         tickets::requester_action,
+        tickets::staff_action,
         queues::list_queue,
         queues::queue_counts,
         messages::list,
@@ -311,6 +312,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .route("/api/tickets/{id}/actions", post(tickets::requester_action))
+        .route(
+            "/api/tickets/{id}/staff-actions",
+            post(tickets::staff_action),
+        )
         .route(
             "/api/tickets/{id}/messages",
             get(messages::list).layer(axum::middleware::map_response(api::private_response)),
