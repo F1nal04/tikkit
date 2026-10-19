@@ -4,12 +4,11 @@
     "dev": { "cache": false, "persistent": true },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".output/**", "dist/**"]
+      "outputs": ["build/**", ".svelte-kit/**"]
     },
     "check": {},
     "test": {},
     "start": { "cache": false, "persistent": true },
-    "@tikkit/web#check": { "dependsOn": ["build"] },
     "@tikkit/api#dev": {
       "cache": false,
       "persistent": true,
@@ -29,7 +28,7 @@
     "@tikkit/web#start": {
       "cache": false,
       "persistent": true,
-      "env": ["HOST", "PORT"]
+      "env": ["HOST", "PORT", "API_ORIGIN", "ORIGIN", "PROTOCOL_HEADER", "HOST_HEADER", "XFF_DEPTH"]
     }
   }
 }

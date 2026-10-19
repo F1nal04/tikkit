@@ -1,14 +1,14 @@
-import { tanstackStart } from '@tanstack/react-start/plugin/vite'
-import react from '@vitejs/plugin-react'
-import { nitro } from 'nitro/vite'
-import { defineConfig } from 'vite'
+import adapter from '@sveltejs/adapter-node'
+import { sveltekit } from '@sveltejs/kit/vite'
+import { svelteTesting } from '@testing-library/svelte/vite'
+import { defineConfig } from 'vitest/config'
 
-export default defineConfig(({ command }) => ({
-  // Nitro's dev middleware runs before Vite's API proxy.
-  plugins: [tanstackStart(), command === 'build' && nitro(), react()],
+export default defineConfig({
+  plugins: [sveltekit({ adapter: adapter() }), svelteTesting()],
   server: {
     proxy: {
       '/api': 'http://127.0.0.1:3001',
     },
   },
-}))
+  test: { environment: 'jsdom' },
+})
