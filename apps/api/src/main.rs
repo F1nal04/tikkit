@@ -34,8 +34,7 @@ async fn main() -> anyhow::Result<()> {
         pool.clone(),
         auth::Settings::from(&config),
     ));
-
-    tokio::spawn(autoclose::worker_loop(pool.clone()));
+    let auto_close = tokio::spawn(autoclose::worker_loop(pool.clone()));
 
     let listener = TcpListener::bind(config.api_addr)
         .await
@@ -73,12 +72,15 @@ async fn main() -> anyhow::Result<()> {
         result = server => result?,
         () = deadline => tracing::warn!("Drain timeout reached; aborting remaining requests"),
     }
-    // Let a notification already being sent record its outcome before the pool closes.
-    if tokio::time::timeout(Duration::from_secs(5), notifier)
-        .await
-        .is_err()
+    // Let a notification already being sent record its outcome, and an auto-close
+    // already running commit, before the pool closes.
+    if tokio::time::timeout(Duration::from_secs(5), async {
+        let _ = tokio::join!(notifier, auto_close);
+    })
+    .await
+    .is_err()
     {
-        tracing::warn!("Timed out waiting for the notification worker");
+        tracing::warn!("Timed out waiting for the background workers");
     }
     // Bounded so a stuck connection cannot hold the process past the drain window.
     if tokio::time::timeout(Duration::from_secs(5), pool.close())

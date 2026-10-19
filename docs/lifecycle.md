@@ -87,7 +87,9 @@ the history.
 
 `autoclose::worker_loop` (spawned in `main.rs` next to the notification worker,
 sharing `notifications::poll_loop`) drains due tickets and then sleeps two
-seconds. Each step selects one `awaiting_confirmation` ticket whose snapshotted
+seconds. On shutdown `notifications::stop_workers` ends it after its current
+step, and `main.rs` waits for it (with the notification worker, up to 5 s)
+before closing the pool. Each step selects one `awaiting_confirmation` ticket whose snapshotted
 `confirmation_deadline` has passed (`FOR UPDATE SKIP LOCKED`, oldest first,
 excluding tickets already failed in this cycle) and applies
 `ConfirmationTimeout` with the proposal version read under that lock, as the

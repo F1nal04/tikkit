@@ -693,3 +693,26 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
     assert_eq!(w.events(newer, "confirmation_timeout").await, 1);
     assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
 }
+
+/// The worker spawned in `main.rs`: it drains overdue proposals through the shared
+/// `poll_loop` and returns after `stop_workers`, so shutdown can wait for it.
+/// (`stop_workers` is process-wide; no other test in this binary runs a loop.)
+#[tokio::test]
+async fn the_spawned_worker_closes_overdue_proposals_and_stops_on_shutdown() {
+    let Some(w) = world().await else { return };
+    let id = w.overdue().await;
+    let worker = tokio::spawn(tikkit_api::autoclose::worker_loop(w.pool().clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while w.events(id, "confirmation_timeout").await == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the worker closes the overdue proposal");
+    tikkit_api::notifications::stop_workers();
+    tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+        .await
+        .expect("the worker returns after stop_workers")
+        .unwrap();
+    assert_eq!(w.events(id, "confirmation_timeout").await, 1);
+}
