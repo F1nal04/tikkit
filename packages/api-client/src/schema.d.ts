@@ -1722,8 +1722,6 @@ export interface components {
         };
         /** @description One ticket as the caller may see it. */
         TicketDetail: {
-            /** @description The single persisted AI suggestion, plain text; null for tickets without one. */
-            ai_solution: string | null;
             assignment: components["schemas"]["TicketAssignmentView"];
             /** Format: uuid */
             category_id: string;

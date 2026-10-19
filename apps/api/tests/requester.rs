@@ -61,15 +61,14 @@ async fn world() -> Option<World> {
 }
 impl World {
     async fn seed(&self, owner: Uuid, status: &str) -> Uuid {
-        sqlx::query_scalar("INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description, status, team_id, assignee_account_id, proposal_version, confirmation_deadline, resolution_source, closure_reason, ai_solution)
+        sqlx::query_scalar("INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description, status, team_id, assignee_account_id, proposal_version, confirmation_deadline, resolution_source, closure_reason)
           VALUES ($1,$2,$3,'Original problem','Frozen description',$4,
           CASE WHEN $4 IN ('in_progress','awaiting_confirmation','closed') THEN $5 END,
           CASE WHEN $4 IN ('in_progress','awaiting_confirmation','closed') THEN $6 END,
           CASE WHEN $4 IN ('awaiting_confirmation','closed') THEN 1 ELSE 0 END,
           CASE WHEN $4 = 'awaiting_confirmation' THEN now() + interval '168 hours' END,
           CASE $4 WHEN 'closed' THEN 'operator' WHEN 'ai_solved' THEN 'ai' END,
-          CASE WHEN $4 IN ('closed','ai_solved') THEN 'requester_confirmed' END,
-          CASE WHEN $4 = 'ai_solved' THEN 'Restart the printer. <script>literal</script>' END) RETURNING id")
+          CASE WHEN $4 IN ('closed','ai_solved') THEN 'requester_confirmed' END) RETURNING id")
             .bind(owner).bind(self.category).bind(self.priority).bind(status).bind(self.team).bind(self.op).fetch_one(&self.db.pool).await.unwrap()
     }
     async fn action(&self, id: Uuid, body: Value, cookie: &str) -> support::Reply {
@@ -139,7 +138,17 @@ async fn requester_decisions_are_versioned_owned_and_preserve_support_workflow()
         )
         .await;
     assert_eq!(rejected.body, json!({"status":"in_progress"}));
+    // Note, reply, and assignment events carry no status: never in requester history.
+    for event in [
+        "internal_note_added",
+        "public_reply_added",
+        "assignment_changed",
+    ] {
+        sqlx::query("INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload) VALUES ($1, $2, $3, '{\"secret\":\"STAFF ONLY\"}')")
+            .bind(id).bind(w.op).bind(event).execute(&w.db.pool).await.unwrap();
+    }
     let d = w.detail(id, &w.cookie).await.body;
+    assert!(!d.to_string().contains("STAFF ONLY"));
     assert_eq!(
         d["assignment"],
         json!({"team_name":"Desk","assignee_display_name":"op"})
@@ -284,6 +293,17 @@ async fn cancellation_policy_is_rechecked_and_uses_permanent_work_history() {
             .status,
         409
     );
+    // Cancelled is final: no reopen even with the toggle on.
+    sqlx::query("UPDATE organization SET allow_reopening = true")
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.action(id, json!({"action":"reopen"}), &w.cookie)
+            .await
+            .status,
+        409
+    );
     sqlx::query("UPDATE organization SET requester_cancellation_policy = 'anytime_while_open'")
         .execute(&w.db.pool)
         .await
@@ -309,12 +329,7 @@ async fn ai_history_is_private_final_and_cannot_change_counts_or_resolution_prov
         .await
         .unwrap();
     let before = w.detail(id, &w.cookie).await.body;
-    assert!(
-        before["ai_solution"]
-            .as_str()
-            .unwrap()
-            .contains("Restart the printer")
-    );
+    assert_eq!(before["description"], "Frozen description");
     assert_eq!(w.detail(id, &w.other_cookie).await.status, 404);
     let op_cookie = login(&w.app, "op", PASSWORD).await.session();
     assert_eq!(w.detail(id, &op_cookie).await.status, 404);
@@ -350,13 +365,6 @@ async fn ai_history_is_private_final_and_cannot_change_counts_or_resolution_prov
             .await
             .body,
         counts
-    );
-    assert!(
-        sqlx::query("UPDATE tickets SET ai_solution = 'Replacement' WHERE id = $1")
-            .bind(id)
-            .execute(&w.db.pool)
-            .await
-            .is_err()
     );
 }
 
@@ -413,41 +421,6 @@ async fn history_filters_apply_ownership_dates_and_bounded_pagination_in_sql() {
             .await
             .status,
             400
-        );
-    }
-}
-
-#[tokio::test]
-async fn stored_ai_solution_can_be_written_once_during_ai_processing_only() {
-    let Some(w) = world().await else { return };
-    let ai = w.seed(w.owner, "ai_processing").await;
-    sqlx::query("UPDATE tickets SET ai_solution = 'Restart the printer' WHERE id = $1")
-        .bind(ai)
-        .execute(&w.db.pool)
-        .await
-        .unwrap();
-    for replacement in [Some("Replacement"), None] {
-        assert!(
-            sqlx::query("UPDATE tickets SET ai_solution = $2 WHERE id = $1")
-                .bind(ai)
-                .bind(replacement)
-                .execute(&w.db.pool)
-                .await
-                .is_err()
-        );
-    }
-    assert_eq!(
-        w.detail(ai, &w.cookie).await.body["ai_solution"],
-        "Restart the printer"
-    );
-    for status in ["queued", "closed", "cancelled"] {
-        let id = w.seed(w.owner, status).await;
-        assert!(
-            sqlx::query("UPDATE tickets SET ai_solution = 'Late suggestion' WHERE id = $1")
-                .bind(id)
-                .execute(&w.db.pool)
-                .await
-                .is_err()
         );
     }
 }

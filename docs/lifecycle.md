@@ -146,7 +146,5 @@ invisible tickets return `404`. Reopen retains the lifecycle's requester-or-
 authorized-staff rule. No AI escalation, general state setter, or intake edit
 is exposed by this endpoint.
 
-`TicketDetail.ai_solution` is the one persisted plain-text suggestion (nullable
-for no-AI and legacy records). It follows ticket visibility, is rendered as
-escaped text, and cannot be changed after it has been stored. AI processing and
-provider calls remain separate work; no requester endpoint writes suggestions.
+The persisted AI suggestion belongs to the AI attempt records (#35) and is not
+exposed yet; AI-solved history shows an explicit unavailable-suggestion message.

@@ -31,9 +31,6 @@ pub struct TicketDetail {
     pub view: TicketView,
     pub subject: String,
     pub description: String,
-    /// The single persisted AI suggestion, plain text; null for tickets without one.
-    #[schema(required = true)]
-    pub ai_solution: Option<String>,
     pub category_id: Uuid,
     pub category_name: String,
     pub priority_id: Uuid,
@@ -103,7 +100,6 @@ struct DetailRow {
     status: String,
     subject: String,
     description: String,
-    ai_solution: Option<String>,
     category_id: Uuid,
     category_name: String,
     intake_snapshot: Option<sqlx::types::Json<SubmittedIntake>>,
@@ -156,7 +152,7 @@ pub async fn ticket_detail(
         .await?;
     let actor = Actor::load(&mut *tx, &user).await?;
     let row: DetailRow = sqlx::query_as(
-        "SELECT t.id, t.reference, t.status::text AS status, t.subject, t.description, t.ai_solution,
+        "SELECT t.id, t.reference, t.status::text AS status, t.subject, t.description,
                 t.category_id, COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
                 t.intake_snapshot, t.priority_id, p.name AS priority_name,
                 t.requester_account_id, r.username AS requester_username,
@@ -214,7 +210,6 @@ pub async fn ticket_detail(
         view,
         subject: row.subject,
         description: row.description,
-        ai_solution: row.ai_solution,
         category_id: row.category_id,
         category_name: row.category_name,
         intake_snapshot: row.intake_snapshot.map(|s| s.0),

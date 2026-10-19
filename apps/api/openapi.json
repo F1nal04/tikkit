@@ -6071,7 +6071,6 @@
           "view",
           "subject",
           "description",
-          "ai_solution",
           "category_id",
           "category_name",
           "priority_id",
@@ -6088,13 +6087,6 @@
           "transitions"
         ],
         "properties": {
-          "ai_solution": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The single persisted AI suggestion, plain text; null for tickets without one."
-          },
           "assignment": {
             "$ref": "#/components/schemas/TicketAssignmentView"
           },
