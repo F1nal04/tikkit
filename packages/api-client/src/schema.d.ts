@@ -905,6 +905,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{id}/assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch, transfer, return to general intake, claim, assign, or unassign.
+         *     Checks: visibility (`404`), stale `expected_updated_at` (`409`), the ticket
+         *     policy incl. self-handling (`403`), then the target (`422`). Concurrent
+         *     changes serialize on the ticket row; the later one is stale (`409`).
+         */
+        post: operations["change_assignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{id}/messages": {
         parameters: {
             query?: never;
@@ -1041,6 +1063,70 @@ export interface components {
             label: string;
             /** @description The choice label or the typed text. */
             value: string;
+        };
+        /**
+         * @description One explicit team or assignee change, with the `updated_at` the client last
+         *     loaded (`TicketDetail.updated_at`); a newer change is `409 conflict`.
+         */
+        AssignmentAction: {
+            /** @enum {string} */
+            action: "dispatch";
+            /** Format: date-time */
+            expected_updated_at: string;
+            /** Format: uuid */
+            team_id: string;
+        } | {
+            /** @enum {string} */
+            action: "return_to_general";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "claim";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "assign";
+            /** Format: uuid */
+            assignee_account_id: string;
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "unassign";
+            /** Format: date-time */
+            expected_updated_at: string;
+        };
+        /** @description One immutable team/assignee change (`assignment_changed` event). Names are current. */
+        AssignmentChange: {
+            /**
+             * @description `dispatch`, `return_to_general`, `claim`, `assign`, or `unassign` (also
+             *     when an account lost eligibility; then `reason` says why).
+             */
+            action: string;
+            actor_display_name: string | null;
+            assignee_display_name: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            previous_assignee_display_name: string | null;
+            previous_team_name: string | null;
+            reason: string | null;
+            team_name: string | null;
+        };
+        /** @description What changed, safe to show even when the caller lost access by the change. */
+        AssignmentReceipt: {
+            assignee_display_name: string | null;
+            /** Format: int64 */
+            reference: number;
+            team_name: string | null;
+            /**
+             * @description The caller can still open the ticket as staff. False after a transfer to a
+             *     team the caller is not in: further reads are `404`.
+             */
+            visible: boolean;
         };
         /** @enum {string} */
         AuthorKind: "requester" | "staff";
@@ -1284,6 +1370,11 @@ export interface components {
         };
         /** @enum {string} */
         MessageKind: "public_reply" | "internal_note";
+        NamedId: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         NewCategory: {
             /** @description 1-100 characters, unique among active categories. */
             name: string;
@@ -1706,6 +1797,17 @@ export interface components {
          */
         StaffAccess: {
             /**
+             * @description Eligible assignees: active staff members of the ticket's team other than
+             *     the requester and the current assignee (empty unless `can_assign`).
+             */
+            assignees: components["schemas"]["NamedId"][];
+            /** @description (Re)assign or unassign within the ticket's team (its Team Lead or an Admin). */
+            can_assign: boolean;
+            /** @description Take this unclaimed team ticket. */
+            can_claim: boolean;
+            /** @description Send to another team or return to the general queue. */
+            can_dispatch: boolean;
+            /**
              * @description Staff reply, internal note, status work, resolution proposal, and priority
              *     changes: the ticket is open, in a team, and the caller is in charge of it.
              */
@@ -1715,6 +1817,8 @@ export interface components {
              *     the caller is in charge of it.
              */
             can_reopen: boolean;
+            /** @description Active teams the ticket can be sent to (empty unless `can_dispatch`). */
+            dispatch_teams: components["schemas"]["NamedId"][];
         };
         /**
          * @description Staff work on a ticket. Every action carries the `updated_at` the client last
@@ -1808,6 +1912,8 @@ export interface components {
         /** @description One ticket as the caller may see it. */
         TicketDetail: {
             assignment: components["schemas"]["TicketAssignmentView"];
+            /** @description Dispatch and assignment history, oldest first; staff view only (empty for the requester). */
+            assignment_changes: components["schemas"]["AssignmentChange"][];
             /** Format: uuid */
             category_id: string;
             category_name: string;
@@ -4713,6 +4819,74 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    change_assignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignmentAction"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentReceipt"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not allowed on this ticket (role, team, claim, self-handling, status) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale `expected_updated_at`, or nothing to return/unassign */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `team_id` or `assignee_account_id` is not an eligible target */
             422: {
                 headers: {
                     [name: string]: unknown;

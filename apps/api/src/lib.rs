@@ -18,6 +18,7 @@ use utoipa::{OpenApi, ToSchema};
 
 pub mod accounts;
 pub mod api;
+pub mod assignment;
 pub mod auth;
 pub mod authz;
 pub mod catalog;
@@ -100,6 +101,7 @@ pub struct AppState {
         tickets::list_own_tickets,
         tickets::requester_action,
         tickets::staff_action,
+        assignment::change_assignment,
         queues::list_queue,
         queues::queue_counts,
         messages::list,
@@ -315,6 +317,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route(
             "/api/tickets/{id}/staff-actions",
             post(tickets::staff_action),
+        )
+        .route(
+            "/api/tickets/{id}/assignment",
+            post(assignment::change_assignment),
         )
         .route(
             "/api/tickets/{id}/messages",
