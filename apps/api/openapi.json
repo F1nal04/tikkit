@@ -3735,6 +3735,98 @@
           }
         }
       }
+    },
+    "/api/tickets/{id}/staff-actions": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Staff status work and priority changes. Thin over [`lifecycle::transition`]\n(visibility, self-handling, claimed-ticket and policy rules live there and in\n[`authz::authorize_ticket`]); stale clients get `409` and nothing is written.",
+        "operationId": "staff_action",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not in charge of the ticket, self-handling, or policy denies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale `expected_updated_at` or status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5363,6 +5455,48 @@
           }
         }
       },
+      "PriorityChange": {
+        "type": "object",
+        "description": "One immutable change of the effective priority (`priority_changed` event).",
+        "required": [
+          "id",
+          "previous_priority_name",
+          "priority_name",
+          "actor_account_id",
+          "actor_display_name",
+          "created_at"
+        ],
+        "properties": {
+          "actor_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Staff view only; `null` in the requester view."
+          },
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "previous_priority_name": {
+            "type": "string"
+          },
+          "priority_name": {
+            "type": "string"
+          }
+        }
+      },
       "PriorityUpdate": {
         "type": "object",
         "properties": {
@@ -5913,6 +6047,135 @@
           }
         }
       },
+      "StaffAccess": {
+        "type": "object",
+        "description": "Affordances for the staff view, from the same rules the write endpoints\nenforce. Clients hide controls with them; the server rechecks every write.",
+        "required": [
+          "can_handle",
+          "can_reopen"
+        ],
+        "properties": {
+          "can_handle": {
+            "type": "boolean",
+            "description": "Staff reply, internal note, status work, resolution proposal, and priority\nchanges: the ticket is open, in a team, and the caller is in charge of it."
+          },
+          "can_reopen": {
+            "type": "boolean",
+            "description": "The ticket is closed with operator resolution, the Admin toggle is on, and\nthe caller is in charge of it."
+          }
+        }
+      },
+      "StaffAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "start_work"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "request_information"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "`summary` is requester-visible, 1–5000 characters. Supersedes a pending proposal.",
+            "required": [
+              "expected_updated_at",
+              "summary",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "propose_resolution"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Only while the Admin reopening toggle is on.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reopen"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_updated_at",
+              "priority_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "set_priority"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "priority_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "Staff work on a ticket. Every action carries the `updated_at` the client last\nloaded; a newer change (reply, status, priority) is `409 conflict`."
+      },
       "SubmissionReceipt": {
         "type": "object",
         "description": "Immutable submission receipt. A replay returns the original submitted status;\nread `/api/tickets/{id}` for the current status.",
@@ -6084,7 +6347,9 @@
           "requester",
           "created_at",
           "updated_at",
-          "transitions"
+          "transitions",
+          "priority_changes",
+          "staff_access"
         ],
         "properties": {
           "assignment": {
@@ -6138,6 +6403,13 @@
               }
             ]
           },
+          "priority_changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriorityChange"
+            },
+            "description": "Effective-priority changes, oldest first. Actors are staff-view only."
+          },
           "priority_id": {
             "type": "string",
             "format": "uuid"
@@ -6174,6 +6446,17 @@
               {
                 "$ref": "#/components/schemas/ResolutionSource",
                 "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              }
+            ]
+          },
+          "staff_access": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StaffAccess",
+                "description": "What the caller may do as staff; `null` in the requester view."
               }
             ]
           },
@@ -6340,6 +6623,7 @@
           "from_status",
           "to_status",
           "actor_account_id",
+          "actor_display_name",
           "payload",
           "created_at"
         ],
@@ -6351,6 +6635,13 @@
             ],
             "format": "uuid",
             "description": "Staff view only; `null` for background jobs and in the requester view."
+          },
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current display name of the actor; staff view only."
           },
           "created_at": {
             "type": "string",
