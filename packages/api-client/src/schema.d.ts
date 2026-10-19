@@ -666,6 +666,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A ticket the caller may see: their own (requester view, any status, any
+         *     role), or as staff under the ticket policy. Drafts, AI-stage and AI-solved
+         *     records are hidden from operators; dispatched tickets from other teams.
+         */
+        get: operations["ticket_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -759,6 +780,11 @@ export interface components {
             /** @description 1-100 characters, unique among the field's active choices. */
             label: string;
         };
+        /**
+         * @description How a resolved ticket was closed (`tickets.closure_reason`). A timeout is never an acceptance.
+         * @enum {string}
+         */
+        ClosureReason: "requester_confirmed" | "confirmation_timeout";
         CreateInvitationRequest: {
             /** @description Optional recipient. With SMTP configured the link is emailed there. */
             email?: string | null;
@@ -1004,6 +1030,11 @@ export interface components {
             new_password: string;
             token: string;
         };
+        /**
+         * @description Who resolved a finished ticket (`tickets.resolution_source`).
+         * @enum {string}
+         */
+        ResolutionSource: "ai" | "operator";
         /** @enum {string} */
         Role: "user" | "operator" | "specialist" | "team_lead" | "admin";
         SetupRequest: {
@@ -1091,8 +1122,86 @@ export interface components {
             assignee_display_name: string | null;
             team_name: string | null;
         };
+        /** @description One ticket as the caller may see it. */
+        TicketDetail: {
+            assignment: components["schemas"]["TicketAssignmentView"];
+            /** Format: uuid */
+            category_id: string;
+            category_name: string;
+            closure_reason: null | components["schemas"]["ClosureReason"];
+            /**
+             * Format: date-time
+             * @description Auto-close time of the pending proposal; set only while `awaiting_confirmation`.
+             */
+            confirmation_deadline: string | null;
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            priority_id: string;
+            priority_name: string;
+            /**
+             * Format: int32
+             * @description Version of the latest staff resolution proposal (0 = none). Requester
+             *     decisions send it back.
+             */
+            proposal_version: number;
+            /**
+             * Format: int64
+             * @description Stable human-facing number.
+             */
+            reference: number;
+            requester: null | components["schemas"]["TicketRequester"];
+            resolution_source: null | components["schemas"]["ResolutionSource"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** @description Status transitions, oldest first. */
+            transitions: components["schemas"]["TicketTransition"][];
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description `requester` when the caller submitted it (public data only, whatever their
+             *     role); `staff` for authorized staff.
+             */
+            view: components["schemas"]["TicketView"];
+        };
+        TicketRequester: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+            username: string;
+        };
         /** @enum {string} */
         TicketStatus: "draft" | "ai_processing" | "awaiting_ai_decision" | "queued" | "in_progress" | "waiting_for_requester" | "awaiting_confirmation" | "closed" | "cancelled" | "ai_solved";
+        /** @description One immutable status transition (`ticket_events` row with a `to_status`). */
+        TicketTransition: {
+            /**
+             * Format: uuid
+             * @description Staff view only; `null` for background jobs and in the requester view.
+             */
+            actor_account_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** @description The transition, e.g. `submit`, `propose_resolution`, `confirmation_timeout`. */
+            event_type: string;
+            from_status: components["schemas"]["TicketStatus"];
+            /** Format: int64 */
+            id: number;
+            /**
+             * @description Public details: `route` (queue entry reason), `resolution_source`,
+             *     `closure_reason`, `proposal_version`, `summary`, `timeout_hours`,
+             *     `deadline`, or the cancellation `reason`.
+             */
+            payload: Record<string, never>;
+            to_status: components["schemas"]["TicketStatus"];
+        };
+        /**
+         * @description Which representation of a ticket the actor may read.
+         * @enum {string}
+         */
+        TicketView: "requester" | "staff";
         TokenRequest: {
             token: string;
         };
@@ -3010,6 +3119,45 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ticket_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible to the caller) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
