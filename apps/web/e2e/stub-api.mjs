@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 
 const PASSWORD = 'correct horse battery'
-const ROLES = { requester: 'user', operator: 'operator', specialist: 'specialist', lead: 'team_lead', admin: 'admin' }
+const ROLES = { requester: 'user', requester2: 'user', operator: 'operator', specialist: 'specialist', lead: 'team_lead', admin: 'admin' }
 // Language preference per session, so tests running in parallel do not share state.
 const languages = {}
 // Live session tokens; POST /api/test/expire drops the caller's, like an expired session.
@@ -151,6 +151,53 @@ function submit(res, st, intake, key, sameRequest, draftId) {
   setTimeout(() => reply(res, 201, ticket), 400)
 }
 
+
+function detailOf(t) {
+  const c = CATALOG.categories.find((c) => c.id === t.intake?.category_id) ?? CATALOG.categories[0]
+  const p = CATALOG.priorities.find((p) => p.id === t.intake?.priority_id) ?? CATALOG.priorities[0]
+  return {
+    subject: t.subject ?? t.intake?.subject ?? 'Printer', description: t.description ?? t.intake?.description ?? 'Jammed',
+    view: 'requester', category_id: c.id, category_name: c.name, priority_id: p.id, priority_name: p.name,
+    assignment: { team_name: null, assignee_display_name: null },
+    intake_snapshot: { subject: t.subject ?? t.intake?.subject ?? 'Printer', description: t.description ?? t.intake?.description ?? 'Jammed', catalog: { category_id: c.id, category_name: c.name, skip_ai: c.skip_ai, priority_id: p.id, priority_name: p.name, answers: [] }, screenshot_ids: t.intake?.screenshot_ids ?? [] },
+    ai_solution: null, resolution_source: null, closure_reason: null, requester: null,
+    proposal_version: 0, confirmation_deadline: null, transitions: [],
+    created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z', ...t,
+  }
+}
+function changeTicket(t, event, to, payload = {}) {
+  const now = new Date().toISOString()
+  t.transitions ??= []
+  t.transitions.push({ id: t.transitions.length + 1, event_type: event, from_status: t.status, to_status: to, actor_account_id: null, payload, created_at: now })
+  t.status = to; t.updated_at = now; t.confirmation_deadline = null
+}
+function seedHistory(st, user) {
+  st.tickets = []
+  const add = (name, status, extra = {}) => {
+    const t = detailOf({ id: randomUUID(), reference: ++st.reference, status, subject: `${user}: ${name}`, description: 'Original problem <script>window.intakeXss = true</script>', ...extra })
+    st.tickets.push(t); return t
+  }
+  for (let i = 0; i < 27; i++) add(`Older ticket ${i}`, 'queued')
+  const queued = add('Waiting in general queue', 'queued')
+  const screenshot = { id: randomUUID(), filename: 'original.png', content_type: 'image/png', byte_size: PNG.length, width: 1, height: 1, created_at: queued.created_at }
+  st.shots.set(screenshot.id, screenshot); queued.intake_snapshot.screenshot_ids = [screenshot.id]
+  queued.intake_snapshot.description = queued.description
+  const pending = add('Resolution pending', 'in_progress', { assignment: { team_name: 'Desk', assignee_display_name: 'Olga Support' } })
+  changeTicket(pending, 'start_work', 'in_progress')
+  changeTicket(pending, 'propose_resolution', 'awaiting_confirmation', { summary: 'Installed a new driver. <img src=x onerror=alert(1)>', proposal_version: 2 })
+  pending.proposal_version = 2; pending.confirmation_deadline = '2026-12-01T10:00:00Z'
+  const closed = add('Human closed', 'closed', { resolution_source: 'operator', closure_reason: 'requester_confirmed', assignment: pending.assignment })
+  const timeout = add('Automatically closed', 'awaiting_confirmation', { resolution_source: 'operator', closure_reason: 'confirmation_timeout', assignment: pending.assignment })
+  changeTicket(timeout, 'confirmation_timeout', 'closed')
+  const ai = add('AI solved final', 'awaiting_ai_decision', { ai_solution: 'Restart the printer. <script>window.aiXss = true</script>', resolution_source: 'ai', closure_reason: 'requester_confirmed' })
+  changeTicket(ai, 'ai_solved', 'ai_solved')
+  const privateShot = randomUUID()
+  st.shots.set(privateShot, { ...screenshot, id: privateShot, private: true })
+  const publicMessage = (i) => ({ id: randomUUID(), kind: 'public_reply', author_kind: 'staff', author_account_id: null, author_display_name: 'Olga Support', created_at: pending.created_at, body: `Public update ${i}: <script>window.messageXss = true</script>`, screenshot_ids: i === 0 ? [screenshot.id] : [] })
+  st.messages.set(queued.id, [ ...Array.from({ length: 27 }, (_, i) => publicMessage(i)), { ...publicMessage(99), kind: 'internal_note', body: 'PRIVATE NOTE MUST NEVER LEAK', screenshot_ids: [privateShot] } ])
+  return { queued: queued.id, pending: pending.id, closed: closed.id, timeout: timeout.id, ai: ai.id, screenshot: screenshot.id, privateShot }
+}
+
 createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://stub')
   const route = `${req.method} ${pathname}`
@@ -177,7 +224,7 @@ createServer(async (req, res) => {
     if (language) languages[tokenOf(req)] = language
     return reply(res, 200, account(user, tokenOf(req)))
   }
-  if (route === 'GET /api/organization') return reply(res, 200, settings)
+  if (route === 'GET /api/organization') return reply(res, 200, { ...settings, ...stateOf(req).policy })
   if (route === 'GET /api/settings/smtp') return ROLES[user] === 'admin' ? reply(res, 200, { connection: null }) : fail(res, 403, 'forbidden')
   if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
@@ -224,7 +271,67 @@ createServer(async (req, res) => {
   // --- Ticket form
   const st = stateOf(req)
   const draftId = /^\/api\/ticket-drafts\/([^/]+)(\/submit)?$/.exec(pathname)
-  const shotId = /^\/api\/screenshots\/([^/]+)(\/preview)?$/.exec(pathname)
+  const shotId = /^\/api\/screenshots\/([^/]+)(\/(?:preview|download))?$/.exec(pathname)
+  st.policy ??= {}
+  st.messages ??= new Map()
+  if (route === 'POST /api/test/policy') { Object.assign(st.policy, await readBody(req)); return reply(res, 204) }
+  if (route === 'POST /api/test/assignment') { const input = await readBody(req); const t = st.tickets.find((t) => t.id === input.id); if (!t) return fail(res, 404, 'not_found'); t.assignment = input.assignment; return reply(res, 204) }
+  if (route === 'POST /api/test/history') return reply(res, 200, seedHistory(st, user))
+  if (route === 'GET /api/tickets') {
+    const q = new URL(req.url, 'http://stub').searchParams
+    let items = st.tickets.map(detailOf).reverse()
+    if (q.get('status')) items = items.filter((t) => t.status === q.get('status'))
+    if (q.get('created_from')) items = items.filter((t) => new Date(t.created_at) >= new Date(q.get('created_from')))
+    if (q.get('created_before')) items = items.filter((t) => new Date(t.created_at) < new Date(q.get('created_before')))
+    const from = Number(q.get('cursor') ?? 0), limit = Math.min(100, Math.max(1, Number(q.get('limit') ?? 25)))
+    return reply(res, 200, { items: items.slice(from, from + limit), next_cursor: from + limit < items.length ? String(from + limit) : null })
+  }
+  const ownTicket = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|actions))?$/.exec(pathname)
+  if (ownTicket) {
+    const source = st.tickets.find((t) => t.id === ownTicket[1])
+    if (!source) return fail(res, 404, 'not_found')
+    const t = detailOf(source), endpoint = ownTicket[2]
+    const all = st.messages.get(t.id) ?? []
+    if (!endpoint && req.method === 'GET') return reply(res, 200, t)
+    if (endpoint === 'messages') {
+      const q = new URL(req.url, 'http://stub').searchParams, start = Number(q.get('cursor') ?? 0), limit = Number(q.get('limit') ?? 25)
+      const visible = all.filter((m) => m.kind === 'public_reply')
+      return reply(res, 200, { items: visible.slice(start, start + limit), next_cursor: start + limit < visible.length ? String(start + limit) : null })
+    }
+    const input = await readBody(req)
+    if (endpoint === 'replies') {
+      const prior = all.find((m) => m.key === input.idempotency_key)
+      if (prior) return prior.body === input.body ? reply(res, 201, prior) : fail(res, 409, 'conflict')
+      if (!OPEN.includes(t.status)) return fail(res, 409, 'conflict')
+      if (!input.body?.trim()) return validation(res, { body: ['required'] })
+      if ((input.screenshot_ids ?? []).some((id) => !st.shots.has(id))) return validation(res, { screenshot_ids: ['invalid'] })
+      const message = { id: randomUUID(), kind: 'public_reply', author_kind: 'requester', author_account_id: null, author_display_name: user, created_at: new Date().toISOString(), body: input.body, screenshot_ids: input.screenshot_ids ?? [], key: input.idempotency_key }
+      all.push(message); st.messages.set(t.id, all)
+      if (t.status === 'waiting_for_requester') changeTicket(source, 'requester_responded', 'in_progress')
+      return reply(res, 201, message)
+    }
+    if (endpoint === 'actions') {
+      const policy = { ...settings, ...st.policy }, a = input.action
+      if (!['accept_resolution', 'reject_resolution', 'cancel', 'reopen'].includes(a)) return validation(res, { action: ['invalid'] })
+      if (['ai_solved', 'cancelled'].includes(t.status)) return fail(res, 409, 'conflict')
+      if (a === 'reopen') {
+        if (t.status !== 'closed') return fail(res, 409, 'conflict')
+        if (!policy.allow_reopening) return fail(res, 403, 'forbidden')
+        changeTicket(source, 'reopen', 'in_progress'); source.closure_reason = null; source.resolution_source = null
+      } else if (a === 'cancel') {
+        if (!input.reason?.trim()) return validation(res, { reason: ['required'] })
+        if (input.reason.length > 1000) return validation(res, { reason: ['too_long'] })
+        if (!['ai_processing', 'awaiting_ai_decision', ...OPEN].includes(t.status)) return fail(res, 409, 'conflict')
+        if (policy.requester_cancellation_policy === 'disabled' || (policy.requester_cancellation_policy === 'before_work_starts' && t.transitions.some((e) => e.to_status === 'in_progress'))) return fail(res, 403, 'forbidden')
+        changeTicket(source, 'cancel', 'cancelled', { reason: input.reason.trim() })
+      } else {
+        if (t.status !== 'awaiting_confirmation' || t.proposal_version !== input.proposal_version) return fail(res, 409, 'conflict')
+        changeTicket(source, a, a === 'accept_resolution' ? 'closed' : 'in_progress', { proposal_version: input.proposal_version })
+        if (a === 'accept_resolution') { source.resolution_source = 'operator'; source.closure_reason = 'requester_confirmed' }
+      }
+      return reply(res, 200, { status: source.status })
+    }
+  }
   if (route === 'GET /api/catalog') return reply(res, 200, CATALOG)
   if (route === 'GET /api/test/tickets') return reply(res, 200, st.tickets)
   if (route === 'GET /api/test/submitted') return reply(res, 200, st.submitted)
@@ -280,7 +387,7 @@ createServer(async (req, res) => {
   }
   if (shotId) {
     const shot = st.shots.get(shotId[1])
-    if (!shot) return fail(res, 404, 'not_found')
+    if (!shot || shot.private) return fail(res, 404, 'not_found')
     if (shotId[2]) return (res.writeHead(200, { 'content-type': 'image/png' }), res.end(PNG))
     return reply(res, 200, shot)
   }
