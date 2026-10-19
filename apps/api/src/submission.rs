@@ -364,7 +364,7 @@ async fn persist_submission(
     sqlx::query("LOCK TABLE categories, priorities, intake_fields, intake_field_categories, intake_field_choices IN SHARE MODE")
         .execute(&mut **db).await?;
     let catalog = catalog::validate_intake(
-        &mut **db,
+        db,
         intake.category_id.ok_or(ApiError::Internal)?,
         intake.priority_id.ok_or(ApiError::Internal)?,
         &intake.answers,
