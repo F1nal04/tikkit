@@ -23,6 +23,7 @@ pub mod authz;
 pub mod config;
 pub mod db;
 pub mod mail;
+pub mod management;
 
 use api::{ApiError, Json};
 
@@ -62,6 +63,14 @@ pub struct AppState {
         accounts::list_accounts,
         accounts::deactivate_account,
         accounts::reactivate_account,
+        accounts::reissue_invitation,
+        management::update_account,
+        management::list_teams,
+        management::create_team,
+        management::update_team,
+        management::organization,
+        management::settings,
+        management::update_settings,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -182,6 +191,27 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             post(accounts::revoke_invitation),
         )
         .route("/api/accounts", get(accounts::list_accounts))
+        .route(
+            "/api/accounts/{id}",
+            axum::routing::put(management::update_account),
+        )
+        .route(
+            "/api/teams",
+            get(management::list_teams).post(management::create_team),
+        )
+        .route(
+            "/api/teams/{id}",
+            axum::routing::put(management::update_team),
+        )
+        .route("/api/organization", get(management::organization))
+        .route(
+            "/api/admin/settings",
+            get(management::settings).put(management::update_settings),
+        )
+        .route(
+            "/api/invitations/{id}/reissue",
+            post(accounts::reissue_invitation),
+        )
         .route(
             "/api/accounts/{id}/deactivate",
             post(accounts::deactivate_account),
@@ -315,6 +345,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
         let body = to_bytes(response.into_body(), 1024).await.unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload, serde_json::json!({ "status": "ok" }));
