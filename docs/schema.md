@@ -31,7 +31,10 @@ language; translations map them to display text.
   `invitation_created`, `invitation_revoked`, `invitation_accepted`,
   `recovery_requested`, `recovery_completed`, `profile_updated`,
   `account_deactivated`, `account_reactivated`, `smtp_configured`,
-  `smtp_updated`, `smtp_removed`, `smtp_tested`
+  `smtp_updated`, `smtp_removed`, `smtp_tested`, `catalog_item_created`,
+  `catalog_item_updated`, `catalog_reordered` (metadata `kind`: `category`,
+  `priority`, `intake_field`)
+- `intake_fields.kind`: `text`, `select`
 - `invitations.role`: an `account_role`; `invitations.language`: `en`, `de`
 
 ## Invariants enforced by the database
@@ -86,6 +89,11 @@ Rust validates and authorizes first; these constraints are the backstop.
 - `smtp_deliveries.idempotency_key` records a successful send. A later delivery
   with the same key does not send again. The row holds no message body, address,
   or credential. The table is append-only.
+- Catalog rows (`categories`, `priorities`, `intake_fields`,
+  `intake_field_choices`) are archived (`archived_at`), never deleted, so
+  tickets and snapshots keep resolving their IDs. Category and priority names
+  are unique (case-insensitive, trimmed) among active rows only. Only `select`
+  fields may set `allow_other`.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change.
@@ -122,3 +130,22 @@ and archival), `team_membership_changed` (old/new team IDs), and
 `organization_settings_updated` (before/after policy). Invitation reissue appends
 `invitation_revoked` with reason `reissued` and `invitation_created` atomically;
 neither event contains the link or token.
+
+## Ticket catalog
+
+Admins manage categories (with the "Skip AI automatically" flag `skip_ai`,
+default off), priority levels, and conditional intake fields
+(`apps/api/src/catalog.rs`, migration `0007_ticket_catalog.sql`). Every
+category uses the one shared base form; a field is shown while one of its
+categories (`intake_field_categories`) is selected. `select` fields have
+choices with stable IDs and optionally a free-text alternative (`allow_other`).
+This is deliberately not a form builder: no nesting, no field-to-field rules,
+and a category never selects a team.
+
+`GET /api/catalog` serves the active catalog to the ticket form;
+`GET /api/catalog/all` includes archived rows for Admins.
+`catalog::validate_intake` is what ticket submission must call: it rejects
+unknown/archived category, priority, and choice IDs and unknown field IDs,
+enforces required visible fields, drops answers to hidden or archived fields,
+and returns an `IntakeSnapshot` (names, labels, `skip_ai`, answers) for the
+ticket to store, so later catalog edits never rewrite submitted tickets.
