@@ -3,7 +3,7 @@
   // and keeps `ids` (the intake's `screenshot_ids`) in sync. Failures are shown
   // per file and never touch the rest of the form.
   import { untrack } from 'svelte'
-  import { createClient } from '@tikkit/api-client'
+  import { api as apiClient } from '#lib/api.ts'
   import { messages, type Locale } from '#lib/i18n.ts'
   import { ACCEPT, precheck, uploadErrorText, uploadScreenshot, type Screenshot } from '#lib/screenshots.ts'
 
@@ -16,7 +16,7 @@
 
   // Resumed drafts only carry IDs; load their metadata (owner-only while pending).
   $effect(() => {
-    const api = createClient({ language: locale })
+    const api = apiClient(locale)
     for (const id of ids) {
       if (untrack(() => known[id])) continue
       api
