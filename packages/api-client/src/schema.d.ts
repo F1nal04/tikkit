@@ -916,9 +916,9 @@ export interface paths {
         put?: never;
         /**
          * Dispatch, transfer, return to general intake, claim, assign, or unassign.
-         *     Checks: visibility (`404`), stale `expected_updated_at` (`409`), the ticket
-         *     policy incl. self-handling (`403`), then the target (`422`). Concurrent
-         *     changes serialize on the ticket row; the later one is stale (`409`).
+         *     Checks: visibility (`404`), self-handling (`403`), stale `expected_updated_at`
+         *     (`409`), the rest of the ticket policy (`403`), then the target (`422`).
+         *     Concurrent changes serialize on the ticket row; the later one is stale (`409`).
          */
         post: operations["change_assignment"];
         delete?: never;

@@ -76,9 +76,9 @@ pub struct AssignmentReceipt {
 }
 
 /// Dispatch, transfer, return to general intake, claim, assign, or unassign.
-/// Checks: visibility (`404`), stale `expected_updated_at` (`409`), the ticket
-/// policy incl. self-handling (`403`), then the target (`422`). Concurrent
-/// changes serialize on the ticket row; the later one is stale (`409`).
+/// Checks: visibility (`404`), self-handling (`403`), stale `expected_updated_at`
+/// (`409`), the rest of the ticket policy (`403`), then the target (`422`).
+/// Concurrent changes serialize on the ticket row; the later one is stale (`409`).
 #[utoipa::path(post, path = "/api/tickets/{id}/assignment", tag = "tickets",
     params(("id" = Uuid, Path)), request_body = AssignmentAction,
     responses((status = 200, body = AssignmentReceipt),
@@ -95,8 +95,39 @@ pub async fn change_assignment(
 ) -> Result<Json<AssignmentReceipt>, ApiError> {
     use AssignmentAction as A;
     let mut tx = state.pool.begin().await?;
-    // Same lock order as the lifecycle: actor, then ticket, then targets.
+    // Account, membership, and team before the ticket. `lock_actor`, deactivation,
+    // and membership edits use that order; locking a target after the ticket
+    // deadlocks with a member who is already waiting on this row.
     let actor = lifecycle::lock_actor(&mut tx, user.account_id()).await?;
+    match &action {
+        A::Dispatch {
+            team_id: target, ..
+        } => {
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM teams WHERE id = $1 FOR SHARE")
+                .bind(target)
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+        A::Assign {
+            assignee_account_id: target,
+            ..
+        } => {
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM accounts WHERE id = $1 FOR SHARE")
+                .bind(target)
+                .fetch_optional(&mut *tx)
+                .await?;
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT m.account_id FROM team_memberships m
+                 JOIN teams t ON t.id = m.team_id
+                 WHERE m.account_id = $1
+                 FOR SHARE OF m, t",
+            )
+            .bind(target)
+            .fetch_optional(&mut *tx)
+            .await?;
+        }
+        _ => {}
+    }
     let (reference, requester, team_id, assignee, status, updated_at): (
         i64,
         Uuid,
@@ -118,7 +149,14 @@ pub async fn change_assignment(
         assignee_account_id: assignee,
         status: ident(status)?,
     };
-    authz::ticket_view(&actor, &scope).ok_or(ApiError::NotFound)?;
+    // Invisible tickets are `404` before any stale or policy result. The requester
+    // is `403` before the stale check, so a wrong timestamp never reveals that a
+    // ticket they must not handle has moved.
+    match authz::ticket_view(&actor, &scope) {
+        None => return Err(ApiError::NotFound),
+        Some(authz::TicketView::Requester) => return Err(ApiError::Forbidden),
+        Some(authz::TicketView::Staff) => {}
+    }
     let (A::Dispatch {
         expected_updated_at,
         ..
@@ -154,9 +192,9 @@ pub async fn change_assignment(
             if Some(target) == team_id {
                 return Err(invalid("team_id"));
             }
-            // FOR SHARE: archiving the team waits for this dispatch.
+            // The team row is already share-locked, so archiving it waits for us.
             sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM teams WHERE id = $1 AND archived_at IS NULL FOR SHARE",
+                "SELECT id FROM teams WHERE id = $1 AND archived_at IS NULL",
             )
             .bind(target)
             .fetch_optional(&mut *tx)
@@ -176,15 +214,14 @@ pub async fn change_assignment(
             assignee_account_id: target,
             ..
         } => {
-            // An active staff member of the ticket's (active) team, not its requester.
-            // FOR SHARE: deactivation, role or membership changes wait for this assignment.
+            // Account, membership, and team are already share-locked, so deactivation
+            // or a membership change waits until this assignment commits.
             let eligible: Option<Uuid> = sqlx::query_scalar(
                 "SELECT a.id FROM team_memberships m
                  JOIN accounts a ON a.id = m.account_id
                  JOIN teams t ON t.id = m.team_id
                  WHERE m.account_id = $1 AND m.team_id = $2 AND a.is_active
-                   AND a.role NOT IN ('user', 'admin') AND t.archived_at IS NULL
-                 FOR SHARE OF m, a",
+                   AND a.role NOT IN ('user', 'admin') AND t.archived_at IS NULL",
             )
             .bind(target)
             .bind(team_id)

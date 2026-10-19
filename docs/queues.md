@@ -85,15 +85,18 @@ own: no category, priority, or AI outcome picks a team or person.
 | `assign {assignee_account_id}` | `assign_ticket`: the team's Lead or an Admin, even over another member's claim | Assignee = target. |
 | `unassign` | as `assign` | Clears the assignee. |
 
-Order of checks: visibility (`404`), stale `expected_updated_at` (`409 conflict`,
-nothing written), the ticket policy incl. self-handling and open status (`403`),
-then the target (`422`): `team_id` must be an active team other than the current
-one; `assignee_account_id` an active Operator/Specialist/Team Lead member of the
-ticket's active team, not its requester and not the current assignee. Nothing to
-return or unassign is `409`. The handler locks the actor, the ticket row, then the
-target team or member (`FOR SHARE`), so concurrent claims and transfers serialize:
-the first commits, every other one is stale (`409`), or `404` if the winner moved
-the ticket out of the caller's sight. Status, reference, intake, messages,
+Order of checks: visibility (`404`), self-handling (`403`), stale
+`expected_updated_at` (`409 conflict`, nothing written), the rest of the ticket
+policy (`403`), then the target (`422`): `team_id` must be an active team other
+than the current one; `assignee_account_id` an active Operator/Specialist/Team
+Lead member of the ticket's active team, not its requester and not the current
+assignee. Nothing to return or unassign is `409`. A caller who cannot see the
+ticket gets `404` even when the timestamp is wrong; the ticket's requester gets
+`403` even then. The handler locks the actor and the target team or member
+(`FOR SHARE`) before the ticket row — the same order as staff work and
+membership edits — so concurrent claims and transfers serialize: the first
+commits, every other one is stale (`409`), or `404` if the winner moved the
+ticket out of the caller's sight. Status, reference, intake, messages,
 screenshots, priority and transition history are untouched; `updated_at` moves.
 
 Each change appends one `assignment_changed` event with the actor, the action, and

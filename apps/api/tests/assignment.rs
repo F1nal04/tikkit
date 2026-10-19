@@ -676,6 +676,20 @@ async fn self_handling_is_refused_by_account_id() {
     );
     let own = w.seed("lead", "queued", Some(w.desk), None).await;
     assert_eq!(w.change(own, "lead", act("claim")).await.status, 403);
+    // A stale timestamp still does not reveal movement: the requester is forbidden
+    // before the conflict check. An operator who cannot see the ticket gets 404.
+    assert_eq!(
+        w.change_at(own, "lead", act("claim"), json!("2020-01-01T00:00:00Z"))
+            .await
+            .status,
+        403
+    );
+    assert_eq!(
+        w.change_at(own, "outsider", act("claim"), json!("2020-01-01T00:00:00Z"))
+            .await
+            .status,
+        404
+    );
     assert_eq!(w.change(own, "lead", w.assign("op")).await.status, 403);
     assert_eq!(
         w.change(own, "lead", act("return_to_general")).await.status,
@@ -702,6 +716,17 @@ async fn ai_solved_and_finished_records_are_excluded() {
         assert!(!w.queue("admin", view).await.contains(&solved), "{view}");
     }
     assert_eq!(w.change(solved, "op", w.dispatch(w.desk)).await.status, 404);
+    assert_eq!(
+        w.change_at(
+            solved,
+            "op",
+            w.dispatch(w.desk),
+            json!("2020-01-01T00:00:00Z")
+        )
+        .await
+        .status,
+        404
+    );
     for action in [w.dispatch(w.desk), w.assign("op"), act("unassign")] {
         assert_eq!(w.change(solved, "admin", action).await.status, 403);
     }
