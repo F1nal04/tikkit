@@ -29,16 +29,7 @@ use crate::{
 pub const SUMMARY_MAX: usize = 5000;
 pub const REASON_MAX: usize = 1000;
 
-/// When the owning requester may cancel a submitted open ticket.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CancellationPolicy {
-    #[default]
-    AnytimeWhileOpen,
-    /// Until the first recorded human work-start (`in_progress`) event.
-    BeforeWorkStarts,
-    Disabled,
-}
+pub use crate::management::CancellationPolicy;
 
 /// The organization settings transitions depend on, read inside each transition's transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,12 +58,25 @@ impl Default for Policy {
     }
 }
 
-/// The current policy. Read it `FOR SHARE` once settings are stored, so a
-/// concurrent settings change waits for the transition that relied on it.
-// ponytail: spec defaults until organization settings (#14) and AI configuration
-// (#33) are persisted; they replace this body and nothing else.
-pub async fn policy(_db: &mut PgConnection) -> Result<Policy, sqlx::Error> {
-    Ok(Policy::default())
+/// The current organization settings, read `FOR SHARE` so a concurrent
+/// settings change waits for the transition that relied on them.
+pub async fn policy(db: &mut PgConnection) -> Result<Policy, ApiError> {
+    let (allow_requester_skip, allow_reopen, cancellation, hours): (bool, bool, String, i32) =
+        sqlx::query_as(
+            "SELECT allow_requester_ai_skip, allow_reopening, requester_cancellation_policy,
+                    resolution_confirmation_hours
+             FROM organization WHERE id FOR SHARE",
+        )
+        .fetch_one(db)
+        .await?;
+    Ok(Policy {
+        // ponytail: AI stays unavailable until AI configuration (#33) is persisted.
+        ai_available: false,
+        allow_requester_skip,
+        allow_reopen,
+        cancellation: ident(cancellation)?,
+        confirmation_timeout_hours: hours.into(),
+    })
 }
 
 /// Every allowed status change. Event types (`ticket_events.event_type`) are

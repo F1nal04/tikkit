@@ -207,6 +207,21 @@ async fn apply(
     result
 }
 
+/// Commits one transition under the stored organization settings.
+async fn apply_current(
+    w: &World,
+    id: Uuid,
+    by: By,
+    t: Transition,
+) -> Result<TicketStatus, ApiError> {
+    let mut tx = w.pool().begin().await.unwrap();
+    let result = transition(&mut tx, id, by, &t).await;
+    if result.is_ok() {
+        tx.commit().await.unwrap();
+    }
+    result
+}
+
 fn all_transitions() -> Vec<Transition> {
     use Transition::*;
     vec![
@@ -551,6 +566,113 @@ async fn cancellation_sees_work_started_by_the_ticket_lock_holder() {
     let mut db = w.pool().acquire().await.unwrap();
     assert_eq!(status_of(&mut db, id).await, S::InProgress);
     assert_eq!(events(&mut db, id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn transitions_follow_the_stored_organization_settings() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let admin = login(&app, "admin", PASSWORD).await.session();
+    let settings = |reopen: bool, cancellation: &'static str, hours: i32, skip: bool| {
+        let (app, admin) = (app.clone(), admin.clone());
+        async move {
+            let body = serde_json::json!({
+                "name": "Tikkit", "timezone": "UTC", "default_language": "en",
+                "allow_reopening": reopen, "requester_cancellation_policy": cancellation,
+                "resolution_confirmation_hours": hours, "allow_requester_ai_skip": skip,
+            });
+            let r = call(&app, "PUT", "/api/admin/settings", Some(body), Some(&admin)).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        }
+    };
+    let pool = w.pool().clone();
+    let deadline_hours = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, f64>(
+                "SELECT EXTRACT(EPOCH FROM t.confirmation_deadline - e.created_at)::float8 / 3600
+             FROM tickets t JOIN ticket_events e ON e.ticket_id = t.id
+             WHERE t.id = $1 AND e.event_type = 'propose_resolution'",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let me = By::Account(w.requester);
+    let cancel = || Transition::Cancel {
+        reason: "No longer needed".into(),
+    };
+    let propose = || Transition::ProposeResolution {
+        summary: "Replaced the toner.".into(),
+    };
+
+    // Spec defaults: no reopening, no requester skip.
+    let closed = seed(&w, S::Closed).await;
+    let running = seed(&w, S::AiProcessing).await;
+    assert_eq!(
+        code(&apply_current(&w, closed, me, Transition::Reopen).await),
+        "forbidden"
+    );
+    assert_eq!(
+        code(&apply_current(&w, running, me, Transition::SkipAi).await),
+        "forbidden"
+    );
+
+    settings(true, "disabled", 2, true).await;
+    assert_eq!(
+        code(&apply_current(&w, closed, me, Transition::Reopen).await),
+        "ok"
+    );
+    assert_eq!(
+        code(&apply_current(&w, running, me, Transition::SkipAi).await),
+        "ok"
+    );
+    let queued = seed(&w, S::Queued).await;
+    assert_eq!(
+        code(&apply_current(&w, queued, me, cancel()).await),
+        "forbidden"
+    );
+    let working = seed(&w, S::InProgress).await;
+    let op = By::Account(w.op);
+    assert_eq!(code(&apply_current(&w, working, op, propose()).await), "ok");
+    assert_eq!(deadline_hours(working).await, 2.0);
+
+    settings(false, "anytime_while_open", 168, false).await;
+    assert_eq!(code(&apply_current(&w, queued, me, cancel()).await), "ok");
+    let closed = seed(&w, S::Closed).await;
+    assert_eq!(
+        code(&apply_current(&w, closed, me, Transition::Reopen).await),
+        "forbidden"
+    );
+    // A pending proposal keeps the deadline snapshotted when it was made.
+    assert_eq!(deadline_hours(working).await, 2.0);
+}
+
+#[tokio::test]
+async fn settings_changes_wait_for_transitions_that_read_them() {
+    let Some(w) = world().await else { return };
+    let id = seed(&w, S::Queued).await;
+    let mut work = w.pool().begin().await.unwrap();
+    transition(&mut work, id, By::Account(w.op), &Transition::StartWork)
+        .await
+        .unwrap();
+    let mut update = w.pool().begin().await.unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *update)
+        .await
+        .unwrap();
+    let pending = tokio::spawn(async move {
+        sqlx::query("UPDATE organization SET allow_reopening = true WHERE id")
+            .execute(&mut *update)
+            .await
+            .unwrap();
+        update.commit().await.unwrap();
+    });
+    wait_until_blocked(w.pool(), pid).await;
+    work.commit().await.unwrap();
+    pending.await.unwrap();
 }
 
 #[tokio::test]

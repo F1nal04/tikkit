@@ -360,10 +360,12 @@ pub async fn update_team(
     Ok(Json(team))
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
+/// When the owning requester may cancel a submitted open ticket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CancellationPolicy {
     AnytimeWhileOpen,
+    /// Until the first recorded human work-start (`in_progress`) event.
     BeforeWorkStarts,
     Disabled,
 }
