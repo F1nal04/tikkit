@@ -12,7 +12,8 @@ use uuid::Uuid;
 use crate::{
     AppState,
     api::{
-        ApiError, Cursor, Json, Page, Pagination, Query, Role, TicketAssignmentView, TicketStatus,
+        ApiError, Cursor, FieldErrors, Json, Page, Pagination, Query, Role, TicketAssignmentView,
+        TicketStatus,
     },
     auth::{CurrentUser, ident, ident_str},
     authz::{self, Actor, Permission},
@@ -62,7 +63,8 @@ pub enum QueueSort {
     Newest,
     /// Oldest first (longest waiting).
     Oldest,
-    /// Admin-defined priority order (catalog order), then oldest first.
+    /// Catalog priority order (the level Admins list first comes first), then
+    /// oldest first.
     Priority,
 }
 
@@ -119,6 +121,7 @@ struct Row {
     category_name: String,
     priority_id: Uuid,
     priority_name: String,
+    priority_rank: i32,
     requester_id: Uuid,
     requester_username: String,
     requester_display_name: String,
@@ -156,9 +159,23 @@ pub async fn list_queue(
     Query(q): Query<QueueQuery>,
 ) -> Result<Json<Page<QueueTicket>>, ApiError> {
     authz::require_permission(&user, Permission::ViewGeneralQueue)?;
+    let sort = q.sort.unwrap_or_default();
+    // `sort=priority` cursors are `{rank}.{cursor}`: the last row's priority rank
+    // travels with it, so the next page never looks up the cursor's ticket (which
+    // may be hidden, forged, or reprioritized since).
+    let (rank, raw) = match (sort, q.cursor) {
+        (QueueSort::Priority, Some(c)) => {
+            let (rank, rest) = c
+                .split_once('.')
+                .and_then(|(rank, rest)| Some((rank.parse::<i32>().ok()?, rest.to_owned())))
+                .ok_or_else(invalid_cursor)?;
+            (Some(rank), Some(rest))
+        }
+        (_, c) => (None, c),
+    };
     let page = Pagination {
         limit: q.limit,
-        cursor: q.cursor.clone(),
+        cursor: raw,
     };
     let cursor = page.cursor()?;
     let statuses: Vec<String> = match q.status {
@@ -179,7 +196,7 @@ pub async fn list_queue(
             next_cursor: None,
         }));
     };
-    let (order, after) = match q.sort.unwrap_or_default() {
+    let (order, after) = match sort {
         QueueSort::Newest => (
             "t.created_at DESC, t.id DESC",
             "(t.created_at, t.id) < ($9, $10)",
@@ -187,14 +204,13 @@ pub async fn list_queue(
         QueueSort::Oldest => ("t.created_at, t.id", "(t.created_at, t.id) > ($9, $10)"),
         QueueSort::Priority => (
             "p.sort_order, t.created_at, t.id",
-            "(p.sort_order, t.created_at, t.id) > (SELECT p2.sort_order, t2.created_at, t2.id
-                 FROM tickets t2 JOIN priorities p2 ON p2.id = t2.priority_id WHERE t2.id = $10)",
+            "(p.sort_order, t.created_at, t.id) > ($12, $9, $10)",
         ),
     };
     let sql = format!(
         "SELECT t.id, t.reference, t.status::text AS status, t.subject,
                 COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
-                t.priority_id, p.name AS priority_name,
+                t.priority_id, p.name AS priority_name, p.sort_order AS priority_rank,
                 r.id AS requester_id, r.username AS requester_username,
                 r.display_name AS requester_display_name,
                 tm.name AS team_name, a.display_name AS assignee_display_name,
@@ -227,8 +243,10 @@ pub async fn list_queue(
         .bind(cursor.map(|c| c.created_at))
         .bind(cursor.map(|c| c.id))
         .bind(page.limit() + 1)
+        .bind(rank)
         .fetch_all(&state.pool)
         .await?;
+    let last_rank = rows.get(page.limit() as usize - 1).map(|r| r.priority_rank);
     let items = rows
         .into_iter()
         .map(|row| {
@@ -254,10 +272,24 @@ pub async fn list_queue(
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    Ok(Json(Page::from_rows(items, page.limit(), |t| Cursor {
+    let mut result = Page::from_rows(items, page.limit(), |t| Cursor {
         created_at: t.created_at,
         id: t.id,
-    })))
+    });
+    if sort == QueueSort::Priority {
+        result.next_cursor = result
+            .next_cursor
+            .zip(last_rank)
+            .map(|(c, rank)| format!("{rank}.{c}"));
+    }
+    Ok(Json(result))
+}
+
+fn invalid_cursor() -> ApiError {
+    ApiError::Validation(FieldErrors::from([(
+        "cursor".into(),
+        vec!["invalid_cursor"],
+    )]))
 }
 
 /// Intake and the Admin overview leave out cancelled tickets that never reached a

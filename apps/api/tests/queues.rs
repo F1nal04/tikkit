@@ -742,6 +742,72 @@ async fn effective_priority_drives_filters_and_ordering() {
     assert!(!ids_of(&app, &cookie, &normal).await.contains(&general_1));
 }
 
+/// A `sort=priority` page continues from the rank carried in its cursor, never
+/// from a lookup of the cursor's ticket: reprioritizing that ticket between pages
+/// skips nothing, and a cursor without a rank is rejected.
+#[tokio::test]
+async fn priority_pages_continue_from_the_cursor_not_the_ticket() {
+    let Some(w) = world().await else { return };
+    let mut urgent = Vec::new();
+    for _ in 0..3 {
+        let id = seed(&w, w.ids["requester"], S::Queued, None, None).await;
+        sqlx::query("UPDATE tickets SET priority_id = $1 WHERE id = $2")
+            .bind(w.urgent)
+            .bind(id)
+            .execute(w.pool())
+            .await
+            .unwrap();
+        urgent.push(id);
+    }
+    let app = test_app(w.pool());
+    let cookie = session(&app, "outsider").await;
+    let first = call(
+        &app,
+        "GET",
+        "/api/queue?sort=priority&limit=2",
+        None,
+        Some(&cookie),
+    )
+    .await;
+    let next = first.body["next_cursor"].as_str().unwrap().to_owned();
+    assert_eq!(first.body["items"][1]["id"], urgent[1].to_string());
+    // The last row of the first page drops to Normal before the next page loads.
+    sqlx::query("UPDATE tickets SET priority_id = $1 WHERE id = $2")
+        .bind(w.normal)
+        .bind(urgent[1])
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let ids = ids_of(
+        &app,
+        &cookie,
+        &format!("sort=priority&limit=100&cursor={next}"),
+    )
+    .await;
+    assert_eq!(
+        ids.first(),
+        Some(&urgent[2]),
+        "the remaining Urgent ticket is next"
+    );
+    assert_eq!(
+        ids.len(),
+        1 + 3 + 1,
+        "urgent[2], the Normal intake, and urgent[1]"
+    );
+
+    // A plain `(created_at, id)` cursor is not a priority cursor.
+    let (_, plain) = next.split_once('.').unwrap();
+    let r = call(
+        &app,
+        "GET",
+        &format!("/api/queue?sort=priority&cursor={plain}"),
+        None,
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+}
+
 /// A submission leaves AI exactly once: absent while in AI, in the general queue
 /// once after escalation, however many times the escalation is replayed.
 #[tokio::test]
