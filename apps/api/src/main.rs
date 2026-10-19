@@ -1,7 +1,7 @@
 use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
-use tikkit_api::{AppState, app_with, auth, config::Config, db, screenshots};
+use tikkit_api::{AppState, app_with, auth, config::Config, db, notifications, screenshots};
 use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
@@ -26,6 +26,11 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(screenshots::cleanup_loop(
         pool.clone(),
         config.screenshot_dir.clone(),
+    ));
+
+    tokio::spawn(notifications::worker_loop(
+        pool.clone(),
+        auth::Settings::from(&config),
     ));
 
     let listener = TcpListener::bind(config.api_addr)

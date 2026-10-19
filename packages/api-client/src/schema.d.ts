@@ -75,6 +75,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["delivery_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/notifications/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-queues every `failed` row. Rows keep their idempotency key, so a message
+         *     the relay already accepted is never sent twice.
+         */
+        post: operations["retry_failed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/settings": {
         parameters: {
             query?: never;
@@ -462,6 +498,74 @@ export interface paths {
          *     invitations are `not_found`.
          */
         post: operations["revoke_invitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["notification_preferences"];
+        put: operations["update_notification_preferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_notifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/unread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["unread_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Marks one of the caller's visible notifications read. Idempotent; anything
+         *     else (another account's, or one whose ticket is no longer visible) is `404`.
+         */
+        post: operations["mark_notification_read"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1391,6 +1495,23 @@ export interface components {
             /** @description Single-use acceptance link. Shown only now; only its hash is stored. */
             url: string;
         };
+        DeliveryFailure: {
+            /** Format: int64 */
+            count: number;
+            /** @description Stable code, e.g. `smtp_auth_failed`. */
+            error: string;
+        };
+        DeliveryStats: {
+            /** Format: int64 */
+            failed: number;
+            failures: components["schemas"]["DeliveryFailure"][];
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            sent: number;
+            /** Format: int64 */
+            suppressed: number;
+        };
         Draft: {
             /** Format: date-time */
             created_at: string;
@@ -1577,6 +1698,25 @@ export interface components {
             /** @description 1-100 characters, unique among active priorities. */
             name: string;
         };
+        Notification: {
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Portal path of the ticket; opening it still requires current access. */
+            href: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            read_at: string | null;
+            /** Format: uuid */
+            ticket_id: string;
+            /** @description System text in the caller's language. */
+            title: string;
+        };
+        NotificationPreferences: {
+            email: boolean;
+            in_app: boolean;
+        };
         Order: {
             /** @description Every ID of this kind, archived ones included, in the new display order. */
             ids: string[];
@@ -1670,6 +1810,25 @@ export interface components {
                 id: string;
                 kind: components["schemas"]["MessageKind"];
                 screenshot_ids: string[];
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Notification: {
+            items: {
+                body: string;
+                /** Format: date-time */
+                created_at: string;
+                /** @description Portal path of the ticket; opening it still requires current access. */
+                href: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                read_at: string | null;
+                /** Format: uuid */
+                ticket_id: string;
+                /** @description System text in the caller's language. */
+                title: string;
             }[];
             next_cursor: string | null;
         };
@@ -1885,6 +2044,10 @@ export interface components {
          * @enum {string}
          */
         ResolutionSource: "ai" | "operator";
+        RetryResult: {
+            /** Format: int64 */
+            retried: number;
+        };
         /** @enum {string} */
         Role: "user" | "operator" | "specialist" | "team_lead" | "admin";
         SavedView: {
@@ -2258,6 +2421,10 @@ export interface components {
         TokenRequest: {
             token: string;
         };
+        UnreadCount: {
+            /** Format: int64 */
+            count: number;
+        };
         UpdateAccountRequest: {
             /** @description Descriptive only; only Specialist accounts may have expertise. Maximum 120 characters. */
             expertise?: string | null;
@@ -2493,6 +2660,80 @@ export interface operations {
             };
             /** @description `not_found` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delivery_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryStats"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    retry_failed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3505,6 +3746,164 @@ export interface operations {
             };
             /** @description `forbidden` (not an Admin) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    notification_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_notification_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferences"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_notifications: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Notification"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unread_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnreadCount"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    mark_notification_read: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
