@@ -100,7 +100,8 @@ authz::authorize_ticket(&actor, &scope, Permission::ReplyAsStaff)?;
 ```
 
 List, search, count, and export queries must apply the same rules in SQL, not
-after fetching. Team helpers: `authz::team_of`, `authz::is_lead_of`,
+after fetching: use `authz::staff_visible_sql` (see [queues.md](queues.md)), which
+a test keeps equal to `ticket_view`. Team helpers: `authz::team_of`, `authz::is_lead_of`,
 `authz::active_team_members`.
 
 ## Last active Admin

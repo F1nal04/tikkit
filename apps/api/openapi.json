@@ -1749,6 +1749,192 @@
         }
       }
     },
+    "/api/queue": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Staff queue page, filtered and ordered as requested. `view=team` for a\nnon-Admin is always their own team (another `team_id` is `404`).",
+        "operationId": "list_queue",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "description": "Default `general`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/QueueView"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "`team` view, Admin only: restrict to one team.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "One of the open statuses, `closed`, or `cancelled`; default: all open statuses.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TicketStatus"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "priority_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "unassigned",
+            "in": "query",
+            "description": "Only tickets without an individual assignee.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/QueueSort"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_QueueTicket"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` (unknown or non-queue filter value)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff, or `view=all` without Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (another team's `team_id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/counts": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Open work counts for the caller's queue tabs.",
+        "operationId": "queue_counts",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueCounts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ready": {
       "get": {
         "tags": [
@@ -4388,6 +4574,85 @@
           }
         }
       },
+      "Page_QueueTicket": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One queue row.",
+              "required": [
+                "id",
+                "reference",
+                "status",
+                "subject",
+                "category_name",
+                "priority_id",
+                "priority_name",
+                "requester",
+                "assignment",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "assignment": {
+                  "$ref": "#/components/schemas/TicketAssignmentView"
+                },
+                "category_name": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Age is derived from this."
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "priority_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "The current effective priority; the requester's original choice stays in\nthe ticket's intake snapshot."
+                },
+                "priority_name": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Stable human-facing number."
+                },
+                "requester": {
+                  "$ref": "#/components/schemas/TicketRequester"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Team": {
         "type": "object",
         "description": "One page of a list. `next_cursor` is null on the last page.",
@@ -4586,6 +4851,118 @@
           }
         },
         "additionalProperties": false
+      },
+      "QueueCounts": {
+        "type": "object",
+        "description": "Open work counts per view, under the same visibility as the lists.",
+        "required": [
+          "general",
+          "team",
+          "mine",
+          "all"
+        ],
+        "properties": {
+          "all": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Admin only."
+          },
+          "general": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mine": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The caller's team; for an Admin, every dispatched ticket."
+          }
+        }
+      },
+      "QueueSort": {
+        "type": "string",
+        "description": "Fixed orders; ties break on `(created_at, id)`.",
+        "enum": [
+          "newest",
+          "oldest",
+          "priority"
+        ]
+      },
+      "QueueTicket": {
+        "type": "object",
+        "description": "One queue row.",
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "subject",
+          "category_name",
+          "priority_id",
+          "priority_name",
+          "requester",
+          "assignment",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Age is derived from this."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The current effective priority; the requester's original choice stays in\nthe ticket's intake snapshot."
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable human-facing number."
+          },
+          "requester": {
+            "$ref": "#/components/schemas/TicketRequester"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QueueView": {
+        "type": "string",
+        "description": "Which slice of the visible tickets a queue shows.",
+        "enum": [
+          "general",
+          "team",
+          "mine",
+          "all"
+        ]
       },
       "Readiness": {
         "type": "object",
