@@ -205,3 +205,8 @@ test('lost access or a signed-out session reloads into that answer', async () =>
     expect(screen.queryByText(/Someone else updated/)).toBeNull()
   } finally { vi.useRealTimers() }
 })
+
+test('an automatic closure is labelled as not confirmed by the requester', () => {
+  show({ status: 'closed', resolution_source: 'operator', closure_reason: 'confirmation_timeout' })
+  expect(screen.getByText(/Closed automatically: no response before the confirmation deadline/)).toBeTruthy()
+})
