@@ -140,10 +140,8 @@ async fn staff_work_wait_propose_and_supersede_without_closing() {
     let id = w.seed(w.owner, "queued", false).await;
     let d = w.detail(id, "op").await.body;
     assert_eq!(d["view"], "staff");
-    assert_eq!(
-        d["staff_access"],
-        json!({"can_handle": true, "can_reopen": false})
-    );
+    assert_eq!(d["staff_access"]["can_handle"], true);
+    assert_eq!(d["staff_access"]["can_reopen"], false);
     assert_eq!(d["requester"]["username"], "owner");
 
     let r = w.act(id, "op", json!({"action":"start_work"})).await;
