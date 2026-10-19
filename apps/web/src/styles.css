@@ -19,7 +19,7 @@
 
 body { margin: 0; }
 
-h1 { margin: 0 0 1rem; font-size: 1.75rem; letter-spacing: -0.02em; }
+h1 { margin: 0 0 1rem; font-size: 1.75rem; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 h2 { margin: 1.5rem 0 0.75rem; font-size: 1.25rem; }
 
 a { color: inherit; }
