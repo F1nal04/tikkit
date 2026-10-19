@@ -62,12 +62,12 @@ pub async fn update_account(
     Json(body): Json<UpdateAccountRequest>,
 ) -> Result<StatusCode, ApiError> {
     let mut tx = transaction(&state, &user).await?;
-    let old: Option<(String, Option<String>, bool)> =
-        sqlx::query_as("SELECT role::text, expertise, is_active FROM accounts WHERE id = $1")
+    let old: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT role::text, expertise FROM accounts WHERE id = $1")
             .bind(id)
             .fetch_optional(&mut *tx)
             .await?;
-    let (old_role, old_expertise, active) = old.ok_or(ApiError::NotFound)?;
+    let (old_role, old_expertise) = old.ok_or(ApiError::NotFound)?;
     let expertise = body
         .expertise
         .map(|s| s.trim().to_owned())
@@ -78,7 +78,8 @@ pub async fn update_account(
     {
         return Err(invalid("expertise"));
     }
-    if body.team_id.is_some() && (matches!(body.role, Role::User | Role::Admin) || !active) {
+    // Deactivation keeps membership; joining a new team (set_membership) requires an active account.
+    if body.team_id.is_some() && matches!(body.role, Role::User | Role::Admin) {
         return Err(invalid("team_id"));
     }
     let old_team: Option<Uuid> =
