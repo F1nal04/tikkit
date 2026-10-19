@@ -16,7 +16,7 @@ afterEach(() => {
 async function signIn(locale: 'en' | 'de', response: Response) {
   const fetch = vi.fn().mockResolvedValue(response)
   vi.stubGlobal('fetch', fetch)
-  render(Page, { props: { data: { locale, user: null }, params: {} } })
+  render(Page, { props: { data: { locale, user: null, next: null }, params: {} } })
   await fireEvent.input(screen.getByLabelText(locale === 'en' ? 'Username' : 'Benutzername'), {
     target: { value: 'Alice' },
   })

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation'
-  import { ApiError, createClient, type Language, type Role } from '@tikkit/api-client'
+  import { ApiError, type Language, type Role } from '@tikkit/api-client'
+  import { api as apiClient } from '#lib/api.ts'
+  import Table from '#lib/components/Table.svelte'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -17,7 +19,7 @@
   let error = $state<string | null>(null)
   let fields = $state<Record<string, string[]>>({})
 
-  const api = () => createClient({ language: data.locale })
+  const api = () => apiClient(data.locale)
   const when = (iso: string) =>
     new Intl.DateTimeFormat(data.locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(
       new Date(iso),
@@ -65,7 +67,6 @@
 
 <svelte:head><title>{t.accountsTitle}</title></svelte:head>
 
-<main class="wide">
   <h1>{t.accountsTitle}</h1>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
@@ -109,44 +110,44 @@
   {/if}
 
   <h2>{t.pendingInvitations}</h2>
-  {#if data.invitations.length === 0}
-    <p>{t.noPendingInvitations}</p>
-  {:else}
-    <table>
-      <thead><tr><th>{t.role}</th><th>{t.email}</th><th>{t.expires}</th><th></th></tr></thead>
-      <tbody>
-        {#each data.invitations as i (i.id)}
-          <tr>
-            <td>{t.roles[i.role]}</td>
-            <td>{i.email ?? '—'}</td>
-            <td>{when(i.expires_at)}</td>
-            <td><button type="button" onclick={() => revoke(i.id)}>{t.revoke}</button></td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  {/if}
+  <Table caption={t.pendingInvitations} empty={t.noPendingInvitations} isEmpty={data.invitations.length === 0}>
+    {#snippet head()}
+      <tr>
+        <th scope="col">{t.role}</th><th scope="col">{t.email}</th><th scope="col">{t.expires}</th>
+        <th scope="col"><span class="sr-only">{t.actions}</span></th>
+      </tr>
+    {/snippet}
+    {#each data.invitations as i (i.id)}
+      <tr>
+        <td>{t.roles[i.role]}</td>
+        <td>{i.email ?? '—'}</td>
+        <td>{when(i.expires_at)}</td>
+        <td><button type="button" onclick={() => revoke(i.id)}>{t.revoke}</button></td>
+      </tr>
+    {/each}
+  </Table>
 
   <h2>{t.accountsTitle}</h2>
-  <table>
-    <thead>
-      <tr><th>{t.username}</th><th>{t.email}</th><th>{t.role}</th><th>{t.language}</th><th>{t.status}</th><th></th></tr>
-    </thead>
-    <tbody>
-      {#each data.accounts as a (a.id)}
-        <tr>
-          <td>{a.username}</td>
-          <td>{a.email}</td>
-          <td>{t.roles[a.role]}</td>
-          <td>{t.languages[a.language]}</td>
-          <td>{a.is_active ? t.active : t.inactive}</td>
-          <td>
-            <button type="button" onclick={() => setActive(a.id, !a.is_active)}>
-              {a.is_active ? t.deactivate : t.reactivate}
-            </button>
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
-</main>
+  <Table caption={t.accountsTitle} empty={t.noAccounts} isEmpty={data.accounts.length === 0}>
+    {#snippet head()}
+      <tr>
+        <th scope="col">{t.username}</th><th scope="col">{t.email}</th><th scope="col">{t.role}</th>
+        <th scope="col">{t.language}</th><th scope="col">{t.status}</th>
+        <th scope="col"><span class="sr-only">{t.actions}</span></th>
+      </tr>
+    {/snippet}
+    {#each data.accounts as a (a.id)}
+      <tr>
+        <td>{a.username}</td>
+        <td>{a.email}</td>
+        <td>{t.roles[a.role]}</td>
+        <td>{t.languages[a.language]}</td>
+        <td>{a.is_active ? t.active : t.inactive}</td>
+        <td>
+          <button type="button" onclick={() => setActive(a.id, !a.is_active)}>
+            {a.is_active ? t.deactivate : t.reactivate}
+          </button>
+        </td>
+      </tr>
+    {/each}
+  </Table>

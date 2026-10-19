@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { ApiError, createClient } from '@tikkit/api-client'
+  import { ApiError } from '@tikkit/api-client'
+  import Alert from '#lib/components/Alert.svelte'
+  import Field from '#lib/components/Field.svelte'
+  import { api } from '#lib/api.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -18,7 +21,7 @@
     error = null
     fieldError = undefined
     try {
-      await createClient({ language: data.locale }).request('post', '/api/auth/recovery/reset', {
+      await api(data.locale).request('post', '/api/auth/recovery/reset', {
         body: { token: params.token, new_password: password },
       })
       done = true
@@ -34,34 +37,28 @@
 
 <svelte:head><title>{t.resetTitle}</title></svelte:head>
 
-<main>
-  <h1>{t.resetTitle}</h1>
-  {#if done}
-    <p role="status">{t.resetDone}</p>
-    <a href="/login">{t.signIn}</a>
-  {:else}
-    <form onsubmit={submit} novalidate>
-      <label>
-        {t.newPassword}
-        <input
-          name="new_password"
-          type="password"
-          autocomplete="new-password"
-          required
-          bind:value={password}
-          aria-invalid={!!fieldError}
-          aria-describedby={fieldError ? 'password-hint password-error' : 'password-hint'}
-        />
-        <span id="password-hint" class="hint">{t.passwordHint}</span>
-        {#if fieldError}<span id="password-error" class="error">{fieldError}</span>{/if}
-      </label>
-      {#if error}
-        <p class="error" role="alert">
-          {error}
-          {#if expired}<a href="/forgot-password">{t.requestNewLink}</a>{/if}
-        </p>
-      {/if}
-      <button type="submit" disabled={busy}>{t.resetSubmit}</button>
-    </form>
-  {/if}
-</main>
+<h1>{t.resetTitle}</h1>
+{#if done}
+  <Alert kind="success">{t.resetDone}</Alert>
+  <p><a href="/login">{t.signIn}</a></p>
+{:else}
+  <form onsubmit={submit} novalidate>
+    <Field
+      label={t.newPassword}
+      name="new_password"
+      type="password"
+      autocomplete="new-password"
+      required
+      bind:value={password}
+      hint={t.passwordHint}
+      error={fieldError}
+    />
+    {#if error}
+      <Alert>
+        {error}
+        {#if expired}<a href="/forgot-password">{t.requestNewLink}</a>{/if}
+      </Alert>
+    {/if}
+    <button type="submit" disabled={busy}>{t.resetSubmit}</button>
+  </form>
+{/if}

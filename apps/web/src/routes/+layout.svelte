@@ -1,7 +1,11 @@
 <script lang="ts">
   import '../styles.css'
   import { goto } from '$app/navigation'
-  import { createClient } from '@tikkit/api-client'
+  import { navigating, page } from '$app/state'
+  import Loading from '#lib/components/Loading.svelte'
+  import PublicShell from '#lib/components/PublicShell.svelte'
+  import Shell from '#lib/components/Shell.svelte'
+  import { api } from '#lib/api.ts'
   import { messages } from '#lib/i18n.ts'
 
   let { children, data } = $props()
@@ -13,23 +17,19 @@
 
   async function logout() {
     // Idempotent on the server; leave the page either way.
-    await createClient()
+    await api(data.locale)
       .request('post', '/api/auth/logout')
       .catch(() => undefined)
     await goto('/login', { invalidateAll: true })
   }
 </script>
 
-<header class="topbar">
-  <a href="/" class="brand">Tikkit</a>
-  {#if data.user}
-    {#if data.user.role === 'admin'}<a href="/admin/accounts">{t.admin}</a>{/if}
-    <a href="/profile">{t.profile}</a>
-    <span>{t.signedInAs} <strong>{data.user.username}</strong></span>
-    <button type="button" onclick={logout}>{t.signOut}</button>
-  {:else}
-    <a href="/login">{t.signIn}</a>
-  {/if}
-</header>
-
-{@render children()}
+<a class="skip-link" href="#main">{t.skipToContent}</a>
+{#if navigating.to}<Loading label={t.loading} />{/if}
+{#if data.user}
+  <Shell user={data.user} locale={data.locale} path={page.url.pathname} onlogout={logout}>
+    {@render children()}
+  </Shell>
+{:else}
+  <PublicShell locale={data.locale}>{@render children()}</PublicShell>
+{/if}
