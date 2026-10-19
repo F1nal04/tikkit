@@ -72,6 +72,90 @@
         }
       }
     },
+    "/api/accounts/{id}": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "operationId": "update_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Updated atomically"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "last_active_admin, active_team_lead, conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/accounts/{id}/deactivate": {
       "post": {
         "tags": [
@@ -181,6 +265,104 @@
           },
           "404": {
             "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "operationId": "settings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "organization"
+        ],
+        "operationId": "update_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -505,13 +687,12 @@
         "tags": [
           "accounts"
         ],
-        "summary": "Pending (usable) invitations, newest first (Admin only).",
+        "summary": "Invitations newest first, optionally including all historical statuses (Admin only).",
         "operationId": "list_invitations",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -521,10 +702,18 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "description": "Include accepted/expired/revoked invitations. Default false preserves the pending-only view.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -733,6 +922,68 @@
         }
       }
     },
+    "/api/invitations/{id}/reissue": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Reissue replaces an unused invitation atomically; concurrent/replayed requests fail.",
+        "operationId": "reissue_invitation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedInvitation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/invitations/{id}/revoke": {
       "post": {
         "tags": [
@@ -800,6 +1051,36 @@
             "description": "OpenAPI 3.1 document",
             "content": {
               "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/organization": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "operationId": "organization",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
             }
           }
         }
@@ -915,6 +1196,216 @@
           }
         }
       }
+    },
+    "/api/teams": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "list_teams",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "create_team",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{id}": {
+      "put": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "update_team",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTeamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -986,6 +1477,9 @@
       "AccountSummary": {
         "type": "object",
         "required": [
+          "expertise",
+          "team_id",
+          "is_team_lead",
           "id",
           "username",
           "display_name",
@@ -1006,11 +1500,20 @@
           "email": {
             "type": "string"
           },
+          "expertise": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
           },
           "is_active": {
+            "type": "boolean"
+          },
+          "is_team_lead": {
             "type": "boolean"
           },
           "language": {
@@ -1019,10 +1522,25 @@
           "role": {
             "$ref": "#/components/schemas/Role"
           },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "username": {
             "type": "string"
           }
         }
+      },
+      "CancellationPolicy": {
+        "type": "string",
+        "enum": [
+          "anytime_while_open",
+          "before_work_starts",
+          "disabled"
+        ]
       },
       "ChangePasswordRequest": {
         "type": "object",
@@ -1098,6 +1616,23 @@
                 "description": "Role of the account created from this invitation. Default `user`."
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateTeamRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "lead_account_id"
+        ],
+        "properties": {
+          "lead_account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -1228,6 +1763,9 @@
       "Invitation": {
         "type": "object",
         "required": [
+          "status",
+          "account_id",
+          "username",
           "id",
           "role",
           "email",
@@ -1236,6 +1774,13 @@
           "expires_at"
         ],
         "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -1259,6 +1804,15 @@
           },
           "role": {
             "$ref": "#/components/schemas/Role"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InvitationStatus"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1290,6 +1844,15 @@
           }
         }
       },
+      "InvitationStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "accepted",
+          "expired",
+          "revoked"
+        ]
+      },
       "Language": {
         "type": "string",
         "description": "Machine identifiers published in the contract; display text is localized by clients.",
@@ -1314,6 +1877,47 @@
         },
         "additionalProperties": false
       },
+      "OrganizationSettings": {
+        "type": "object",
+        "required": [
+          "name",
+          "timezone",
+          "default_language",
+          "allow_reopening",
+          "requester_cancellation_policy",
+          "resolution_confirmation_hours",
+          "allow_requester_ai_skip"
+        ],
+        "properties": {
+          "allow_reopening": {
+            "type": "boolean",
+            "description": "Human-closed tickets only. AI-solved records remain permanently non-reopenable."
+          },
+          "allow_requester_ai_skip": {
+            "type": "boolean"
+          },
+          "default_language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requester_cancellation_policy": {
+            "$ref": "#/components/schemas/CancellationPolicy",
+            "description": "Before work starts uses the first human work-start event, never current assignment. Every cancellation requires a reason."
+          },
+          "resolution_confirmation_hours": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Positive elapsed hours, default 168. Future proposals snapshot this policy; timeout closure is not requester acceptance."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "UTC or an IANA area/timezone name supported by PostgreSQL; timestamps remain UTC."
+          }
+        },
+        "additionalProperties": false
+      },
       "Page_AccountSummary": {
         "type": "object",
         "description": "One page of a list. `next_cursor` is null on the last page.",
@@ -1327,6 +1931,9 @@
             "items": {
               "type": "object",
               "required": [
+                "expertise",
+                "team_id",
+                "is_team_lead",
                 "id",
                 "username",
                 "display_name",
@@ -1347,6 +1954,12 @@
                 "email": {
                   "type": "string"
                 },
+                "expertise": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "id": {
                   "type": "string",
                   "format": "uuid"
@@ -1354,11 +1967,21 @@
                 "is_active": {
                   "type": "boolean"
                 },
+                "is_team_lead": {
+                  "type": "boolean"
+                },
                 "language": {
                   "$ref": "#/components/schemas/Language"
                 },
                 "role": {
                   "$ref": "#/components/schemas/Role"
+                },
+                "team_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
                 },
                 "username": {
                   "type": "string"
@@ -1387,6 +2010,9 @@
             "items": {
               "type": "object",
               "required": [
+                "status",
+                "account_id",
+                "username",
                 "id",
                 "role",
                 "email",
@@ -1395,6 +2021,13 @@
                 "expires_at"
               ],
               "properties": {
+                "account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -1418,6 +2051,67 @@
                 },
                 "role": {
                   "$ref": "#/components/schemas/Role"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/InvitationStatus"
+                },
+                "username": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Team": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "lead_account_id",
+                "archived",
+                "created_at"
+              ],
+              "properties": {
+                "archived": {
+                  "type": "boolean"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "lead_account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
                 }
               }
             }
@@ -1563,6 +2257,39 @@
           }
         }
       },
+      "Team": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "lead_account_id",
+          "archived",
+          "created_at"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lead_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "TicketAssignmentView": {
         "type": "object",
         "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
@@ -1612,6 +2339,33 @@
         },
         "additionalProperties": false
       },
+      "UpdateAccountRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "expertise": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Descriptive only; only Specialist accounts may have expertise. Maximum 120 characters."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One current team; null removes membership. Users/Admins must use null."
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateProfileRequest": {
         "type": "object",
         "properties": {
@@ -1632,6 +2386,31 @@
                 "description": "Interface and email language; omitted keeps the current one."
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateTeamRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "description": "Archiving clears leadership, memberships and assignments, retaining all history."
+          },
+          "lead_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for active teams; null when archiving. A lead must be active with team_lead role."
+          },
+          "name": {
+            "type": "string"
           }
         },
         "additionalProperties": false

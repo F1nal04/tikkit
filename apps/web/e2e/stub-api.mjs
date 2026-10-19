@@ -29,6 +29,16 @@ const sessionUser = (req) => {
   return sessions.has(token) ? token.split('.')[0] : null
 }
 
+const settings = {
+  name: 'Example support',
+  timezone: 'Europe/Berlin',
+  default_language: 'en',
+  allow_reopening: false,
+  requester_cancellation_policy: 'anytime_while_open',
+  resolution_confirmation_hours: 168,
+  allow_requester_ai_skip: false,
+}
+
 const account = (username, token) => ({
   id: `00000000-0000-4000-8000-${String(Object.keys(ROLES).indexOf(username)).padStart(12, '0')}`,
   username,
@@ -64,9 +74,14 @@ createServer(async (req, res) => {
     if (language) languages[tokenOf(req)] = language
     return reply(res, 200, account(user, tokenOf(req)))
   }
-  if (pathname === '/api/accounts' || pathname === '/api/invitations') {
+  if (route === 'GET /api/organization') return reply(res, 200, settings)
+  if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
-    const items = pathname === '/api/accounts' ? Object.keys(ROLES).map((u) => ({ ...account(u, null), is_active: true, created_at: '2026-10-01T00:00:00Z' })) : []
+    if (pathname === '/api/admin/settings') return reply(res, 200, settings)
+    const items =
+      pathname === '/api/accounts'
+        ? Object.keys(ROLES).map((u) => ({ ...account(u, null), is_active: true, expertise: null, team_id: null, is_team_lead: false, created_at: '2026-10-01T00:00:00Z' }))
+        : []
     return reply(res, 200, { items, next_cursor: null })
   }
   fail(res, 404, 'not_found')

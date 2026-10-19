@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
@@ -50,8 +50,32 @@ pub struct CreateInvitationRequest {
     pub expires_in_hours: Option<u32>,
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InvitationStatus {
+    Pending,
+    Accepted,
+    Expired,
+    Revoked,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
+pub struct InvitationPagination {
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
+    /// Include accepted/expired/revoked invitations. Default false preserves the pending-only view.
+    pub include_history: Option<bool>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Invitation {
+    pub status: InvitationStatus,
+    #[schema(required = true)]
+    pub account_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub username: Option<String>,
     pub id: Uuid,
     pub role: Role,
     #[schema(required = true)]
@@ -76,6 +100,9 @@ pub struct CreatedInvitation {
 
 #[derive(sqlx::FromRow)]
 struct InvitationRow {
+    status: String,
+    account_id: Option<Uuid>,
+    username: Option<String>,
     id: Uuid,
     role: String,
     email: Option<String>,
@@ -88,6 +115,9 @@ impl TryFrom<InvitationRow> for Invitation {
     type Error = ApiError;
     fn try_from(r: InvitationRow) -> Result<Self, ApiError> {
         Ok(Self {
+            status: ident(r.status)?,
+            account_id: r.account_id,
+            username: r.username,
             id: r.id,
             role: ident(r.role)?,
             email: r.email,
@@ -98,7 +128,11 @@ impl TryFrom<InvitationRow> for Invitation {
     }
 }
 
-const INVITATION_COLUMNS: &str = "id, role::text AS role, email, language, created_at, expires_at";
+const INVITATION_COLUMNS: &str =
+    "id, role::text AS role, email, language, created_at, expires_at, account_id,
+    (SELECT username FROM accounts WHERE accounts.id = invitations.account_id) AS username,
+    CASE WHEN accepted_at IS NOT NULL THEN 'accepted' WHEN revoked_at IS NOT NULL THEN 'revoked'
+         WHEN expires_at <= now() THEN 'expired' ELSE 'pending' END AS status";
 /// Usable: not accepted, not revoked, not expired.
 const PENDING: &str = "accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()";
 
@@ -117,9 +151,41 @@ pub async fn create_invitation(
     user: CurrentUser,
     Json(body): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
-    require_permission(&user, Permission::ManageAccounts)?;
+    issue_invitation(&state, &auth, &user, body, None).await
+}
+
+async fn issue_invitation(
+    state: &AppState,
+    auth: &Auth,
+    user: &CurrentUser,
+    mut body: CreateInvitationRequest,
+    reissue: Option<Uuid>,
+) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
+    let mut tx = crate::management::transaction(state, user).await?;
+    if let Some(id) = reissue {
+        let old: Option<(String,Option<String>,String)> = sqlx::query_as("UPDATE invitations SET revoked_at=now() WHERE id=$1 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING role::text,email,language").bind(id).fetch_optional(&mut *tx).await?;
+        let (role, email, language) = old.ok_or(ApiError::Conflict)?;
+        body.role = Some(ident(role)?);
+        body.email = email;
+        body.language = Some(ident(language)?);
+        audit(
+            &mut *tx,
+            "invitation_revoked",
+            Some(user.account_id()),
+            None,
+            json!({"invitation_id":id,"reason":"reissued"}),
+        )
+        .await?;
+    }
     let role = body.role.unwrap_or(Role::User);
-    let language = body.language.unwrap_or(Language::En);
+    let language = match body.language {
+        Some(language) => language,
+        None => {
+            crate::management::load_settings(&mut *tx)
+                .await?
+                .default_language
+        }
+    };
     let hours = body.expires_in_hours.unwrap_or(INVITATION_DEFAULT_HOURS);
     let email = body
         .email
@@ -136,7 +202,6 @@ pub async fn create_invitation(
         return Err(ApiError::Validation(errors));
     }
     let token = new_token();
-    let mut tx = state.pool.begin().await?;
     let row: InvitationRow = sqlx::query_as(&format!(
         "INSERT INTO invitations (token_hash, role, email, language, created_by, expires_at)
          VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6))
@@ -201,8 +266,32 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
     }
 }
 
-/// Pending (usable) invitations, newest first (Admin only).
-#[utoipa::path(get, path = "/api/invitations", tag = "accounts", params(Pagination),
+/// Reissue replaces an unused invitation atomically; concurrent/replayed requests fail.
+#[utoipa::path(post, path = "/api/invitations/{id}/reissue", tag = "accounts", params(("id" = Uuid, Path)),
+    responses((status = 201, body = CreatedInvitation), (status = 401, body = crate::api::ErrorEnvelope), (status = 403, body = crate::api::ErrorEnvelope), (status = 409, body = crate::api::ErrorEnvelope)))]
+pub async fn reissue_invitation(
+    State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
+    issue_invitation(
+        &state,
+        &auth,
+        &user,
+        CreateInvitationRequest {
+            role: None,
+            email: None,
+            language: None,
+            expires_in_hours: None,
+        },
+        Some(id),
+    )
+    .await
+}
+
+/// Invitations newest first, optionally including all historical statuses (Admin only).
+#[utoipa::path(get, path = "/api/invitations", tag = "accounts", params(InvitationPagination),
     responses(
         (status = 200, body = Page<Invitation>),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
@@ -211,18 +300,24 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
 pub async fn list_invitations(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(page): Query<Pagination>,
+    Query(query): Query<InvitationPagination>,
 ) -> Result<Json<Page<Invitation>>, ApiError> {
     require_permission(&user, Permission::ManageAccounts)?;
+    let history = query.include_history.unwrap_or(false);
+    let page = Pagination {
+        limit: query.limit,
+        cursor: query.cursor,
+    };
     let cursor = page.cursor()?;
     let rows: Vec<InvitationRow> = sqlx::query_as(&format!(
         "SELECT {INVITATION_COLUMNS} FROM invitations
-         WHERE {PENDING} AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
+         WHERE ($4 OR ({PENDING})) AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $1"
     ))
     .bind(page.limit() + 1)
     .bind(cursor.map(|c| c.created_at))
     .bind(cursor.map(|c| c.id))
+    .bind(history)
     .fetch_all(&state.pool)
     .await?;
     let items = rows
@@ -637,6 +732,11 @@ pub async fn update_profile(
 
 #[derive(Serialize, ToSchema)]
 pub struct AccountSummary {
+    #[schema(required = true)]
+    pub expertise: Option<String>,
+    #[schema(required = true)]
+    pub team_id: Option<Uuid>,
+    pub is_team_lead: bool,
     pub id: Uuid,
     pub username: String,
     pub display_name: String,
@@ -672,9 +772,14 @@ pub async fn list_accounts(
         String,
         bool,
         OffsetDateTime,
+        Option<String>,
+        Option<Uuid>,
+        bool,
     );
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, username, display_name, email, role::text, language, is_active, created_at
+        "SELECT id, username, display_name, email, role::text, language, is_active, created_at, expertise,
+         (SELECT team_id FROM team_memberships WHERE account_id=accounts.id),
+         EXISTS (SELECT 1 FROM teams WHERE lead_account_id=accounts.id AND archived_at IS NULL)
          FROM accounts WHERE ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $1",
     )
@@ -695,6 +800,9 @@ pub async fn list_accounts(
                 language: ident(r.5)?,
                 is_active: r.6,
                 created_at: r.7,
+                expertise: r.8,
+                team_id: r.9,
+                is_team_lead: r.10,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -750,7 +858,7 @@ async fn set_active(
     active: bool,
 ) -> Result<StatusCode, ApiError> {
     require_permission(user, Permission::ManageAccounts)?;
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::management::transaction(state, user).await?;
     // The last-admin and team-lead rules are database constraints that `?` maps
     // to `last_active_admin` / `active_team_lead`. Do not pre-lock Admin rows here.
     let changed =
@@ -776,6 +884,7 @@ async fn set_active(
     if active {
         audit(&mut *tx, "account_reactivated", actor, Some(id), json!({})).await?;
     } else {
+        crate::management::clear_assignments(&mut tx, user, id, "account_deactivated").await?;
         let revoked = revoke_all_sessions(&mut *tx, id).await?;
         // Its recovery links and, for an Admin, the invitations it issued die with it.
         sqlx::query(

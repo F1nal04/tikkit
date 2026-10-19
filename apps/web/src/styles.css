@@ -19,7 +19,7 @@
 
 body { margin: 0; }
 
-h1 { margin: 0 0 1rem; font-size: 1.75rem; letter-spacing: -0.02em; }
+h1 { margin: 0 0 1rem; font-size: 1.75rem; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 h2 { margin: 1.5rem 0 0.75rem; font-size: 1.25rem; }
 
 a { color: inherit; }
@@ -53,6 +53,7 @@ a { color: inherit; }
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
   align-items: center;
   justify-content: space-between;
@@ -128,6 +129,10 @@ button:disabled { cursor: not-allowed; opacity: 0.6; }
 .hint { font-size: 0.875rem; color: var(--muted); }
 .error { color: var(--danger); font-size: 0.875rem; }
 .error::before { content: '⚠ '; }
+
+fieldset { min-width: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 0.375rem; }
+.check { display: flex; gap: 0.75rem; align-items: baseline; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 
 /* Feedback */
 

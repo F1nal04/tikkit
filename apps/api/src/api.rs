@@ -304,6 +304,11 @@ impl From<sqlx::Error> for ApiError {
 pub async fn error_envelope(request: Request, next: Next) -> Response {
     let request_id = request_id(request.headers());
     let mut response = next.run(request).await;
+    // Permission changes must take effect on the next request, including cached API reads.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        "private, no-store".parse().unwrap(),
+    );
     let error = match response.extensions_mut().remove::<ApiError>() {
         Some(error) => error,
         None => {

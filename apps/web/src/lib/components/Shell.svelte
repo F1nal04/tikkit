@@ -11,10 +11,12 @@
     user: Account
     locale: Locale
     path: string
+    /** The organization's name; falls back to the product name. */
+    brand?: string
     onlogout: () => void
     children: Snippet
   }
-  let { user, locale, path, onlogout, children }: Props = $props()
+  let { user, locale, path, brand = 'Tikkit', onlogout, children }: Props = $props()
   let t = $derived(messages[locale])
   let groups = $derived(navFor(user.role))
   let current = $derived(activeHref(path))
@@ -32,7 +34,7 @@
 
 <div class="app">
   <header class="topbar">
-    <a href="/" class="brand">Tikkit</a>
+    <a href="/" class="brand">{brand}</a>
     {#if mounted}
       <button type="button" class="menu-toggle secondary" aria-expanded={open} aria-controls="app-menu" onclick={() => (open = !open)}>
         {t.menu}

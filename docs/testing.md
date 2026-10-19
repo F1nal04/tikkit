@@ -76,3 +76,14 @@ The `checks` job runs `bun run test` against a PostgreSQL service, then
 `bun run test:e2e`. Any failing test exits non-zero and fails the job; on
 failure, Playwright output is uploaded as the `playwright` artifact. See
 [ci.md](ci.md).
+
+Admin management coverage: `apps/api/tests/management.rs` exercises persisted
+policy defaults/validation/audit, every non-Admin role, concurrent last-Admin
+role edits, atomic leadership/archival/restoration, competing lead appointments,
+assignment clearing and immediate membership-scope revocation with requester
+access retained, and token-free invitation history/reissue. Existing account,
+invitation and authorization tests remain in place. Web tests cover localized
+validation with retained input, Admin promotion without membership, lead
+eligibility and complete paginated selector options. `e2e/admin.spec.ts` covers
+both languages at mobile width, account identity/role controls and denied deep
+links against the browser stub; Rust tests use real PostgreSQL.
