@@ -10,11 +10,14 @@ anything.
 ## Outbox
 
 Migration `0018` installs an `AFTER INSERT` trigger on `ticket_events`, so every
-event writer (lifecycle transitions, assignment, replies, and the future
-auto-close worker) enqueues rows in the **same transaction** as the change: a
+event writer (lifecycle transitions, assignment, replies, each bulk item in its
+own transaction, and the future auto-close worker) enqueues rows in the **same
+transaction** as the change: a
 rollback leaves nothing to send, and no writer can forget to enqueue. Rows are
 content-free (event ID + account ID + channel); text, address, language,
-preferences, and access are all resolved at delivery. `(source_key, channel)` is
+preferences, and access are all resolved at delivery. Delivery writes only
+outbox and inbox rows, never tickets or events, so it does not move the
+polling change markers. `(source_key, channel)` is
 unique, where the key is ticket + event type + recipient (replies use their
 `message_id`), so a duplicate event cannot fan out twice. Email rows are only
 written while an enabled SMTP connection exists.

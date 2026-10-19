@@ -1079,3 +1079,83 @@ async fn a_slow_relay_never_blocks_portal_writes() {
     tx.rollback().await.unwrap();
     worker.abort();
 }
+
+#[tokio::test]
+async fn bulk_items_notify_per_ticket_and_delivery_leaves_activity_markers_alone() {
+    let Some(w) = world().await else { return };
+    let admin = w.cookie("admin").await;
+    let at = |id: Uuid| {
+        let (app, admin) = (&w.app, &admin);
+        async move {
+            call(app, "GET", &format!("/api/tickets/{id}"), None, Some(admin))
+                .await
+                .body["updated_at"]
+                .clone()
+        }
+    };
+    let (a, b, stale) = (
+        w.ticket("queued", None, None).await,
+        w.ticket("queued", None, None).await,
+        w.ticket("queued", None, None).await,
+    );
+    let body = json!({
+        "change": { "action": "dispatch", "team_id": w.desk },
+        "tickets": [
+            { "id": a, "expected_updated_at": at(a).await },
+            { "id": b, "expected_updated_at": at(b).await },
+            { "id": stale, "expected_updated_at": "2000-01-01T00:00:00Z" },
+        ],
+    });
+    let r = call(
+        &w.app,
+        "POST",
+        "/api/tickets/bulk",
+        Some(body),
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let codes: Vec<&Value> = r.body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| &i["error"])
+        .collect();
+    assert_eq!(codes, [&Value::Null, &Value::Null, &json!("conflict")]);
+    // Each applied item committed its own event, and the trigger enqueued it there.
+    for (ticket, expected) in [(a, 3), (b, 3), (stale, 0)] {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id = o.event_id
+             WHERE e.ticket_id = $1 AND e.event_type = 'assignment_changed' AND o.channel = 'in_app'",
+        )
+        .bind(ticket)
+        .fetch_one(&w.db.pool)
+        .await
+        .unwrap();
+        assert_eq!(n, expected, "desk op, peer, and lead per dispatched ticket");
+    }
+
+    // Delivering (inbox rows, outbox status) moves neither polling marker.
+    let lead = w.cookie("lead").await;
+    let markers = || async {
+        let ticket = call(
+            &w.app,
+            "GET",
+            &format!("/api/tickets/{a}/activity"),
+            None,
+            Some(&lead),
+        )
+        .await;
+        let counts = call(&w.app, "GET", "/api/queue/counts", None, Some(&lead)).await;
+        assert_eq!(ticket.status, 200, "{}", ticket.body);
+        assert_eq!(counts.status, 200, "{}", counts.body);
+        (
+            ticket.body["version"].clone(),
+            counts.body["version"].clone(),
+        )
+    };
+    let before = markers().await;
+    w.drain().await;
+    assert_eq!(w.inbox("lead").await.len(), 2);
+    assert_eq!(markers().await, before);
+}
