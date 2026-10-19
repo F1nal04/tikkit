@@ -29,5 +29,6 @@ export const load: LayoutServerLoad = async ({ locals, fetch, url }) => {
     redirect(303, next && next !== '/' ? `/login?next=${encodeURIComponent(next)}` : '/login')
   }
   locals.locale = pageLocale(locals.locale, url.searchParams.get('lang'), user?.language)
-  return { locale: locals.locale, user }
+  const organization = user ? await api.request('get', '/api/organization').catch(() => null) : null
+  return { locale: locals.locale, user, ...(organization ? { organization } : {}) }
 }
