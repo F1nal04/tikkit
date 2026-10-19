@@ -169,6 +169,7 @@
 </form>
 
 <h2>{t.catalog.priorities}</h2>
+<p class="hint">{t.catalog.prioritiesHint}</p>
 {@render problemAt('priorities')}
 <ul>
   {#each catalog.priorities as p, i (p.id)}
