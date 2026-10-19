@@ -894,7 +894,8 @@ export interface paths {
         };
         /**
          * Conversation oldest first, with private rows excluded in SQL before pagination.
-         *     `cursor` is an opaque sequence position, not the default timestamp cursor.
+         *     Ordered by commit sequence (never exposed: its gaps would count hidden notes);
+         *     the cursor names the last message, and one the caller cannot see ends the list.
          */
         get: operations["list"];
         put?: never;
@@ -1230,22 +1231,12 @@ export interface components {
             author_kind: components["schemas"]["AuthorKind"];
             /** @description Original plain text; render as text, never HTML or Markdown. */
             body: string;
-            /**
-             * @description HTML-escaped text for renderers; no tags, links, or embedded attachments.
-             *     Preserve newlines with CSS `white-space: pre-wrap`.
-             */
-            body_html: string;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
             id: string;
             kind: components["schemas"]["MessageKind"];
             screenshot_ids: string[];
-            /**
-             * Format: int64
-             * @description Stable ascending order; gaps are valid. Never order by transaction timestamps.
-             */
-            sequence: number;
         };
         /** @enum {string} */
         MessageKind: "public_reply" | "internal_note";
@@ -1361,22 +1352,12 @@ export interface components {
                 author_kind: components["schemas"]["AuthorKind"];
                 /** @description Original plain text; render as text, never HTML or Markdown. */
                 body: string;
-                /**
-                 * @description HTML-escaped text for renderers; no tags, links, or embedded attachments.
-                 *     Preserve newlines with CSS `white-space: pre-wrap`.
-                 */
-                body_html: string;
                 /** Format: date-time */
                 created_at: string;
                 /** Format: uuid */
                 id: string;
                 kind: components["schemas"]["MessageKind"];
                 screenshot_ids: string[];
-                /**
-                 * Format: int64
-                 * @description Stable ascending order; gaps are valid. Never order by transaction timestamps.
-                 */
-                sequence: number;
             }[];
             next_cursor: string | null;
         };
