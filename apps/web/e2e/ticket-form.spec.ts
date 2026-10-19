@@ -2,6 +2,7 @@ import { devices, expect, type Page, test } from '@playwright/test'
 import { signIn } from './support'
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+const NETWORK = '00000000-0000-4000-9000-000000000002'
 const PROGRAM = '00000000-0000-4000-9000-000000000010'
 const HIGH = '00000000-0000-4000-9000-000000000022'
 
@@ -14,6 +15,8 @@ async function open(page: Page) {
 
 const submitButton = (page: Page) => page.getByRole('button', { name: 'Submit request' })
 const sentTickets = (page: Page) => page.evaluate(() => fetch('/api/test/tickets').then((r) => r.json()))
+const submittedIntakes = (page: Page) => page.evaluate(() => fetch('/api/test/submitted').then((r) => r.json()))
+const drafts = (page: Page) => page.evaluate(() => fetch('/api/ticket-drafts').then((r) => r.json()))
 const post = (page: Page, path: string, body: unknown) =>
   page.evaluate(([p, b]) => fetch(p as string, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'tikkit' }, body: JSON.stringify(b) }), [path, body])
 
@@ -30,6 +33,8 @@ test('identifies the signed-in requester and states that the request is still a 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('New ticket')
   await expect(page.getByText('Submitting as')).toContainText('requester')
   await expect(page.getByText('Draft, not saved yet. Nothing has been sent to support.')).toBeVisible()
+  // Routine autosave must not announce on every pause; only a failure is a live region.
+  await expect(page.locator('.form-state')).not.toHaveAttribute('aria-live')
 })
 
 test('category validation: errors are linked to fields and conditional fields are required only while visible', async ({ page }) => {
@@ -78,6 +83,8 @@ test('a full no-AI submission shows the receipt with the chosen priority and sen
   await page.getByLabel('Category').selectOption({ label: 'Network' })
   await expect(page.getByText(/will not be sent: Program/)).toBeVisible()
   await expect(page.getByText('goes straight to the support team without AI assistance')).toBeVisible()
+  // The draft save itself omits the hidden answer; the stub must not be what strips it.
+  await expect.poll(async () => (await drafts(page)).items[0]?.intake.answers).toEqual({})
   await page.getByLabel('Category').selectOption({ label: 'Software' })
   await expect(page.getByLabel('Program')).toHaveValue(/.+/)
   await page.getByLabel('Category').selectOption({ label: 'Network' })
@@ -91,8 +98,9 @@ test('a full no-AI submission shows the receipt with the chosen priority and sen
   await expect(page.getByRole('link', { name: 'Open the ticket' })).toHaveAttribute('href', /\/tickets\/.+/)
   const tickets = await sentTickets(page)
   expect(tickets).toHaveLength(1)
-  expect(tickets[0].intake).toMatchObject({ category_id: '00000000-0000-4000-9000-000000000002', priority_id: HIGH, subject: 'Word crashes' })
+  expect(tickets[0].intake).toMatchObject({ category_id: NETWORK, priority_id: HIGH, subject: 'Word crashes' })
   expect(tickets[0].intake.answers).toEqual({})
+  expect((await submittedIntakes(page)).at(-1).answers).toEqual({})
 })
 
 test('the German interface shows the same form', async ({ page }) => {
@@ -225,6 +233,100 @@ test('screenshots: select, preview, remove, and keep the form when an upload fai
 
   await page.getByRole('button', { name: 'Remove: error.png' }).click()
   await expect(preview).toHaveCount(0)
+})
+
+test('submitting a resumed draft does not send answers the form no longer shows', async ({ page }) => {
+  await open(page)
+  await post(page, '/api/test/draft', {
+    intake: {
+      category_id: NETWORK,
+      priority_id: HIGH,
+      subject: 'Wi-Fi drops',
+      description: 'Every few minutes.',
+      answers: { [PROGRAM]: { text: 'Lotus Notes' } },
+      screenshot_ids: [],
+    },
+  })
+  await page.reload()
+  await page.waitForLoadState('networkidle')
+  await page.getByRole('button', { name: 'Resume: Wi-Fi drops' }).click()
+  await expect(page.getByText('Program: Lotus Notes')).toBeVisible()
+  await expect(page.getByLabel('Program')).toHaveCount(0)
+  await submitButton(page).click()
+  await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
+  expect((await submittedIntakes(page)).at(-1).answers).toEqual({})
+})
+
+test('a failed submission retries with the same key, and changed input gets a new one', async ({ page }) => {
+  await open(page)
+  await fillSoftwareTicket(page)
+  const keys: string[] = []
+  await page.route('**/api/ticket-drafts/*/submit', async (route) => {
+    keys.push(route.request().postDataJSON().idempotency_key)
+    if (keys.length === 1) {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'unavailable', message: 'unavailable' }, request_id: 'stub' }),
+      })
+      return
+    }
+    await route.fallback()
+  })
+  await submitButton(page).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'The service is unavailable. Please try again later.' })).toBeVisible()
+  await submitButton(page).click()
+  await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
+  expect(keys).toHaveLength(2)
+  expect(keys[0]).toBe(keys[1])
+  expect(await sentTickets(page)).toHaveLength(1)
+
+  await page.getByRole('button', { name: 'Submit another request' }).click()
+  await fillSoftwareTicket(page)
+  const retried: string[] = []
+  await page.unroute('**/api/ticket-drafts/*/submit')
+  await page.route('**/api/ticket-drafts/*/submit', async (route) => {
+    retried.push(route.request().postDataJSON().idempotency_key)
+    if (retried.length === 1) {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'unavailable', message: 'unavailable' }, request_id: 'stub' }),
+      })
+      return
+    }
+    await route.fallback()
+  })
+  await submitButton(page).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'The service is unavailable. Please try again later.' })).toBeVisible()
+  const saved = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes('/api/ticket-drafts/') && r.ok())
+  await page.getByLabel('Subject').fill('Word crashes again')
+  await saved
+  await submitButton(page).click()
+  await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
+  expect(retried[0]).not.toBe(retried[1])
+  expect(await sentTickets(page)).toHaveLength(2)
+})
+
+test('a server screenshot error is attached to the control and focused', async ({ page }) => {
+  await open(page)
+  await fillSoftwareTicket(page)
+  await page.route('**/api/ticket-drafts/*/submit', (route) =>
+    route.fulfill({
+      status: 422,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: { code: 'validation_failed', message: 'validation_failed', details: { fields: { screenshot_ids: ['invalid'] } } },
+        request_id: 'stub',
+      }),
+    }),
+  )
+  await submitButton(page).click()
+  const input = page.getByLabel('Add screenshots')
+  await expect(input).toBeFocused()
+  await expect(input).toHaveAttribute('aria-invalid', 'true')
+  await expect(input).toHaveAccessibleDescription(/This value is not valid/)
+  await expect(page.getByLabel('Subject')).toHaveValue('Word crashes')
 })
 
 test('the screenshot reference is submitted with the ticket', async ({ page }) => {

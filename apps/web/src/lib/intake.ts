@@ -47,6 +47,32 @@ const hasValue = (field: IntakeField, a: Answer | undefined) =>
 export const hiddenAnswers = (catalog: Catalog, form: FormState) =>
   catalog.fields.filter((f) => !visibleFields(catalog, form.category_id).includes(f) && hasValue(f, form.answers[f.id]))
 
+/**
+ * Whether two intakes would submit the same fields. Null and omitted answer parts compare equal,
+ * and answer-key order does not matter, so a resumed draft can be told apart from the visible form.
+ */
+export function sameIntake(a: Intake, b: Intake): boolean {
+  const norm = (intake: Intake) => {
+    const answers: Record<string, { choice_id: string | null; text: string | null }> = {}
+    for (const id of Object.keys(intake.answers ?? {}).sort()) {
+      const answer = intake.answers?.[id]
+      const choice_id = answer?.choice_id ?? null
+      const text = answer?.text ?? null
+      if (!choice_id && !text) continue
+      answers[id] = { choice_id, text }
+    }
+    return JSON.stringify({
+      category_id: intake.category_id ?? null,
+      priority_id: intake.priority_id ?? null,
+      subject: intake.subject ?? '',
+      description: intake.description ?? '',
+      answers,
+      screenshot_ids: intake.screenshot_ids ?? [],
+    })
+  }
+  return norm(a) === norm(b)
+}
+
 /** The request body: only visible fields' answers, so hidden or stale ones never leave the browser. */
 export function toIntake(form: FormState, catalog: Catalog): Intake {
   const answers: Intake['answers'] = {}
