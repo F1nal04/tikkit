@@ -143,7 +143,7 @@ async fn load_fields(
     let choices: Vec<(Uuid, Uuid, String, bool)> = sqlx::query_as(
         "SELECT field_id, id, label, archived_at IS NOT NULL FROM intake_field_choices
          WHERE field_id = ANY($1) AND ($2 OR archived_at IS NULL)
-         ORDER BY sort_order, created_at, id",
+         ORDER BY archived_at IS NOT NULL, sort_order, created_at, id",
     )
     .bind(&ids)
     .bind(all)
