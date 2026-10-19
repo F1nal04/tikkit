@@ -59,9 +59,12 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 bun run test:e2e                                              # builds, then runs Playwright
 ```
 
-`apps/web/playwright.config.ts` starts the production server
+`apps/web/playwright.config.ts` runs `e2e/*.spec.ts` in desktop Chromium and
+`e2e/shell.spec.ts` again at phone size (Pixel 7); it starts the production server
 (`node build/index.js`) twice: on :4173 with `API_ORIGIN` pointing at a stub
-API (`e2e/stub-api.mjs`, :4175), and on :4174 pointing at a closed port for the
+API (`e2e/stub-api.mjs`, :4175; sign in as `requester`, `operator`, `specialist`,
+`lead`, or `admin` with `correct horse battery`; `e2e/support.ts` routes browser
+`/api` calls to it), and on :4174 pointing at a closed port for the
 API-unavailable state. No Rust build, database, or AI key is needed. Locally,
 already-running servers on those ports are reused. Failures keep a trace and
 screenshot in `apps/web/test-results/`; open a trace with

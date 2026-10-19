@@ -1,0 +1,42 @@
+# Frontend structure
+
+Navigation and route guards are a convenience: Rust enforces every permission
+(see [authorization.md](authorization.md)).
+
+## Layouts
+
+- `routes/+layout.server.ts` loads the session and redirects: signed-out visitors go to
+  `/login?next=<path>`, uninitialized deployments to `/setup`.
+- `routes/+layout.svelte` picks the shell: `Shell` (signed in: sidebar navigation by
+  role, account block with username and role, language select, sign out) or `PublicShell`
+  (login, setup, invitation, password recovery). One shell serves requester, staff, and
+  Admin, because roles differ in which navigation entries they see, not in layout.
+- `routes/(app)/` holds every signed-in page. Its `+layout.ts` calls `canAccess` and
+  answers `403` for denied paths. The `403` and `404` pages render inside the shell and
+  read the same, so a hidden page's existence is not revealed.
+
+## Adding a page
+
+1. Create the route under `routes/(app)/…` (pages render inside `<main>`; start with an `<h1>`).
+2. Add an entry to `NAV` in `src/lib/nav.ts` and its label to `nav` in both
+   `src/lib/i18n/{en,de}.ts`. It shows only to roles that may open its `href`.
+3. Restrict a new prefix in `GUARDS` (same file). `/admin`, `/queue`, and `/team` are
+   already covered, so pages below them need no guard entry. A page that loads data should
+   `await parent()` first so a denied route never fetches.
+
+## Shared controls (`src/lib/components/`)
+
+| Component | Use |
+| --- | --- |
+| `Field` | Label, hint, and API field error linked with `aria-describedby`; `bind:value` keeps input after a failed request. `options` renders a select. |
+| `Alert` | `error` (announced), `success`/`info` (polite). |
+| `Table` | Caption, scroll region reachable by keyboard, and empty state. |
+| `Dialog` | Native modal `<dialog>`: focus trap, Escape, labelled by its title. |
+| `EmptyState`, `Loading`, `StatusBadge`, `ErrorView` | Empty, loading, status (text plus stable `data-status`), and error pages. |
+
+Browser actions use `api(locale)` from `src/lib/api.ts`, which flags an expired session
+(`401 unauthorized`). `Shell` then shows a banner with a sign-in link that opens in a new
+tab, so the open form and its unsent input stay on the page.
+
+Language: `LanguageSelect` sets the `lang` cookie, saves the account preference when
+signed in, and reloads only layout data, so mounted forms keep their input.
