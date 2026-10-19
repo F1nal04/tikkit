@@ -64,7 +64,8 @@ differs. Unsent replies, summaries, and selections live in component state and
 survive; if any were present, the detail page says someone else updated the
 ticket. A `4xx` poll (signed out, transferred, removed from the team) reruns the
 load too, so the page turns into that answer instead of showing stale data. An
-unavailable page retries on the same timer. Details:
+unavailable page retries on the same timer. Leaving the page clears the timer;
+a request still in flight does not reload the page that replaced it. Details:
 [lifecycle.md](lifecycle.md#concurrent-edits-and-refreshing).
 
 ## Ticket form (`routes/(app)/tickets/new`)

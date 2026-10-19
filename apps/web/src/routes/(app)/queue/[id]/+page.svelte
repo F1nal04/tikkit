@@ -77,17 +77,18 @@
   // Pull changes made elsewhere. Every poll is re-authorized: a transfer, team removal, or
   // signed-out session answers 401/404, and the reload replaces the page with that answer.
   onMount(() =>
-    poll(async () => {
-      if (busy || moved) return
+    poll(async (current) => {
+      if (!current() || busy || moved) return
       if (!data.ticket || !data.activity) return refresh()
       let version: string
       try {
         ;({ version } = await api(data.locale).request('get', '/api/tickets/{id}/activity', { path: { id: data.ticket.id } }))
       } catch (e) {
+        if (!current()) return
         if (e instanceof ApiError && e.status >= 400 && e.status < 500) return refresh()
         throw e
       }
-      if (busy || version === data.activity.version) return
+      if (!current() || busy || version === data.activity.version) return
       if (body.trim() || summary.trim() || priorityId || teamId || assigneeId || screenshots.length) elsewhere = true
       await refresh()
     }),
