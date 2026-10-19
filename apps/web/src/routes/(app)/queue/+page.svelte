@@ -31,13 +31,16 @@
   })
   // Work done elsewhere shows up without a manual reload; the API re-checks visibility on every poll.
   onMount(() =>
-    poll(async () => {
+    poll(async (current) => {
+      if (!current()) return
       if (!data.counts) return invalidateAll()
       try {
         const counts = await api(data.locale).request('get', '/api/queue/counts')
+        if (!current()) return
         if (counts.version !== data.counts.version) await invalidateAll()
       } catch (e) {
         // Signed out or no longer staff: reload into the real answer.
+        if (!current()) return
         if (e instanceof ApiError && e.status >= 400 && e.status < 500) await invalidateAll()
         else throw e
       }

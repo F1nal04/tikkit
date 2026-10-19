@@ -363,6 +363,8 @@ createServer(async (req, res) => {
     }
     if (endpoint === 'assignment') {
       const a = input.action, can = access(user, t), before = { ...t.assignment }
+      // 404 already returned. The requester is refused before a stale timestamp, then the policy.
+      if (t.requester?.username === user) return fail(res, 403, 'forbidden')
       if (input.expected_updated_at !== t.updated_at) return fail(res, 409, 'conflict')
       if (a === 'dispatch' || a === 'return_to_general') {
         if (!can.can_dispatch) return fail(res, 403, 'forbidden')
@@ -383,8 +385,9 @@ createServer(async (req, res) => {
       touch()
       return reply(res, 200, { reference: t.reference, ...t.assignment, visible: staffCanSee(user, t) })
     }
-    // staff-actions
+    // staff-actions. Same order as the API: requester `403`, then stale `409`, then the policy.
     const a = input.action
+    if (t.requester?.username === user) return fail(res, 403, 'forbidden')
     if (input.expected_updated_at !== t.updated_at) return fail(res, 409, 'conflict')
     if (!['start_work', 'request_information', 'propose_resolution', 'reopen', 'set_priority'].includes(a)) return validation(res, { action: ['invalid'] })
     const needsOpen = a !== 'reopen'
