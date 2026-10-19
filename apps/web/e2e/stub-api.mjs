@@ -321,7 +321,7 @@ createServer(async (req, res) => {
     }
     if (!endpoint)
       return reply(res, 200, {
-        ...t, messages: undefined, view: 'staff', category_id: CATEGORY, ai_solution: null, requester: t.requester,
+        ...t, messages: undefined, view: 'staff', category_id: CATEGORY, requester: t.requester,
         intake_snapshot: { subject: t.subject, description: 'Printer jams', catalog: { category_id: CATEGORY, category_name: 'Hardware', skip_ai: false, priority_id: t.priority_id, priority_name: t.priority_name, answers: [{ field_id: PROGRAM, label: 'Program', value: 'Word' }] }, screenshot_ids: [] },
         description: 'Printer jams', resolution_source: t.resolution_source ?? null, closure_reason: t.closure_reason ?? null,
         staff_access: { can_handle: canHandle(user, t), can_reopen: t.status === 'closed' && !!{ ...settings, ...st.policy }.allow_reopening && inCharge(user, t) },

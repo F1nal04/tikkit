@@ -8,7 +8,7 @@ afterEach(() => { vi.unstubAllGlobals(); invalidateAll.mockClear() })
 
 const base = {
   id: 'ticket-1', reference: 42, status: 'in_progress', view: 'staff', subject: 'Printer', description: '<b>Jams</b>',
-  category_name: 'Hardware', priority_id: 'p-normal', priority_name: 'Normal', intake_snapshot: null, ai_solution: null,
+  category_name: 'Hardware', priority_id: 'p-normal', priority_name: 'Normal', intake_snapshot: null,
   resolution_source: null, closure_reason: null, proposal_version: 0, confirmation_deadline: null,
   requester: { id: 'r1', username: 'requester', display_name: 'Rita Requester' },
   assignment: { team_name: 'Desk', assignee_display_name: 'Olga' }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-02T10:00:00.123456Z',
@@ -110,4 +110,10 @@ test('German labels and history actors', () => {
   expect(screen.getByRole('button', { name: 'Öffentliche Antwort senden' })).toBeTruthy()
   expect(screen.getByText('Prioritätsverlauf')).toBeTruthy()
   expect(screen.getByText(/Normal → Urgent/)).toBeTruthy()
+})
+
+
+test('AI handoff shows unavailable suggestion text without a stored solution field', () => {
+  show({ transitions: [{ id: 1, event_type: 'ai_not_solved', from_status: 'awaiting_ai_decision', to_status: 'queued', payload: { route: 'not_solved' }, created_at: '2026-10-02T10:00:00Z' }] })
+  expect(screen.getByText('The AI suggestion text is unavailable for this record.')).toBeTruthy()
 })

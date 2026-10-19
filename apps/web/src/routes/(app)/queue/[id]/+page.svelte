@@ -137,9 +137,9 @@
     </dl>
     <p class="prose">{ticket.intake_snapshot?.description ?? ticket.description}</p>
     <ScreenshotGallery ids={ticket.intake_snapshot?.screenshot_ids ?? []} locale={data.locale} />
-    {#if ticket.ai_solution}
+    {#if route === 'not_solved' || route === 'ai_failed' || ['ai_processing', 'awaiting_ai_decision', 'ai_solved'].includes(ticket.status)}
       <h3>{s.aiSuggestion}</h3>
-      <p class="prose">{ticket.ai_solution}</p>
+      <p class="prose">{t.history.noSolution}</p>
     {/if}
   </section>
 
