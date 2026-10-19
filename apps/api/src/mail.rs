@@ -438,7 +438,7 @@ pub(crate) async fn note_delivery_error(pool: &PgPool, code: &str) -> Result<(),
     .map_err(|_| MailError::Store)
 }
 
-async fn clear_delivery_error(pool: &PgPool) -> Result<(), MailError> {
+pub(crate) async fn clear_delivery_error(pool: &PgPool) -> Result<(), MailError> {
     sqlx::query(
         "UPDATE smtp_connection
          SET last_delivery_error = NULL, last_delivery_error_at = NULL",

@@ -29,6 +29,7 @@ pub mod lifecycle;
 pub mod mail;
 pub mod management;
 pub mod messages;
+pub mod notifications;
 pub mod queues;
 pub mod screenshots;
 pub mod smtp;
@@ -115,6 +116,13 @@ pub struct AppState {
         messages::list,
         messages::reply,
         messages::note,
+        notifications::notification_preferences,
+        notifications::update_notification_preferences,
+        notifications::list_notifications,
+        notifications::unread_count,
+        notifications::mark_notification_read,
+        notifications::delivery_stats,
+        notifications::retry_failed,
         submission::create_draft,
         submission::list_drafts,
         submission::get_draft,
@@ -359,6 +367,33 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route("/api/screenshots/{id}/preview", get(screenshots::preview))
         .route("/api/screenshots/{id}/download", get(screenshots::download))
+        .route(
+            "/api/notification-preferences",
+            get(notifications::notification_preferences)
+                .put(notifications::update_notification_preferences),
+        )
+        .route(
+            "/api/notifications",
+            get(notifications::list_notifications)
+                .layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/notifications/unread",
+            get(notifications::unread_count)
+                .layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/notifications/{id}/read",
+            post(notifications::mark_notification_read),
+        )
+        .route(
+            "/api/admin/notifications",
+            get(notifications::delivery_stats),
+        )
+        .route(
+            "/api/admin/notifications/retry",
+            post(notifications::retry_failed),
+        )
         .route("/api/queue", get(queues::list_queue))
         .route("/api/queue/counts", get(queues::queue_counts))
         .route("/api/queue/bulk-options", get(bulk::bulk_options))
