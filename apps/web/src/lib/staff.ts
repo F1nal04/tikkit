@@ -6,6 +6,12 @@ export type StaffInput =
   | { action: 'propose_resolution'; summary: string }
   | { action: 'set_priority'; priority_id: string }
 
+/** Body of a team/assignee change; the page adds `expected_updated_at` too. */
+export type AssignmentInput =
+  | { action: 'return_to_general' | 'claim' | 'unassign' }
+  | { action: 'dispatch'; team_id: string }
+  | { action: 'assign'; assignee_account_id: string }
+
 /** Why a staff viewer cannot handle the ticket (affordance text only; the API rechecks every write). */
 export function readOnlyReason(ticket: TicketDetail) {
   const access = ticket.staff_access

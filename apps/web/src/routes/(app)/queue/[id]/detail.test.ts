@@ -6,13 +6,16 @@ const { invalidateAll } = vi.hoisted(() => ({ invalidateAll: vi.fn().mockResolve
 vi.mock('$app/navigation', () => ({ invalidateAll }))
 afterEach(() => { vi.unstubAllGlobals(); invalidateAll.mockClear() })
 
+function access(over = {}) {
+  return { can_handle: true, can_reopen: false, can_dispatch: false, can_claim: false, can_assign: false, dispatch_teams: [], assignees: [], ...over }
+}
 const base = {
   id: 'ticket-1', reference: 42, status: 'in_progress', view: 'staff', subject: 'Printer', description: '<b>Jams</b>',
   category_name: 'Hardware', priority_id: 'p-normal', priority_name: 'Normal', intake_snapshot: null,
   resolution_source: null, closure_reason: null, proposal_version: 0, confirmation_deadline: null,
   requester: { id: 'r1', username: 'requester', display_name: 'Rita Requester' },
   assignment: { team_name: 'Desk', assignee_display_name: 'Olga' }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-02T10:00:00.123456Z',
-  transitions: [], priority_changes: [], staff_access: { can_handle: true, can_reopen: false },
+  transitions: [], priority_changes: [], assignment_changes: [], staff_access: access(),
 }
 const catalog = { priorities: [{ id: 'p-normal', name: 'Normal' }, { id: 'p-urgent', name: 'Urgent' }] }
 function show(over = {}, locale = 'en', items: unknown[] = []) {
@@ -112,7 +115,6 @@ test('German labels and history actors', () => {
   expect(screen.getByText(/Normal → Urgent/)).toBeTruthy()
 })
 
-
 test('AI handoff shows unavailable suggestion text without a stored solution field', () => {
   show({ transitions: [{ id: 1, event_type: 'ai_not_solved', from_status: 'awaiting_ai_decision', to_status: 'queued', payload: { route: 'not_solved' }, created_at: '2026-10-02T10:00:00Z' }] })
   expect(screen.getByText('The AI suggestion text is unavailable for this record.')).toBeTruthy()
@@ -134,4 +136,38 @@ test('revoked write access leaves an unsent proposal visible for recovery', asyn
   await page.rerender({ data: { ticket: { ...base, staff_access: { can_handle: false, can_reopen: false } }, locale: 'en', catalog, conversation: { items: [], next_cursor: null }, unavailable: false }, params: {} } as never)
   expect((screen.getByLabelText(/Resolution summary/) as HTMLTextAreaElement).value).toBe('Unsent proposal')
   expect(screen.queryByRole('button', { name: 'Propose resolution' })).toBeNull()
+})
+
+test('claim and Lead assignment post explicit changes with the stale-write token', async () => {
+  const fetch = vi.fn().mockImplementation(async () => new Response('{"reference":42,"team_name":"Desk","assignee_display_name":"Olga","visible":true}'))
+  vi.stubGlobal('fetch', fetch)
+  show({ assignment: { team_name: 'Desk', assignee_display_name: null }, staff_access: access({ can_claim: true, can_assign: true, assignees: [{ id: 'm1', name: 'Olga' }] }) })
+  await fireEvent.click(screen.getByRole('button', { name: 'Claim ticket' }))
+  await waitFor(() => expect(screen.getByText('Ticket updated.')).toBeTruthy())
+  expect(String(fetch.mock.calls[0][0].url ?? fetch.mock.calls[0][0])).toContain('/api/tickets/ticket-1/assignment')
+  expect(bodyOf(fetch)).toEqual({ action: 'claim', expected_updated_at: '2026-10-02T10:00:00.123456Z' })
+  expect(screen.queryByRole('button', { name: 'Remove assignee' })).toBeNull()
+  await fireEvent.change(screen.getByLabelText('Assign to'), { target: { value: 'm1' } })
+  await fireEvent.click(screen.getByRole('button', { name: 'Assign' }))
+  await waitFor(() => expect(bodyOf(fetch, 1)).toEqual({ action: 'assign', assignee_account_id: 'm1', expected_updated_at: '2026-10-02T10:00:00.123456Z' }))
+})
+
+test('a transfer out of the caller team shows a receipt instead of the ticket', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response('{"reference":42,"team_name":"Network","assignee_display_name":null,"visible":false}'))
+  vi.stubGlobal('fetch', fetch)
+  show({ staff_access: access({ can_dispatch: true, dispatch_teams: [{ id: 'team-n', name: 'Network' }] }) })
+  expect((screen.getByRole('button', { name: 'Send to team' }) as HTMLButtonElement).disabled).toBe(true)
+  await fireEvent.change(screen.getByLabelText('Destination team'), { target: { value: 'team-n' } })
+  await fireEvent.click(screen.getByRole('button', { name: 'Send to team' }))
+  await waitFor(() => expect(screen.getByText(/Ticket #42 was sent to Network. You are not a member/)).toBeTruthy())
+  expect(bodyOf(fetch)).toEqual({ action: 'dispatch', team_id: 'team-n', expected_updated_at: '2026-10-02T10:00:00.123456Z' })
+  expect(screen.queryByText('Printer')).toBeNull()
+  expect(invalidateAll).not.toHaveBeenCalled()
+})
+
+test('assignment history in German; no routing controls without the affordances', () => {
+  show({ assignment_changes: [{ id: 1, action: 'dispatch', reason: null, previous_team_name: null, team_name: 'Desk', previous_assignee_display_name: null, assignee_display_name: null, actor_display_name: 'Olga', created_at: '2026-10-02T10:00:00Z' }] }, 'de')
+  expect(screen.getByText('Team- und Zuweisungsverlauf')).toBeTruthy()
+  expect(screen.getByText(/Allgemeine Warteschlange.*→ Desk/)).toBeTruthy()
+  expect(screen.queryByRole('heading', { name: 'Team und Zuweisung' })).toBeNull()
 })
