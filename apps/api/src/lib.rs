@@ -5,7 +5,7 @@ use axum::{
     extract::{DefaultBodyLimit, State},
     http::{Request, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post, put},
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -20,6 +20,7 @@ pub mod accounts;
 pub mod api;
 pub mod auth;
 pub mod authz;
+pub mod catalog;
 pub mod config;
 pub mod db;
 pub mod mail;
@@ -76,6 +77,17 @@ pub struct AppState {
         smtp::put_smtp,
         smtp::delete_smtp,
         smtp::test_smtp,
+        catalog::active_catalog,
+        catalog::full_catalog,
+        catalog::create_category,
+        catalog::update_category,
+        catalog::reorder_categories,
+        catalog::create_priority,
+        catalog::update_priority,
+        catalog::reorder_priorities,
+        catalog::create_intake_field,
+        catalog::update_intake_field,
+        catalog::reorder_intake_fields,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -232,6 +244,23 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
                 .delete(smtp::delete_smtp),
         )
         .route("/api/settings/smtp/test", post(smtp::test_smtp))
+        .route("/api/catalog", get(catalog::active_catalog))
+        .route("/api/catalog/all", get(catalog::full_catalog))
+        .route("/api/categories", post(catalog::create_category))
+        .route("/api/categories/order", put(catalog::reorder_categories))
+        .route("/api/categories/{id}", patch(catalog::update_category))
+        .route("/api/priorities", post(catalog::create_priority))
+        .route("/api/priorities/order", put(catalog::reorder_priorities))
+        .route("/api/priorities/{id}", patch(catalog::update_priority))
+        .route("/api/intake-fields", post(catalog::create_intake_field))
+        .route(
+            "/api/intake-fields/order",
+            put(catalog::reorder_intake_fields),
+        )
+        .route(
+            "/api/intake-fields/{id}",
+            patch(catalog::update_intake_field),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,

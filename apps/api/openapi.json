@@ -661,6 +661,275 @@
         }
       }
     },
+    "/api/catalog": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "The active catalog for the shared ticket form: unarchived categories,\npriorities, fields, and choices in display order. Any signed-in account.",
+        "operationId": "active_catalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalog"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/catalog/all": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "The whole catalog including archived entries (Admin only).",
+        "operationId": "full_catalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalog"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Adds a category at the end of the order (Admin only).",
+        "operationId": "create_category",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewCategory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories/order": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Sets the display order of all categories (Admin only).",
+        "operationId": "reorder_categories",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reordered"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the IDs are not exactly the current categories (reload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories/{id}": {
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Renames, sets \"Skip AI automatically\", archives, or restores a category\n(Admin only). Submitted tickets keep their snapshot of the category.",
+        "operationId": "update_category",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "tags": [
@@ -675,6 +944,203 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/intake-fields": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Adds a conditional field at the end of the order (Admin only). A `select`\nfield needs at least one choice or `allow_other`.",
+        "operationId": "create_intake_field",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewIntakeField"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeField"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/intake-fields/order": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Sets the display order of all conditional fields (Admin only).",
+        "operationId": "reorder_intake_fields",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reordered"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the IDs are not exactly the current fields (reload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/intake-fields/{id}": {
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Edits, archives, or restores a conditional field, its choices, and the\ncategories that reveal it (Admin only). The kind cannot change.",
+        "operationId": "update_intake_field",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakeFieldUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeField"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -1075,6 +1541,203 @@
           },
           "401": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/priorities": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Adds a priority level at the end of the order (Admin only).",
+        "operationId": "create_priority",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPriority"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Priority"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/priorities/order": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Sets the display order of all priority levels (Admin only).",
+        "operationId": "reorder_priorities",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reordered"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the IDs are not exactly the current priorities (reload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/priorities/{id}": {
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Renames, archives, or restores a priority level (Admin only).",
+        "operationId": "update_priority",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriorityUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Priority"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1765,6 +2428,85 @@
           "disabled"
         ]
       },
+      "Catalog": {
+        "type": "object",
+        "description": "Everything in display order.",
+        "required": [
+          "categories",
+          "priorities",
+          "fields"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            }
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeField"
+            }
+          },
+          "priorities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Priority"
+            }
+          }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "skip_ai",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "skip_ai": {
+            "type": "boolean",
+            "description": "\"Skip AI automatically\": submissions go straight to the operator queue\nwith no AI provider call, whatever the requester-skip setting says."
+          }
+        }
+      },
+      "CategoryUpdate": {
+        "type": "object",
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` hides it from new tickets; `false` restores it. Existing tickets are unaffected."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skip_ai": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "ChangePasswordRequest": {
         "type": "object",
         "required": [
@@ -1798,6 +2540,54 @@
             "description": "`ok`, `pending`, `incompatible`, or `unknown`."
           }
         }
+      },
+      "Choice": {
+        "type": "object",
+        "description": "A select option. Its ID is stable: renaming keeps it, and it is archived, never deleted.",
+        "required": [
+          "id",
+          "label",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "ChoiceInput": {
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "An existing choice of this field to update; omit to add a new choice."
+          },
+          "label": {
+            "type": "string",
+            "description": "1-100 characters, unique among the field's active choices."
+          }
+        },
+        "additionalProperties": false
       },
       "CreateInvitationRequest": {
         "type": "object",
@@ -1978,6 +2768,13 @@
           }
         }
       },
+      "FieldKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "select"
+        ]
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -1988,6 +2785,119 @@
             "type": "string"
           }
         }
+      },
+      "IntakeField": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "guidance",
+          "kind",
+          "required",
+          "allow_other",
+          "category_ids",
+          "choices",
+          "archived"
+        ],
+        "properties": {
+          "allow_other": {
+            "type": "boolean",
+            "description": "`select` only: a free-text answer may be given instead of a choice."
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "category_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The categories whose selection reveals this field."
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Choice"
+            },
+            "description": "`select` only, in display order."
+          },
+          "guidance": {
+            "type": "string",
+            "description": "Help text shown with the field; may be empty."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FieldKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Required while visible. Hidden fields are never required."
+          }
+        }
+      },
+      "IntakeFieldUpdate": {
+        "type": "object",
+        "properties": {
+          "allow_other": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "category_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Replaces the revealing categories."
+          },
+          "choices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ChoiceInput"
+            },
+            "description": "The complete choice list in display order. Existing choices left out are\narchived, never deleted, so their IDs stay valid for existing tickets."
+          },
+          "guidance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "Invitation": {
         "type": "object",
@@ -2102,6 +3012,113 @@
           },
           "username": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewCategory": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-100 characters, unique among active categories."
+          },
+          "skip_ai": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Default `false`: follow the organization AI policy."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewIntakeField": {
+        "type": "object",
+        "required": [
+          "label",
+          "kind",
+          "category_ids"
+        ],
+        "properties": {
+          "allow_other": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`select` only."
+          },
+          "category_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The categories that reveal this field."
+          },
+          "choices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ChoiceInput"
+            },
+            "description": "`select` only, in display order (new choices, so without `id`)."
+          },
+          "guidance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Up to 1000 characters."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FieldKind",
+            "description": "Fixed after creation."
+          },
+          "label": {
+            "type": "string",
+            "description": "1-100 characters."
+          },
+          "required": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewPriority": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-100 characters, unique among active priorities."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Order": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Every ID of this kind, archived ones included, in the new display order."
           }
         },
         "additionalProperties": false
@@ -2393,6 +3410,45 @@
             ]
           }
         }
+      },
+      "Priority": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PriorityUpdate": {
+        "type": "object",
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` hides it from new tickets; `false` restores it. Existing tickets are unaffected."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "Readiness": {
         "type": "object",
