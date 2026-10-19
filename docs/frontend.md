@@ -56,6 +56,17 @@ real answer and goes to the error page. Ages render after mount (relative to the
 clock), so server and client markup agree; until then the UTC creation time shows.
 Server rules, filters, and visibility: [queues.md](queues.md).
 
+Open queue and staff detail pages stay current with `poll` (`src/lib/poll.ts`):
+every 15 seconds while the tab is visible, and at once when it becomes visible or
+comes back online, they fetch the change marker (`QueueCounts.version`,
+`GET /api/tickets/{id}/activity`) loaded with the page and rerun the load when it
+differs. Unsent replies, summaries, and selections live in component state and
+survive; if any were present, the detail page says someone else updated the
+ticket. A `4xx` poll (signed out, transferred, removed from the team) reruns the
+load too, so the page turns into that answer instead of showing stale data. An
+unavailable page retries on the same timer. Details:
+[lifecycle.md](lifecycle.md#concurrent-edits-and-refreshing).
+
 ## Ticket form (`routes/(app)/tickets/new`)
 
 One form for every category; the category only decides which conditional fields appear

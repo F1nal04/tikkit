@@ -346,6 +346,7 @@ export default {
       other: 'You can read this ticket but not change it.',
     },
     changed: 'This ticket changed since you loaded it, or your access to it changed. Nothing was saved. The page was refreshed; your unsent text is kept.',
+    updatedElsewhere: 'Someone else updated this ticket. The page now shows the current state; your unsent text is kept. Review it before sending.',
     actionSaved: 'Ticket updated.',
     work: 'Work',
     startWork: 'Start work',

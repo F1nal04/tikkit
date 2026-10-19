@@ -171,3 +171,37 @@ test('assignment history in German; no routing controls without the affordances'
   expect(screen.getByText(/Allgemeine Warteschlange.*→ Desk/)).toBeTruthy()
   expect(screen.queryByRole('heading', { name: 'Team und Zuweisung' })).toBeNull()
 })
+
+function showPolling(version = 'v1') {
+  return render(Page, { props: { data: { activity: { version }, ticket: base, locale: 'en', catalog, conversation: { items: [], next_cursor: null }, unavailable: false }, params: {} } as never })
+}
+
+test('a change made elsewhere reloads the page, keeps unsent text, and says so', async () => {
+  vi.useFakeTimers()
+  try {
+    const fetch = vi.fn().mockImplementation(async () => new Response('{"version":"v1"}'))
+    vi.stubGlobal('fetch', fetch)
+    showPolling()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(String(fetch.mock.calls[0][0].url ?? fetch.mock.calls[0][0])).toContain('/api/tickets/ticket-1/activity')
+    expect(invalidateAll).not.toHaveBeenCalled()
+
+    await fireEvent.input(screen.getByLabelText(/^Message/), { target: { value: 'Half-written answer' } })
+    fetch.mockImplementation(async () => new Response('{"version":"v2"}'))
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(invalidateAll).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/Someone else updated this ticket/)).toBeTruthy()
+    expect((screen.getByLabelText(/^Message/) as HTMLTextAreaElement).value).toBe('Half-written answer')
+  } finally { vi.useRealTimers() }
+})
+
+test('lost access or a signed-out session reloads into that answer', async () => {
+  vi.useFakeTimers()
+  try {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(JSON.stringify({ error: { code: 'not_found' } }), { status: 404 })))
+    showPolling()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(invalidateAll).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/Someone else updated/)).toBeNull()
+  } finally { vi.useRealTimers() }
+})

@@ -8,9 +8,11 @@ export const load: PageLoad = async ({ fetch, parent, url }) => {
   const params = parseQueue(url.searchParams, user!.role)
   const api = createClient({ fetch })
   try {
-    const [page, counts, catalog] = await Promise.all([
+    // Counts first: their `version` is then never newer than the list, so polling
+    // catches every change made after this load.
+    const counts = await api.request('get', '/api/queue/counts')
+    const [page, catalog] = await Promise.all([
       api.request('get', '/api/queue', { query: { ...queueQuery(params), limit: 25 } }),
-      api.request('get', '/api/queue/counts'),
       api.request('get', '/api/catalog'),
     ])
     return { params, page, counts, catalog, unavailable: false as const }

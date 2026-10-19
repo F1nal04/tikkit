@@ -347,6 +347,7 @@ export default {
       other: 'Sie können dieses Ticket lesen, aber nicht ändern.',
     },
     changed: 'Das Ticket hat sich seit dem Laden geändert oder Ihr Zugriff darauf hat sich geändert. Es wurde nichts gespeichert. Die Seite wurde aktualisiert; Ihr nicht gesendeter Text bleibt erhalten.',
+    updatedElsewhere: 'Jemand anderes hat dieses Ticket aktualisiert. Die Seite zeigt jetzt den aktuellen Stand; Ihr nicht gesendeter Text bleibt erhalten. Prüfen Sie ihn vor dem Senden.',
     actionSaved: 'Ticket aktualisiert.',
     work: 'Bearbeitung',
     startWork: 'Bearbeitung beginnen',
