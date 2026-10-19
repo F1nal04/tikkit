@@ -281,6 +281,8 @@ createServer(async (req, res) => {
         team: open.filter((t) => inView(t, 'team')).length,
         mine: 0,
         all: admin ? open.length : null,
+        // Opaque change marker over the caller's visible open work, like the real API.
+        version: JSON.stringify(open.filter((t) => staffCanSee(user, t)).map((t) => [t.id, t.status, t.updated_at, t.assignment])),
       })
     const q = new URL(req.url, 'http://stub').searchParams
     const view = q.get('view') ?? 'general'
@@ -320,7 +322,7 @@ createServer(async (req, res) => {
     return reply(res, 200, { items: items.slice(from, from + limit), next_cursor: from + limit < items.length ? String(from + limit) : null })
   }
   // --- Staff ticket detail and handling (docs/lifecycle.md "Staff HTTP actions")
-  const staffRoute = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|notes|staff-actions|assignment))?$/.exec(pathname)
+  const staffRoute = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|notes|staff-actions|assignment|activity))?$/.exec(pathname)
   const staffSource = staffRoute && ROLES[user] !== 'user' && STAFF_TICKETS.find((t) => t.id === staffRoute[1])
   if (staffSource) {
     const store = (st.staff ??= new Map())
@@ -343,6 +345,7 @@ createServer(async (req, res) => {
         description: 'Printer jams', resolution_source: t.resolution_source ?? null, closure_reason: t.closure_reason ?? null,
         staff_access: { can_handle: canHandle(user, t), can_reopen: t.status === 'closed' && !!{ ...settings, ...st.policy }.allow_reopening && inCharge(user, t), ...access(user, t) },
       })
+    if (endpoint === 'activity') return reply(res, 200, { version: `${t.updated_at}.${t.messages.length}` })
     if (endpoint === 'messages') {
       const q = new URL(req.url, 'http://stub').searchParams, start = Number(q.get('cursor') ?? 0), limit = Number(q.get('limit') ?? 25)
       return reply(res, 200, { items: t.messages.slice(start, start + limit), next_cursor: start + limit < t.messages.length ? String(start + limit) : null })
@@ -382,6 +385,7 @@ createServer(async (req, res) => {
     }
     // staff-actions
     const a = input.action
+    if (input.expected_updated_at !== t.updated_at) return fail(res, 409, 'conflict')
     if (!['start_work', 'request_information', 'propose_resolution', 'reopen', 'set_priority'].includes(a)) return validation(res, { action: ['invalid'] })
     const needsOpen = a !== 'reopen'
     if (needsOpen ? !canHandle(user, t) : !(t.status === 'closed' && inCharge(user, t))) return fail(res, 403, 'forbidden')
@@ -390,7 +394,6 @@ createServer(async (req, res) => {
     if (!from.includes(t.status)) return fail(res, 409, 'conflict')
     if (a === 'propose_resolution' && !input.summary?.trim()) return validation(res, { summary: ['required'] })
     if (a === 'set_priority' && (input.priority_id === t.priority_id || !CATALOG.priorities.some((p) => p.id === input.priority_id))) return validation(res, { priority_id: ['invalid'] })
-    if (input.expected_updated_at !== t.updated_at) return fail(res, 409, 'conflict')
     if (a === 'set_priority') {
       const next = CATALOG.priorities.find((p) => p.id === input.priority_id)
       t.priority_changes.push({ id: t.priority_changes.length + 1, previous_priority_name: t.priority_name, priority_name: next.name, actor_account_id: account(user, null).id, actor_display_name: user, created_at: new Date().toISOString() })
@@ -403,11 +406,12 @@ createServer(async (req, res) => {
     if (a !== 'propose_resolution') t.confirmation_deadline = null
     return reply(res, 200, { status: t.status })
   }
-  // Test hooks: a concurrent change by someone else, and a mid-session reassignment.
+  // Test hooks: a concurrent change by someone else, a mid-session reassignment, or a transfer.
   if (route === 'POST /api/test/concurrent') {
-    const { id, assignee } = await readBody(req), t = (st.staff ??= new Map()).get(id)
+    const { id, assignee, team } = await readBody(req), t = (st.staff ??= new Map()).get(id)
     if (!t) return fail(res, 404, 'not_found')
     if (assignee !== undefined) t.assignment = { ...t.assignment, assignee_display_name: assignee }
+    if (team !== undefined) t.assignment = { team_name: team, assignee_display_name: null }
     t.messages.push({ id: randomUUID(), kind: 'public_reply', author_kind: 'requester', author_account_id: null, author_display_name: 'requester', created_at: new Date().toISOString(), body: 'Newer reply from the requester', screenshot_ids: [] })
     t.updated_at = new Date().toISOString()
     return reply(res, 204)

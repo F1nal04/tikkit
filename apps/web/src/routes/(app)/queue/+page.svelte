@@ -1,10 +1,13 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation'
+  import { ApiError } from '@tikkit/api-client'
   import { onMount } from 'svelte'
+  import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import Table from '#lib/components/Table.svelte'
   import { errorText, messages } from '#lib/i18n.ts'
+  import { poll } from '#lib/poll.ts'
   import { age, FILTER_STATUSES, queueHref, SORTS, viewsFor } from '#lib/queue.ts'
   import type { PageProps } from './$types'
 
@@ -26,6 +29,20 @@
     const timer = setInterval(() => (now = Date.now()), 60_000)
     return () => clearInterval(timer)
   })
+  // Work done elsewhere shows up without a manual reload; the API re-checks visibility on every poll.
+  onMount(() =>
+    poll(async () => {
+      if (!data.counts) return invalidateAll()
+      try {
+        const counts = await api(data.locale).request('get', '/api/queue/counts')
+        if (counts.version !== data.counts.version) await invalidateAll()
+      } catch (e) {
+        // Signed out or no longer staff: reload into the real answer.
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500) await invalidateAll()
+        else throw e
+      }
+    }),
+  )
   const when = (iso: string) =>
     new Intl.DateTimeFormat(data.locale, { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' }).format(
       new Date(iso),
