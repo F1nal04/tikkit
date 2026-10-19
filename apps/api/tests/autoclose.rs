@@ -16,7 +16,7 @@ use support::{
 use tikkit_api::{
     api::{ApiError, Role as ApiRole, TicketStatus},
     authz::{Actor, TeamScope, TicketScope},
-    autoclose::close_one,
+    autoclose::{close_due, close_one},
     lifecycle::{
         By, ClosureReason, Policy, TicketState, Transition, decide, transition, transition_with,
     },
@@ -614,4 +614,82 @@ async fn timeout_snapshot_ignores_later_settings_and_reopening_follows_the_toggl
         .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(hours(first).await, 1.0);
+}
+
+#[tokio::test]
+async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
+    let Some(w) = world().await else { return };
+    let older = w.overdue().await;
+    let newer = w.overdue().await;
+    sqlx::query(
+        "UPDATE tickets SET confirmation_deadline = clock_timestamp() - interval '2 hours' WHERE id = $1",
+    )
+    .bind(older)
+    .execute(w.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE tickets SET confirmation_deadline = clock_timestamp() - interval '1 hour' WHERE id = $1",
+    )
+    .bind(newer)
+    .execute(w.pool())
+    .await
+    .unwrap();
+    // The oldest row's close is rejected. Without a per-cycle skip, every later
+    // step would lock this same ticket again and the newer one would stay open.
+    let fail = format!(
+        "CREATE FUNCTION fail_autoclose() RETURNS trigger LANGUAGE plpgsql AS $fn$
+         BEGIN
+           IF OLD.id = '{older}' AND NEW.closure_reason = 'confirmation_timeout' THEN
+             RAISE EXCEPTION 'forced autoclose failure' USING ERRCODE = 'P0001';
+           END IF;
+           RETURN NEW;
+         END
+         $fn$"
+    );
+    sqlx::query(&fail).execute(w.pool()).await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_autoclose BEFORE UPDATE ON tickets
+         FOR EACH ROW EXECUTE FUNCTION fail_autoclose()",
+    )
+    .execute(w.pool())
+    .await
+    .unwrap();
+
+    let mut skipped = Vec::new();
+    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert_eq!(skipped, vec![older]);
+    assert_eq!(w.row(older).await.0, "awaiting_confirmation");
+    assert_eq!(w.events(older, "confirmation_timeout").await, 0);
+    assert_eq!(w.outbox(older, "confirmation_timeout").await, 0);
+
+    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert_eq!(
+        w.row(newer).await.2.as_deref(),
+        Some("confirmation_timeout")
+    );
+    assert_eq!(w.events(newer, "confirmation_timeout").await, 1);
+    assert_eq!(w.row(older).await.0, "awaiting_confirmation");
+
+    // Cycle exhausted: the skip list is cleared and the worker would sleep.
+    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(skipped.is_empty());
+    // The next cycle tries the failed ticket once, then idles again. It does not spin.
+    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert_eq!(skipped, vec![older]);
+    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert_eq!(w.events(older, "confirmation_timeout").await, 0);
+
+    sqlx::query("DROP TRIGGER fail_autoclose ON tickets")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert_eq!(
+        w.row(older).await.2.as_deref(),
+        Some("confirmation_timeout")
+    );
+    assert_eq!(w.events(older, "confirmation_timeout").await, 1);
+    assert_eq!(w.events(newer, "confirmation_timeout").await, 1);
+    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
 }
