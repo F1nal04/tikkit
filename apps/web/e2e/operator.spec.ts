@@ -60,10 +60,14 @@ test('an operator works an unclaimed team ticket: work, wait, reply, note, prior
   await page.getByRole('button', { name: 'Resume work' }).click()
   await expect(status(page)).toHaveText('In progress')
 
+  await page.getByLabel(/Resolution summary/).fill('Unsent resolution draft')
   await page.getByLabel('New priority').selectOption({ label: 'Urgent' })
   await page.getByRole('button', { name: 'Save priority' }).click()
   await expect(page.getByText('Normal → Urgent')).toBeVisible()
   await expect(page.getByRole('term').filter({ hasText: 'Current priority' }).locator('xpath=following-sibling::dd')).toHaveText('Urgent')
+
+  await expect(page.getByLabel(/Resolution summary/)).toHaveValue('Unsent resolution draft')
+  await page.getByLabel(/Resolution summary/).fill('')
 
   // A proposal needs a summary; it waits for the requester and cannot close the ticket.
   await page.getByRole('button', { name: 'Propose resolution' }).click()
@@ -135,12 +139,15 @@ test('a claim taken away mid-session turns the page read-only safely', async ({ 
   await signIn(page, 'operator')
   await open(page, ids.deskClaimed)
   await page.getByLabel('Message').fill('Draft answer')
+  await page.getByLabel(/Resolution summary/).fill('Draft proposal')
   expect(await post(page, '/api/test/concurrent', { id: ids.deskClaimed, assignee: 'lead' })).toBe(204)
   await page.getByRole('button', { name: 'Send public reply' }).click()
   // The operator is no longer in charge only if not the assignee; the stub moved the claim to the lead.
   await expect(page.getByRole('alert')).toContainText('changed since you loaded it')
   await expect(page.getByText(/assigned to someone else/)).toBeVisible()
   await expect(page.getByLabel('Message')).toHaveValue('Draft answer')
+  await expect(page.getByLabel(/Resolution summary/)).toHaveValue('Draft proposal')
+  await expect(page.getByLabel(/Resolution summary/)).toHaveAttribute('readonly', '')
   await expect(page.getByRole('button', { name: 'Send public reply' })).toBeDisabled()
   await expect(page.getByText('Draft answer')).toHaveCount(0)
 })

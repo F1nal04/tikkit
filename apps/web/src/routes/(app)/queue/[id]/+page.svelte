@@ -74,7 +74,9 @@
         path: { id: ticket.id },
         body: { ...input, expected_updated_at: ticket.updated_at } as Schemas['StaffAction'],
       })
-      feedback = 'action'; summary = ''; priorityId = ''
+      feedback = 'action'
+      if (input.action === 'propose_resolution') summary = ''
+      if (input.action === 'set_priority') priorityId = ''
       await refresh()
     } catch (e) { await failed(e) } finally { busy = false }
   }
@@ -177,6 +179,14 @@
         <Field name="priority_id" label={s.newPriority} options={[{ value: '', label: s.choosePriority }, ...priorities.map((p) => ({ value: p.id, label: p.name }))]} bind:value={priorityId} error={fieldText(t, fields.priority_id?.[0])} />
         <button disabled={busy || !priorityId}>{s.savePriority}</button>
       </form>
+    </section>
+  {/if}
+  {#if !canHandle && summary}
+    <section aria-labelledby="unsent-summary-title">
+      <h2 id="unsent-summary-title">{s.resolution}</h2>
+      <p class="hint">{s.unsentLocked}</p>
+      <label for="unsent-summary">{s.summary}</label>
+      <textarea id="unsent-summary" readonly value={summary} rows="6"></textarea>
     </section>
   {/if}
   {#if access?.can_reopen}
