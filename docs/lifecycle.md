@@ -134,3 +134,17 @@ requester view (public data, no staff identities except the
 ticket's own requester in every status, or the staff view. Drafts, AI-stage, and
 AI-solved records are `404` for operators; Admins see everything but drafts.
 `transitions` lists the status events oldest first with their public payloads.
+
+## Requester HTTP decisions
+
+`POST /api/tickets/{id}/actions` accepts one explicit tagged decision:
+`{action: "accept_resolution" | "reject_resolution", proposal_version}`,
+`{action: "cancel", reason}`, or `{action: "reopen"}`. It calls the same
+transactional lifecycle and returns `{status}` only after commit. A duplicate,
+stale proposal, or finished state returns `409`; a policy denial returns `403`;
+invisible tickets return `404`. Reopen retains the lifecycle's requester-or-
+authorized-staff rule. No AI escalation, general state setter, or intake edit
+is exposed by this endpoint.
+
+The persisted AI suggestion belongs to the AI attempt records (#35) and is not
+exposed yet; AI-solved history shows an explicit unavailable-suggestion message.

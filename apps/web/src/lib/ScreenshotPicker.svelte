@@ -7,11 +7,18 @@
   import { messages, type Locale } from '#lib/i18n.ts'
   import { ACCEPT, precheck, uploadErrorText, uploadScreenshot, type Screenshot } from '#lib/screenshots.ts'
 
-  let { locale, ids = $bindable([]), error }: { locale: Locale; ids?: string[]; error?: string } = $props()
+  let {
+    locale,
+    ids = $bindable([]),
+    error,
+    disabled = false,
+    uploading = $bindable(false),
+  }: { locale: Locale; ids?: string[]; error?: string; disabled?: boolean; uploading?: boolean } = $props()
   let t = $derived(messages[locale])
   let known = $state<Record<string, Screenshot>>({})
   let problems = $state<{ name: string; text: string }[]>([])
   let busy = $state(0)
+  $effect(() => { uploading = busy > 0 })
   const inputId = `screenshots-${Math.random().toString(36).slice(2)}`
 
   // Resumed drafts only carry IDs; load their metadata (owner-only while pending).
@@ -42,8 +49,8 @@
         const screenshot = await uploadScreenshot(file)
         known[screenshot.id] = screenshot
         ids = [...ids, screenshot.id]
-      } catch (error) {
-        problems.push({ name: file.name, text: uploadErrorText(t, error) })
+      } catch (err) {
+        problems.push({ name: file.name, text: uploadErrorText(t, err) })
       } finally {
         busy--
       }
@@ -54,7 +61,7 @@
   const remove = (id: string) => (ids = ids.filter((other) => other !== id))
 </script>
 
-<fieldset class="screenshots">
+<fieldset class="screenshots" {disabled}>
   <legend>{t.screenshots.label}</legend>
   <p id="{inputId}-hint" class="hint">{t.screenshots.hint}</p>
   <label for={inputId}>{t.screenshots.add}</label>

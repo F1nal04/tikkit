@@ -885,6 +885,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
+         *     return 409; policy is read again by the lifecycle inside the transaction.
+         */
+        post: operations["requester_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{id}/messages": {
         parameters: {
             query?: never;
@@ -985,6 +1005,9 @@ export interface components {
             /** Format: uuid */
             team_id: string | null;
             username: string;
+        };
+        ActionResult: {
+            status: components["schemas"]["TicketStatus"];
         };
         AnswerSnapshot: {
             /**
@@ -1508,6 +1531,25 @@ export interface components {
         };
         RecoveryRequest: {
             username: string;
+        };
+        /** @description Explicit decisions only: replies and views never implicitly accept a proposal. */
+        RequesterAction: {
+            /** @enum {string} */
+            action: "accept_resolution";
+            /** Format: int32 */
+            proposal_version: number;
+        } | {
+            /** @enum {string} */
+            action: "reject_resolution";
+            /** Format: int32 */
+            proposal_version: number;
+        } | {
+            /** @enum {string} */
+            action: "cancel";
+            reason: string;
+        } | {
+            /** @enum {string} */
+            action: "reopen";
         };
         ResetPasswordRequest: {
             /** @description 12-256 characters. */
@@ -4382,9 +4424,13 @@ export interface operations {
     list_own_tickets: {
         parameters: {
             query?: {
-                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                status?: components["schemas"]["TicketStatus"];
+                /** @description Inclusive creation timestamp. */
+                created_from?: string;
+                /** @description Exclusive creation timestamp. */
+                created_before?: string;
+                /** @description Page size, 1–100 (default 25). */
                 limit?: number;
-                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
             };
             header?: never;
@@ -4511,6 +4557,73 @@ export interface operations {
             };
             /** @description `not_found` (missing or not visible to the caller) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    requester_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequesterAction"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Current policy or actor denies the action */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale state or proposal version */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

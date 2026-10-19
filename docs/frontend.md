@@ -79,3 +79,29 @@ controls.
   input changed; the submit button and handler ignore clicks while a request runs.
 - The receipt shows the reference, status, category, and the priority the requester chose; the
   full ticket view is `/tickets/{id}`.
+
+## Requester history and detail
+
+`/` lists only the signed-in account's own submissions, in pages of 25. The
+address bar keeps `status`, `from`, `until` (inclusive UTC calendar dates), and
+`cursor`; filter submission resets pagination. The API applies ownership,
+status and creation bounds before its limit. Empty and unavailable states offer
+clear recovery links or a retry.
+
+`/tickets/{id}` serves the requester view: frozen intake and screenshots,
+current handling team/assignee display names, public conversation (paged oldest
+first), and public status history. It rejects the staff view; staff detail is a
+separate workflow. All authored text is escaped plain
+text with preserved line breaks. Images use only authorized screenshot ID URLs;
+there are no edit/delete controls. AI-solved history is permanently read-only.
+
+Actions are affordances from current policy/state; Rust's lifecycle remains the
+authority. Resolution decisions send the displayed proposal version, rejection
+is independent of the reopen toggle, deadlines and timeout closure are explicit,
+and cancellation requires a reason. After `403`/`409`, refresh the detail/policy
+and announce the conflict without a success claim or clearing unsent input.
+Use Refresh to discover reassignment, transfers, messages, or policy changes.
+Reply retries reuse the idempotency key for identical content and screenshots;
+changed input gets a new key. Uploads finish before sending. Language changes
+keep mounted input. A reply that becomes unavailable is retained, disabled,
+until the current lifecycle permits sending again.
