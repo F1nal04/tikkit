@@ -1,5 +1,6 @@
 -- Admin-configured outbound SMTP. One connection per deployment.
--- password_ciphertext is AES-256-GCM (12-byte nonce || ciphertext and tag), never plaintext.
+-- username_ciphertext and password_ciphertext are AES-256-GCM (12-byte nonce ||
+-- ciphertext and tag), never plaintext.
 -- See docs/schema.md.
 
 CREATE TABLE smtp_connection (
@@ -15,10 +16,7 @@ CREATE TABLE smtp_connection (
         AND sender_name !~ '[[:cntrl:]]'
     ),
     sender_address text NOT NULL CHECK (char_length(sender_address) BETWEEN 3 AND 254),
-    username text NOT NULL CHECK (
-        char_length(username) BETWEEN 1 AND 256
-        AND username !~ '[[:cntrl:]]'
-    ),
+    username_ciphertext bytea NOT NULL CHECK (octet_length(username_ciphertext) >= 29),
     password_ciphertext bytea NOT NULL CHECK (octet_length(password_ciphertext) >= 28),
     enabled boolean NOT NULL DEFAULT true,
     updated_at timestamptz NOT NULL DEFAULT now(),

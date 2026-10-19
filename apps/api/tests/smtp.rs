@@ -494,6 +494,31 @@ async fn admin_stores_the_password_encrypted_and_never_returns_it() {
     assert_eq!(got.body["connection"]["host"], "127.0.0.1");
     assert_eq!(got.body["connection"]["security"], "starttls");
     assert_secret_absent(&got.body);
+    assert!(got.body["connection"].get("username").is_none());
+    let stored_user: Vec<u8> =
+        sqlx::query_scalar("SELECT username_ciphertext FROM smtp_connection")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert!(
+        !stored_user
+            .windows(USER.len())
+            .any(|w| w == USER.as_bytes())
+    );
+
+    // Stored credentials never follow a new host without being entered again.
+    let mut moved = write_body(server.port, "starttls", None, true);
+    moved["host"] = json!("localhost");
+    moved.as_object_mut().unwrap().remove("username");
+    let moved = save(&app, &admin, moved).await;
+    assert_eq!(moved.status, 422, "{}", moved.body);
+    let fields = &moved.body["error"]["details"]["fields"];
+    assert_eq!(fields["username"][0], "required");
+    assert_eq!(fields["password"][0], "required");
+    let mut kept = write_body(2525, "implicit_tls", None, false);
+    kept.as_object_mut().unwrap().remove("username");
+    assert_eq!(save(&app, &admin, kept).await.status, 200);
+    assert_eq!(ciphertext(&db.pool).await, stored);
 
     let meta: Vec<Value> = sqlx::query_scalar(
         "SELECT metadata FROM audit_events WHERE event_type = 'smtp_configured'",
@@ -845,15 +870,27 @@ async fn transient_failures_are_retried_and_duplicate_keys_are_not() {
         write_body(server.port, "starttls", Some(SECRET), true),
     )
     .await;
-    let test = call(
-        &app,
-        "POST",
-        "/api/settings/smtp/test",
-        Some(json!({ "to": "shared@example.com" })),
-        Some(&admin),
+    // Background delivery (the default options) retries a 450.
+    let key = [0u8; 32];
+    let opts = DeliverOptions {
+        allow_disabled: true,
+        ..DeliverOptions::default()
+    };
+    let retried = OutboundMessage {
+        to: "shared@example.com".into(),
+        subject: "Retry".into(),
+        body: "portal only".into(),
+        idempotency_key: None,
+    };
+    let sent = mail::deliver(
+        &db.pool,
+        &key,
+        Some(server.ca_pem.as_bytes()),
+        &retried,
+        opts,
     )
     .await;
-    assert_eq!(test.status, 200, "{}", test.body);
+    assert_eq!(sent, Ok(Delivered::Sent));
     assert_eq!(server.messages.lock().unwrap().len(), 1);
     let mails = server
         .commands
@@ -864,16 +901,11 @@ async fn transient_failures_are_retried_and_duplicate_keys_are_not() {
         .count();
     assert_eq!(mails, 2, "the 450 must be tried again");
 
-    let key = [0u8; 32];
     let message = OutboundMessage {
         to: "shared@example.com".into(),
         subject: "Again".into(),
         body: "portal only".into(),
         idempotency_key: Some("invitation:once".into()),
-    };
-    let opts = DeliverOptions {
-        allow_disabled: true,
-        ..DeliverOptions::default()
     };
     let first = mail::deliver(
         &db.pool,

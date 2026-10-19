@@ -705,7 +705,7 @@ export interface components {
         SetupStatus: {
             setup_required: boolean;
         };
-        /** @description Masked connection. The password is never included. */
+        /** @description Masked connection. The username and password are never included. */
         SmtpConnection: {
             enabled: boolean;
             host: string;
@@ -716,7 +716,10 @@ export interface components {
             /** Format: date-time */
             last_test_at: string | null;
             last_test_error: string | null;
-            /** @description Always true when a connection exists. The value itself is not returned. */
+            /**
+             * @description Always true when a connection exists: a username and password are stored.
+             *     Neither value is returned.
+             */
             password_set: boolean;
             /** Format: int32 */
             port: number;
@@ -725,7 +728,6 @@ export interface components {
             sender_name: string;
             /** Format: date-time */
             updated_at: string;
-            username: string;
         };
         /**
          * @description How the relay expects the connection to be encrypted. There is no plaintext
@@ -739,14 +741,18 @@ export interface components {
         SmtpSettingsWrite: {
             enabled: boolean;
             host: string;
-            /** @description Required when creating the connection. Omit to keep the stored password. */
+            /** @description Same rule as `username`. */
             password?: string | null;
             /** Format: int32 */
             port: number;
             security: components["schemas"]["SmtpSecurity"];
             sender_address: string;
             sender_name: string;
-            username: string;
+            /**
+             * @description Required when creating the connection or changing the host, so stored
+             *     credentials are never sent to a new server. Omit to keep the stored value.
+             */
+            username?: string | null;
         };
         SmtpTestRequest: {
             /** @description Recipient. Must be the acting Admin's email or the configured sender address. */

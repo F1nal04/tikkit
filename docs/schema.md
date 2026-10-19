@@ -79,8 +79,9 @@ Rust validates and authorizes first; these constraints are the backstop.
 - An invitation is accepted (`accepted_at` and the created `account_id`, unique,
   set together) or revoked, never both.
 - `smtp_connection` has at most one row (`id boolean PRIMARY KEY CHECK (id)`).
-  `security` is `starttls` or `implicit_tls`. `password_ciphertext` is
-  AES-256-GCM (12-byte nonce, then ciphertext and tag), never the password.
+  `security` is `starttls` or `implicit_tls`. `username_ciphertext` and
+  `password_ciphertext` are AES-256-GCM (12-byte nonce, then ciphertext and
+  tag), never the plaintext credentials.
   `last_delivery_error` and `last_test_error` store a stable error code only.
 - `smtp_deliveries.idempotency_key` records a successful send. A later delivery
   with the same key does not send again. The row holds no message body, address,
