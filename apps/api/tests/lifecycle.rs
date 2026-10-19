@@ -485,6 +485,160 @@ async fn race(
     loser.await.unwrap()
 }
 
+/// Wait for the actual database lock wait, rather than assuming task scheduling.
+async fn wait_until_blocked(pool: &PgPool, pid: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1)) > 0")
+                .bind(pid)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            if blocked {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("transition must wait for the ticket row lock");
+}
+
+#[tokio::test]
+async fn cancellation_sees_work_started_by_the_ticket_lock_holder() {
+    let Some(w) = world().await else { return };
+    let id = seed(&w, S::Queued).await;
+    let before = Policy {
+        cancellation: CancellationPolicy::BeforeWorkStarts,
+        ..Policy::default()
+    };
+    let mut work = w.pool().begin().await.unwrap();
+    transition_with(
+        &mut work,
+        id,
+        By::Account(w.op),
+        &Transition::StartWork,
+        Some(before),
+    )
+    .await
+    .unwrap();
+
+    let mut cancel = w.pool().begin().await.unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *cancel)
+        .await
+        .unwrap();
+    let requester = w.requester;
+    let pending = tokio::spawn(async move {
+        let r = transition_with(
+            &mut cancel,
+            id,
+            By::Account(requester),
+            &Transition::Cancel {
+                reason: "Too late".into(),
+            },
+            Some(before),
+        )
+        .await;
+        if r.is_ok() {
+            cancel.commit().await.unwrap();
+        }
+        r
+    });
+    wait_until_blocked(w.pool(), pid).await;
+    work.commit().await.unwrap();
+    assert_eq!(code(&pending.await.unwrap()), "forbidden");
+    let mut db = w.pool().acquire().await.unwrap();
+    assert_eq!(status_of(&mut db, id).await, S::InProgress);
+    assert_eq!(events(&mut db, id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn proposal_deadline_starts_when_proposed_not_when_the_transaction_began() {
+    let Some(w) = world().await else { return };
+    let id = seed(&w, S::InProgress).await;
+    let mut tx = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT pg_sleep(0.05)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    transition_with(
+        &mut tx,
+        id,
+        By::Account(w.op),
+        &Transition::ProposeResolution {
+            summary: "Fixed".into(),
+        },
+        Some(PERMISSIVE),
+    )
+    .await
+    .unwrap();
+    let full_timeout: bool = sqlx::query_scalar(
+        "SELECT confirmation_deadline > now() + interval '168 hours 0.025 seconds'
+         FROM tickets WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert!(
+        full_timeout,
+        "the timeout starts at the proposal, after any earlier transaction work"
+    );
+    let consistent_timestamps: bool = sqlx::query_scalar(
+        "SELECT e.created_at = t.updated_at
+                AND t.confirmation_deadline = e.created_at + interval '168 hours'
+         FROM tickets t JOIN ticket_events e ON e.ticket_id = t.id WHERE t.id = $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert!(consistent_timestamps);
+}
+
+#[tokio::test]
+async fn timeout_uses_the_current_time_after_the_ticket_lock_wait() {
+    let Some(w) = world().await else { return };
+    let id = seed(&w, S::AwaitingConfirmation).await;
+    let mut holder = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    // The worker transaction starts before the deadline, then waits beyond it.
+    let mut worker = w.pool().begin().await.unwrap();
+    sqlx::query("UPDATE tickets SET confirmation_deadline = clock_timestamp() WHERE id = $1")
+        .bind(id)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *worker)
+        .await
+        .unwrap();
+    let pending = tokio::spawn(async move {
+        let r = transition_with(
+            &mut worker,
+            id,
+            By::System,
+            &Transition::ConfirmationTimeout {
+                proposal_version: 1,
+            },
+            Some(PERMISSIVE),
+        )
+        .await;
+        if r.is_ok() {
+            worker.commit().await.unwrap();
+        }
+        r
+    });
+    wait_until_blocked(w.pool(), pid).await;
+    holder.commit().await.unwrap();
+    assert_eq!(pending.await.unwrap().unwrap(), S::Closed);
+}
+
 #[tokio::test]
 async fn concurrent_opposite_decisions_have_one_winner() {
     let Some(w) = world().await else { return };

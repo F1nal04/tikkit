@@ -107,6 +107,13 @@ exactly one event commits. A concurrent role, membership, or leadership change
 waits for the transition to commit, so a revoked staff writer can never commit
 afterwards. Deadlocks surface as `409 conflict`.
 
+The API requires a `sqlx::Transaction`, so an autocommit connection cannot
+release locks before the state and its event are written. After acquiring the
+ticket lock, a fresh statement reads work-start history so cancellation sees
+events committed by the previous lock holder. The current database clock,
+read after locking, supplies proposal deadlines, timeout checks, and transition
+timestamps; transaction-start time does not shorten the confirmation period.
+
 ## Database backstops
 
 Migration `0008_ticket_lifecycle.sql`: `confirmation_deadline` is set exactly
