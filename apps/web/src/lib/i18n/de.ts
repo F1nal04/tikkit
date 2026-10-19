@@ -34,7 +34,7 @@ export default {
   "screenshot": "Screenshot",
   "download": "Screenshot herunterladen",
   "aiSolution": "KI-Lösungsvorschlag",
-  "noSolution": "Für diesen älteren Eintrag ist kein Lösungsvorschlag gespeichert.",
+  "noSolution": "Der Text des KI-Lösungsvorschlags ist für diesen Eintrag nicht verfügbar.",
   "aiFinal": "Du hast bestätigt, dass dieser KI-Vorschlag das Problem gelöst hat. Dieser Eintrag ist endgültig und schreibgeschützt.",
   "resolution": "Vorgeschlagene Lösung",
   "deadline": "Frist für automatischen Abschluss:",

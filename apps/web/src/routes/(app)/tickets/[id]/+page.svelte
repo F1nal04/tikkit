@@ -125,10 +125,10 @@
     <ScreenshotGallery ids={ticket.intake_snapshot?.screenshot_ids ?? []} locale={data.locale} />
   </section>
 
-  {#if ticket.ai_solution || ticket.status === 'ai_solved'}
-    <section aria-labelledby="ai-title"><h2 id="ai-title">{h.aiSolution}</h2><p class="prose">{ticket.ai_solution ?? h.noSolution}</p></section>
+  {#if ticket.status === 'ai_solved'}
+    <section aria-labelledby="ai-title"><h2 id="ai-title">{h.aiSolution}</h2><p>{h.noSolution}</p></section>
+    <Alert kind="info">{h.aiFinal}</Alert>
   {/if}
-  {#if ticket.status === 'ai_solved'}<Alert kind="info">{h.aiFinal}</Alert>{/if}
 
   {#if actions?.resolution}
     <section aria-labelledby="resolution-title">
@@ -143,7 +143,7 @@
     </section>
   {/if}
   {#if actions?.reopen}<p><button disabled={busy} onclick={() => act({ action: 'reopen' })}>{h.reopen}</button></p>{/if}
-  {#if actions?.cancel}<p><button class="secondary" disabled={busy} onclick={() => (cancelling = !cancelling)}>{h.cancel}</button></p>{/if}
+  {#if actions?.cancel}<p><button class="secondary" disabled={busy} aria-expanded={cancelling} onclick={() => (cancelling = !cancelling)}>{h.cancel}</button></p>{/if}
   {#if cancelling}
     <form aria-label={h.cancel} onsubmit={(e) => { e.preventDefault(); act({ action: 'cancel', reason }) }} novalidate>
       <Field name="reason" label={h.reason} hint={h.reasonHint} multiline required bind:value={reason} error={fieldText(t, fields.reason?.[0])} />

@@ -160,7 +160,7 @@ function detailOf(t) {
     view: 'requester', category_id: c.id, category_name: c.name, priority_id: p.id, priority_name: p.name,
     assignment: { team_name: null, assignee_display_name: null },
     intake_snapshot: { subject: t.subject ?? t.intake?.subject ?? 'Printer', description: t.description ?? t.intake?.description ?? 'Jammed', catalog: { category_id: c.id, category_name: c.name, skip_ai: c.skip_ai, priority_id: p.id, priority_name: p.name, answers: [] }, screenshot_ids: t.intake?.screenshot_ids ?? [] },
-    ai_solution: null, resolution_source: null, closure_reason: null, requester: null,
+    resolution_source: null, closure_reason: null, requester: null,
     proposal_version: 0, confirmation_deadline: null, transitions: [],
     created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z', ...t,
   }
@@ -189,7 +189,7 @@ function seedHistory(st, user) {
   const closed = add('Human closed', 'closed', { resolution_source: 'operator', closure_reason: 'requester_confirmed', assignment: pending.assignment })
   const timeout = add('Automatically closed', 'awaiting_confirmation', { resolution_source: 'operator', closure_reason: 'confirmation_timeout', assignment: pending.assignment })
   changeTicket(timeout, 'confirmation_timeout', 'closed')
-  const ai = add('AI solved final', 'awaiting_ai_decision', { ai_solution: 'Restart the printer. <script>window.aiXss = true</script>', resolution_source: 'ai', closure_reason: 'requester_confirmed' })
+  const ai = add('AI solved final', 'awaiting_ai_decision', { resolution_source: 'ai', closure_reason: 'requester_confirmed' })
   changeTicket(ai, 'ai_solved', 'ai_solved')
   const privateShot = randomUUID()
   st.shots.set(privateShot, { ...screenshot, id: privateShot, private: true })

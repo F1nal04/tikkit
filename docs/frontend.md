@@ -91,7 +91,7 @@ clear recovery links or a retry.
 `/tickets/{id}` serves the requester view: frozen intake and screenshots,
 current handling team/assignee display names, public conversation (paged oldest
 first), and public status history. It rejects the staff view; staff detail is a
-separate workflow. All authored text (including AI suggestions) is escaped plain
+separate workflow. All authored text is escaped plain
 text with preserved line breaks. Images use only authorized screenshot ID URLs;
 there are no edit/delete controls. AI-solved history is permanently read-only.
 
