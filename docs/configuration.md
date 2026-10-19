@@ -19,6 +19,7 @@ name the variable and the fix but never echo values.
 | `SESSION_ROTATE_HOURS` | no | `24` | Session age after which its token is replaced on the next request (1-8760). |
 | `TRUST_PROXY_HEADERS` | no | `false` | `true` only behind a reverse proxy that overwrites `X-Forwarded-For` (the production compose sets it for Caddy); the last hop is used as client IP for rate limits. Otherwise every client shares the proxy's IP. |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
+| `SCREENSHOT_DIR` | in production | `data/screenshots` | Private directory for validated screenshot files, created at startup. Production requires an absolute path on a persistent volume (the production compose uses `/var/lib/tikkit/screenshots`). Only the API reads it; never serve it. Back it up with the database ([screenshots.md](screenshots.md#storage-backup-and-restore)). |
 | `RUST_LOG` | no | `info,sqlx=warn` | Log filter, e.g. `info,tower_http=debug`. Request logs include the request ID and path, never query strings or bodies. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 

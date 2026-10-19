@@ -178,7 +178,7 @@ Migration `0009_ticket_submission.sql` adds:
   until explicit owner deletion or submission, with no automatic expiry.
 - `tickets.intake_snapshot`: immutable original subject/description, catalog
   `IntakeSnapshot` (including original priority and visible answers), and
-  screenshot references (empty until #19). Nullable for pre-existing records;
+  screenshot IDs (attached rows in `screenshots`). Nullable for pre-existing records;
   the new submission service always sets it. `tickets_intake_snapshot_immutable`
   rejects updates after submission (`23001`). Effective `priority_id` remains
   separate so staff priority changes cannot rewrite the original selection.
@@ -192,3 +192,17 @@ Migration `0009_ticket_submission.sql` adds:
 
 See [submission.md](submission.md) for endpoints, concurrency, retention and
 backup deletion limits. No new configuration variables are needed.
+
+## Screenshots
+
+Migration `0010_screenshots.sql` adds `screenshots`: metadata of validated,
+re-encoded images whose bytes are `SCREENSHOT_DIR/<id>`. Uploader account ID,
+optional `ticket_id` (NULL while pending, set once by `screenshots::attach`
+together with `attached_at`), normalized filename, stored `content_type`
+(`image/png`, `image/jpeg`, `image/webp`), stored size and dimensions,
+`created_at`, and `touched_at` (upload or last draft save, the orphan-expiry
+clock). `screenshots_frozen` rejects any update or delete of an attached row
+and any change of a pending row's content columns (`23001`). Partial indexes
+cover ticket lookup and per-account pending uploads. Audit events
+`screenshot_uploaded`, `screenshot_deleted`, `screenshots_expired` carry IDs,
+type, and size only. See [screenshots.md](screenshots.md).

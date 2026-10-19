@@ -1780,6 +1780,291 @@
         }
       }
     },
+    "/api/screenshots": {
+      "post": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Upload one screenshot as the raw request body (`Content-Type: image/png`,\n`image/jpeg`, or `image/webp`). It stays private to the uploader until\nattached by submission; unreferenced uploads expire after 24 hours.",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "query",
+            "description": "Original file name; only a safe base name is kept. Its extension, if\nany, must match the image format.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Raw image bytes, at most 10 MiB",
+          "content": {
+            "image/jpeg": {},
+            "image/png": {},
+            "image/webp": {}
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Screenshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`payload_too_large` (over 10 MiB)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`: `file` is `required`, `unsupported_type`, `type_mismatch`, `corrupt`, `animated`, `dimensions_too_large`, or `too_many`; `filename` is `type_mismatch`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal` (storage failure; nothing was recorded)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots/{id}": {
+      "get": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Metadata of a screenshot the caller may currently read.",
+        "operationId": "metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Screenshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Delete an own pending upload immediately. Attached screenshots are frozen\n(`409`); so are uploads still referenced by an editable draft: save the draft\nwithout it first (or just save it; unreferenced uploads expire on their own).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or another account's upload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (attached to a ticket or referenced by a draft)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots/{id}/download": {
+      "get": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "The same bytes as an attachment download.",
+        "operationId": "download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validated image bytes (`Content-Disposition: attachment`)",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/webp": {}
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots/{id}/preview": {
+      "get": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Inline image for `<img>` previews. Access is rechecked on every request and\nnever cached, so revoked access applies to old URLs immediately.",
+        "operationId": "preview",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validated image bytes",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/webp": {}
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings/smtp": {
       "get": {
         "tags": [
@@ -2382,7 +2667,7 @@
             }
           },
           "422": {
-            "description": "`validation_failed` (input bounds, unsupported screenshots)",
+            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4355,6 +4640,50 @@
           "admin"
         ]
       },
+      "Screenshot": {
+        "type": "object",
+        "description": "Metadata of a validated screenshot. The bytes are only served by the\npreview/download endpoints.",
+        "required": [
+          "id",
+          "filename",
+          "content_type",
+          "byte_size",
+          "width",
+          "height",
+          "created_at"
+        ],
+        "properties": {
+          "byte_size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Size of the stored, re-encoded file."
+          },
+          "content_type": {
+            "type": "string",
+            "description": "`image/png`, `image/jpeg`, or `image/webp`, from the decoded content."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Normalized server-side; the extension matches `content_type`."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "SetupRequest": {
         "type": "object",
         "required": [
@@ -4891,7 +5220,7 @@
               "type": "string",
               "format": "uuid"
             },
-            "description": "Must be empty until validated screenshot uploads (#19) are available."
+            "description": "Up to 10 distinct pending uploads of this account (`POST /api/screenshots`)."
           },
           "subject": {
             "type": "string",

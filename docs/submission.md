@@ -87,11 +87,14 @@ When AI settings arrive, the lifecycle retains authority over mandatory AI,
 category exemption, and the separate requester-skip toggle. Client policy,
 status, ownership, and assignment fields are rejected as unknown fields.
 
-Screenshots/uploads are #19. Until there is a validated, owned upload path,
-`screenshot_ids` must be empty on drafts and submission. Every nonempty list
-returns `422 validation_failed` (`screenshot_ids: invalid`); it cannot smuggle
-another account's attachment or silently omit an image. No upload or provider
-integration is implemented here. Original intake has no requester PATCH/delete
+`screenshot_ids` lists up to 10 distinct pending uploads of the signed-in
+account ([screenshots.md](screenshots.md)). Draft saves check them and keep them
+from expiring; submission attaches them to the new ticket in the same
+transaction. Another account's upload, an unknown, deleted, or already
+attached ID, or a duplicate returns `422 validation_failed`
+(`screenshot_ids: invalid`; over 10 is `too_many`); it can neither smuggle
+another account's image nor silently omit one. No provider integration is
+implemented here. Original intake has no requester PATCH/delete
 API; draft endpoints remain restricted to unsubmitted drafts. Later replies and
 screenshots belong to separate append-only timeline endpoints.
 
