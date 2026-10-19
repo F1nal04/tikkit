@@ -1823,7 +1823,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             intake_snapshot: null | components["schemas"]["SubmittedIntake"];
-            /** @description Effective-priority changes, oldest first. Actors are staff-view only. */
+            /** @description Staff-only effective-priority history, oldest first; empty in requester responses. */
             priority_changes: components["schemas"]["PriorityChange"][];
             /** Format: uuid */
             priority_id: string;

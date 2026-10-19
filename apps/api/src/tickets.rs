@@ -64,7 +64,7 @@ pub struct TicketDetail {
     pub updated_at: OffsetDateTime,
     /// Status transitions, oldest first.
     pub transitions: Vec<TicketTransition>,
-    /// Effective-priority changes, oldest first. Actors are staff-view only.
+    /// Staff-only effective-priority history, oldest first; empty in requester responses.
     pub priority_changes: Vec<PriorityChange>,
     /// What the caller may do as staff; `null` in the requester view.
     #[schema(required = true)]
@@ -251,9 +251,10 @@ pub async fn ticket_detail(
     let changes: Vec<ChangeRow> = sqlx::query_as(
         "SELECT e.id, e.actor_account_id, a.display_name, e.payload, e.created_at
          FROM ticket_events e LEFT JOIN accounts a ON a.id = e.actor_account_id
-         WHERE e.ticket_id = $1 AND e.event_type = 'priority_changed' ORDER BY e.id",
+         WHERE e.ticket_id = $1 AND $2 AND e.event_type = 'priority_changed' ORDER BY e.id",
     )
     .bind(id)
+    .bind(staff)
     .fetch_all(&mut *tx)
     .await?;
     let name = |payload: &Value, key: &str| payload[key].as_str().unwrap_or_default().to_owned();
@@ -536,6 +537,7 @@ pub async fn staff_action(
     Path(id): Path<Uuid>,
     Json(action): Json<StaffAction>,
 ) -> Result<Json<ActionResult>, ApiError> {
+    authz::require_permission(&user, Permission::ReplyAsStaff)?;
     let mut tx = state.pool.begin().await?;
     // Same lock order as the lifecycle: actor, then ticket.
     let actor = lifecycle::lock_actor(&mut tx, user.account_id()).await?;
@@ -560,7 +562,11 @@ pub async fn staff_action(
         assignee_account_id: assignee,
         status: ident(status)?,
     };
-    authz::ticket_view(&actor, &scope).ok_or(ApiError::NotFound)?;
+    match authz::ticket_view(&actor, &scope) {
+        None => return Err(ApiError::NotFound),
+        Some(TicketView::Requester) => return Err(ApiError::Forbidden),
+        Some(TicketView::Staff) => {}
+    }
     let stale = |expected: OffsetDateTime| {
         if expected == updated_at {
             Ok(())

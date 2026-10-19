@@ -395,7 +395,31 @@ async fn self_handling_is_denied_by_account_id_only() {
 #[tokio::test]
 async fn priority_changes_validate_and_keep_history() {
     let Some(w) = world().await else { return };
-    let id = w.seed(w.owner, "in_progress", false).await;
+    let submitted = call(
+        &w.app,
+        "POST",
+        "/api/tickets",
+        Some(json!({"idempotency_key": Uuid::new_v4(), "intake": {
+            "category_id": w.category, "priority_id": w.normal, "subject":"Printer",
+            "description":"Jams", "answers":{}, "screenshot_ids":[]
+        }})),
+        Some(&w.cookies["owner"]),
+    )
+    .await;
+    assert_eq!(submitted.status, 201);
+    let id: Uuid = submitted.body["id"].as_str().unwrap().parse().unwrap();
+    // Dispatch belongs to #24; prepare its persisted destination without changing the intake.
+    sqlx::query("UPDATE tickets SET team_id = $2 WHERE id = $1")
+        .bind(id)
+        .bind(w.team)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.act(id, "op", json!({"action":"start_work"})).await.status,
+        200
+    );
+    let original = w.detail(id, "op").await.body["intake_snapshot"].clone();
     let bad = [
         Uuid::new_v4(),
         w.normal, // unchanged
@@ -456,12 +480,16 @@ async fn priority_changes_validate_and_keep_history() {
     assert_eq!(changes[0]["priority_name"], "Urgent");
     assert_eq!(changes[0]["actor_display_name"], "op");
     assert_eq!(changes[1]["priority_name"], "Normal");
-    // Requesters see the effective priority and its history, never who changed it.
+    // Requesters see the effective priority, never staff priority history.
     let d = w.detail(id, "owner").await.body;
     assert_eq!(d["priority_name"], "Normal");
-    assert_eq!(d["priority_changes"].as_array().unwrap().len(), 2);
-    assert!(d["priority_changes"][0]["actor_account_id"].is_null());
-    assert!(d["priority_changes"][0]["actor_display_name"].is_null());
+    assert_eq!(d["priority_changes"], json!([]));
+    assert_eq!(d["intake_snapshot"], original);
+    assert_eq!(
+        d["intake_snapshot"]["catalog"]["priority_id"],
+        w.normal.to_string()
+    );
+    assert_eq!(d["intake_snapshot"]["catalog"]["priority_name"], "Normal");
     // The requester's original choice stays frozen elsewhere; the event log is append-only.
     let rewrite = sqlx::query(
         "UPDATE ticket_events SET payload = '{}' WHERE event_type = 'priority_changed'",
@@ -579,4 +607,126 @@ async fn cancellation_reason_actor_and_time_are_visible_to_staff() {
         w.act(id, "op", json!({"action":"start_work"})).await.status,
         403
     );
+}
+
+#[tokio::test]
+async fn staff_endpoint_rejects_requester_reopen_in_every_role() {
+    let Some(w) = world().await else { return };
+    sqlx::query("UPDATE organization SET allow_reopening = true")
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    for who in ["owner", "op", "peer", "lead", "admin"] {
+        let requester: Uuid = sqlx::query_scalar("SELECT id FROM accounts WHERE username = $1")
+            .bind(who)
+            .fetch_one(&w.db.pool)
+            .await
+            .unwrap();
+        let id = w.seed(requester, "closed", false).await;
+        let r = w.act(id, who, json!({"action":"reopen"})).await;
+        assert_eq!((r.status.as_u16(), r.code()), (403, "forbidden"), "{who}");
+        assert_eq!(w.status(id).await, "closed");
+        // Ownership still permits reopening through the requester endpoint.
+        let r = call(
+            &w.app,
+            "POST",
+            &format!("/api/tickets/{id}/actions"),
+            Some(json!({"action":"reopen"})),
+            Some(&w.cookies[who]),
+        )
+        .await;
+        assert_eq!(r.status, 200, "{who}");
+    }
+    let id = w.seed(w.owner, "closed", false).await;
+    // A non-staff role is denied at the endpoint, including on an unknown ID.
+    let r = w
+        .act_at(
+            id,
+            "owner",
+            json!({"action":"reopen"}),
+            json!("2026-01-01T00:00:00Z"),
+        )
+        .await;
+    assert_eq!(r.status, 403);
+    let r = w
+        .act_at(
+            Uuid::new_v4(),
+            "owner",
+            json!({"action":"reopen"}),
+            json!("2026-01-01T00:00:00Z"),
+        )
+        .await;
+    assert_eq!(r.status, 403);
+}
+
+#[tokio::test]
+async fn timestamps_round_trip_with_microseconds_and_offsets_and_notes_do_not_stale_work() {
+    let Some(w) = world().await else { return };
+    let id = w.seed(w.owner, "in_progress", false).await;
+    sqlx::query("UPDATE tickets SET updated_at = '2026-10-01T10:00:00.123456Z' WHERE id = $1")
+        .bind(id)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
+    let at = w.detail(id, "op").await.body["updated_at"].clone();
+    assert_eq!(at, "2026-10-01T10:00:00.123456Z");
+    let note = call(
+        &w.app,
+        "POST",
+        &format!("/api/tickets/{id}/notes"),
+        Some(json!({"idempotency_key": Uuid::new_v4(), "body": "Private context"})),
+        Some(&w.cookies["op"]),
+    )
+    .await;
+    assert_eq!(note.status, 201);
+    assert_eq!(w.detail(id, "op").await.body["updated_at"], at);
+    let r = w
+        .act_at(
+            id,
+            "op",
+            json!({"action":"request_information"}),
+            json!("2026-10-01T12:00:00.123456+02:00"),
+        )
+        .await;
+    assert_eq!(r.status, 200);
+    assert_eq!(w.status(id).await, "waiting_for_requester");
+}
+
+#[tokio::test]
+async fn concurrent_staff_actions_have_one_winner_and_one_event() {
+    let Some(w) = world().await else { return };
+    let id = w.seed(w.owner, "in_progress", false).await;
+    let at = w.detail(id, "op").await.body["updated_at"].clone();
+    let (a, b) = tokio::join!(
+        w.act_at(
+            id,
+            "op",
+            json!({"action":"set_priority", "priority_id":w.urgent}),
+            at.clone()
+        ),
+        w.act_at(
+            id,
+            "peer",
+            json!({"action":"propose_resolution", "summary":"Fixed"}),
+            at
+        ),
+    );
+    let mut statuses = [a.status.as_u16(), b.status.as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 409]);
+    let d = w.detail(id, "op").await.body;
+    assert_eq!(
+        d["transitions"].as_array().unwrap().len()
+            + d["priority_changes"].as_array().unwrap().len(),
+        1
+    );
+    if a.status == 200 {
+        assert_eq!(d["priority_name"], "Urgent");
+        assert_eq!(d["status"], "in_progress");
+        assert_eq!(d["proposal_version"], 0);
+    } else {
+        assert_eq!(d["priority_name"], "Normal");
+        assert_eq!(d["status"], "awaiting_confirmation");
+        assert_eq!(d["proposal_version"], 1);
+    }
 }
