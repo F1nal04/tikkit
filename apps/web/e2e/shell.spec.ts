@@ -28,7 +28,7 @@ test('Operator and Specialist share the help-desk workspace', async ({ page }) =
   await page.getByRole('link', { name: 'General queue' }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('General queue')
   await openMenu(page)
-  await expect(page.getByRole('link', { name: 'General queue' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'General queue' })).toHaveAttribute('aria-current', 'page')
 })
 
 test('a Team Lead gets team tools, an Admin gets administration', async ({ page }) => {

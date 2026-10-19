@@ -40,3 +40,18 @@ tab, so the open form and its unsent input stay on the page.
 
 Language: `LanguageSelect` sets the `lang` cookie, saves the account preference when
 signed in, and reloads only layout data, so mounted forms keep their input.
+
+## Operator queues (`/queue`)
+
+One page serves every queue view (`general`, `team`, `mine`, and the Admin-only
+`all`), as tabs with open-work counts from `GET /api/queue/counts`. The address bar
+is the whole state: `?view=&status=&category_id=&priority_id=&unassigned=true&sort=&cursor=`.
+`src/lib/queue.ts` parses it (unknown values fall back to defaults) and builds the
+tab, filter-reset, and pagination links; the filter form is a plain `GET`, so it
+works before hydration. Pages go forward with the API's cursor ("Next page") or back
+to the first page; there is no previous-page link because the cursor is one-way.
+The load function keeps the page when the API is unreachable (`status` 0 or 5xx)
+and shows an alert with a retry button that reruns the load; any other error is a
+real answer and goes to the error page. Ages render after mount (relative to the
+clock), so server and client markup agree; until then the UTC creation time shows.
+Server rules, filters, and visibility: [queues.md](queues.md).
