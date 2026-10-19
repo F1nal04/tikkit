@@ -112,15 +112,16 @@ form { display: grid; gap: 1rem; }
 .field, form > label { display: grid; gap: 0.25rem; }
 .field label, form > label { font-weight: 600; }
 
-input, select, button {
+input, select, textarea, button {
   font: inherit;
   min-height: 2.75rem; /* comfortable touch target (WCAG 2.2 target size) */
   padding: 0.5rem 0.75rem;
   border: 1px solid #6f7d73;
   border-radius: 0.375rem;
 }
-input, select { background: var(--surface); color: var(--ink); }
-input[aria-invalid='true'], select[aria-invalid='true'] { border-color: var(--danger); border-width: 2px; }
+input, select, textarea { background: var(--surface); color: var(--ink); }
+textarea { min-height: 8rem; resize: vertical; }
+input[aria-invalid='true'], select[aria-invalid='true'], textarea[aria-invalid='true'] { border-color: var(--danger); border-width: 2px; }
 
 button { cursor: pointer; background: var(--accent); color: #fff; border-color: var(--accent); }
 button.secondary { background: var(--surface); color: var(--ink); border-color: #6f7d73; }
