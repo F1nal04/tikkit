@@ -666,6 +666,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ticket-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Active drafts of this account only (including for staff/Admin accounts). */
+        get: operations["list_drafts"];
+        put?: never;
+        /** Save incomplete input privately. Retained until the owner deletes or submits it. */
+        post: operations["create_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ticket-drafts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resume one owned draft. Other accounts, including Admins, get `404`. */
+        get: operations["get_draft"];
+        put?: never;
+        post?: never;
+        /** Delete an owned, unsubmitted draft at the last read version. */
+        delete: operations["delete_draft"];
+        options?: never;
+        head?: never;
+        /** Replace editable draft input using the last read version. Never edits a submitted ticket. */
+        patch: operations["update_draft"];
+        trace?: never;
+    };
+    "/api/ticket-drafts/{id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit exactly the owned draft version last read. On failure the draft stays
+         *     editable with the same version and input; success leaves an immutable tombstone.
+         */
+        post: operations["submit_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Own submitted tickets, newest first, including final AI-solved history.
+         *     This is a requester list for every role, never a staff queue or Admin report.
+         */
+        get: operations["list_own_tickets"];
+        put?: never;
+        /**
+         * Validate and submit new input. Owner is always the signed-in account. A
+         *     key reused with different input is `409`; identical retries replay the receipt.
+         */
+        post: operations["submit_ticket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{id}": {
         parameters: {
             query?: never;
@@ -726,6 +807,18 @@ export interface components {
             /** Format: uuid */
             team_id: string | null;
             username: string;
+        };
+        AnswerSnapshot: {
+            /**
+             * Format: uuid
+             * @description Set when a listed choice was picked; `None` for typed text.
+             */
+            choice_id?: string | null;
+            /** Format: uuid */
+            field_id: string;
+            label: string;
+            /** @description The choice label or the typed text. */
+            value: string;
         };
         /**
          * @description When the owning requester may cancel a submitted open ticket.
@@ -811,6 +904,25 @@ export interface components {
             /** @description Single-use acceptance link. Shown only now; only its hash is stored. */
             url: string;
         };
+        Draft: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            intake: components["schemas"]["TicketIntake"];
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        DraftUpdate: {
+            intake: components["schemas"]["TicketIntake"];
+            /**
+             * Format: int64
+             * @description The version last read; stale writes return `409 conflict`.
+             */
+            version: number;
+        };
         ErrorBody: {
             code: components["schemas"]["ErrorCode"];
             details?: null | components["schemas"]["ErrorDetails"];
@@ -837,6 +949,15 @@ export interface components {
         FieldKind: "text" | "select";
         Health: {
             status: string;
+        };
+        /**
+         * @description One conditional answer on the shared form: the `choice_id` of a `select`
+         *     field, or `text` (a `text` field, or a `select` field's free-text alternative).
+         */
+        IntakeAnswer: {
+            /** Format: uuid */
+            choice_id?: string | null;
+            text?: string | null;
         };
         IntakeField: {
             /** @description `select` only: a free-text answer may be given instead of a choice. */
@@ -868,6 +989,22 @@ export interface components {
             guidance?: string | null;
             label?: string | null;
             required?: boolean | null;
+        };
+        /**
+         * @description What a submitted ticket stores: names, labels, and answers as they were at
+         *     submission, so later edits and archival never rewrite history, and the AI
+         *     route (`skip_ai`) is fixed for the whole attempt.
+         */
+        IntakeSnapshot: {
+            /** @description Answers to fields visible for the category, in display order. */
+            answers: components["schemas"]["AnswerSnapshot"][];
+            /** Format: uuid */
+            category_id: string;
+            category_name: string;
+            /** Format: uuid */
+            priority_id: string;
+            priority_name: string;
+            skip_ai: boolean;
         };
         Invitation: {
             /** Format: uuid */
@@ -969,6 +1106,21 @@ export interface components {
             next_cursor: string | null;
         };
         /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Draft: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                intake: components["schemas"]["TicketIntake"];
+                /** Format: date-time */
+                updated_at: string;
+                /** Format: int64 */
+                version: number;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_Invitation: {
             items: {
                 /** Format: uuid */
@@ -1006,6 +1158,25 @@ export interface components {
             items: {
                 assignee_display_name: string | null;
                 team_name: string | null;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_TicketSummary: {
+            items: {
+                assignment: components["schemas"]["TicketAssignmentView"];
+                category_name: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                priority_name: string;
+                /** Format: int64 */
+                reference: number;
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor: string | null;
         };
@@ -1107,6 +1278,44 @@ export interface components {
         SmtpTestResult: {
             delivered: boolean;
         };
+        /**
+         * @description Immutable submission receipt. A replay returns the original submitted status;
+         *     read `/api/tickets/{id}` for the current status.
+         */
+        SubmissionReceipt: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            reference: number;
+            status: components["schemas"]["TicketStatus"];
+        };
+        SubmitDraft: {
+            /** Format: uuid */
+            idempotency_key: string;
+            requester_skip?: boolean;
+            /** Format: int64 */
+            version: number;
+        };
+        SubmitTicket: {
+            /**
+             * Format: uuid
+             * @description Generate once per logical submission; retain across network retries.
+             */
+            idempotency_key: string;
+            intake: components["schemas"]["TicketIntake"];
+            /** @description A request, never a bypass authority. The lifecycle checks current policy. */
+            requester_skip?: boolean;
+        };
+        /**
+         * @description Original intake, frozen when submission commits; current effective priority
+         *     stays on the ticket independently of the initial catalog selection here.
+         */
+        SubmittedIntake: {
+            catalog: components["schemas"]["IntakeSnapshot"];
+            description: string;
+            screenshot_ids: string[];
+            subject: string;
+        };
         Team: {
             archived: boolean;
             /** Format: date-time */
@@ -1142,6 +1351,7 @@ export interface components {
             description: string;
             /** Format: uuid */
             id: string;
+            intake_snapshot: null | components["schemas"]["SubmittedIntake"];
             /** Format: uuid */
             priority_id: string;
             priority_name: string;
@@ -1170,6 +1380,26 @@ export interface components {
              */
             view: components["schemas"]["TicketView"];
         };
+        /**
+         * @description Full replacement of editable draft input. Missing fields have empty defaults;
+         *     category/priority and required answers are checked against the catalog at submission.
+         */
+        TicketIntake: {
+            /** @description Up to 100 conditional answers, keyed by field ID. */
+            answers?: {
+                [key: string]: components["schemas"]["IntakeAnswer"];
+            };
+            /** Format: uuid */
+            category_id?: string | null;
+            /** @description Up to 20,000 characters; required on submission. */
+            description?: string;
+            /** Format: uuid */
+            priority_id?: string | null;
+            /** @description Must be empty until validated screenshot uploads (#19) are available. */
+            screenshot_ids?: string[];
+            /** @description Up to 200 characters; required on submission. */
+            subject?: string;
+        };
         TicketRequester: {
             display_name: string;
             /** Format: uuid */
@@ -1178,6 +1408,22 @@ export interface components {
         };
         /** @enum {string} */
         TicketStatus: "draft" | "ai_processing" | "awaiting_ai_decision" | "queued" | "in_progress" | "waiting_for_requester" | "awaiting_confirmation" | "closed" | "cancelled" | "ai_solved";
+        /** @description Minimal requester history. No staff-only metadata; all roles see only their own. */
+        TicketSummary: {
+            assignment: components["schemas"]["TicketAssignmentView"];
+            category_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            priority_name: string;
+            /** Format: int64 */
+            reference: number;
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         /** @description One immutable status transition (`ticket_events` row with a `to_status`). */
         TicketTransition: {
             /**
@@ -3121,6 +3367,411 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_drafts: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TicketIntake"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (input bounds, unsupported screenshots) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_draft: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (stale version or already submitted) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (stale version or already submitted) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submit_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitDraft"];
+            };
+        };
+        responses: {
+            /** @description Original receipt (idempotent replay) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description Committed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (AI skip policy) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (stale/submitted draft or key reuse) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (intake/catalog) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_own_tickets: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_TicketSummary"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submit_ticket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitTicket"];
+            };
+        };
+        responses: {
+            /** @description Original receipt (idempotent replay) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description Committed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (AI skip policy) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (key already used for different input) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (intake/catalog) */
             422: {
                 headers: {
                     [name: string]: unknown;

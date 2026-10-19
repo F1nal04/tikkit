@@ -25,7 +25,7 @@ use crate::{
 const NAME_MAX: usize = 100;
 const GUIDANCE_MAX: usize = 1000;
 const CHOICES_MAX: usize = 100;
-const ANSWER_MAX: usize = 500;
+pub const ANSWER_MAX: usize = 500;
 
 /// `archived: true` archives (keeping the first archival time), `false` restores,
 /// absent leaves it. The flag is always bound as `$2`.
@@ -874,7 +874,7 @@ pub async fn reorder_intake_fields(
 
 /// One conditional answer on the shared form: the `choice_id` of a `select`
 /// field, or `text` (a `text` field, or a `select` field's free-text alternative).
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IntakeAnswer {
     pub choice_id: Option<Uuid>,
@@ -884,7 +884,7 @@ pub struct IntakeAnswer {
 /// What a submitted ticket stores: names, labels, and answers as they were at
 /// submission, so later edits and archival never rewrite history, and the AI
 /// route (`skip_ai`) is fixed for the whole attempt.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IntakeSnapshot {
     pub category_id: Uuid,
     pub category_name: String,
@@ -895,7 +895,7 @@ pub struct IntakeSnapshot {
     pub answers: Vec<AnswerSnapshot>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AnswerSnapshot {
     pub field_id: Uuid,
     pub label: String,
@@ -981,6 +981,7 @@ pub async fn validate_intake(
             .map(|value| Some((Some(choice), value)))
             .ok_or("invalid"),
             (None, Some(_)) if kind == FieldKind::Select && !allow_other => Err("invalid"),
+            (None, Some(t)) if t.contains('\0') => Err("invalid"),
             (None, Some(t)) if t.chars().count() > ANSWER_MAX => Err("too_long"),
             (None, Some(t)) => Ok(Some((None, t.to_owned()))),
             (None, None) if required => Err("required"),

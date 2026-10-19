@@ -166,3 +166,29 @@ unknown/archived category, priority, and choice IDs and unknown field IDs,
 enforces required visible fields, drops answers to hidden or archived fields,
 and returns an `IntakeSnapshot` (names, labels, `skip_ai`, answers) for the
 ticket to store, so later catalog edits never rewrite submitted tickets.
+
+## Drafts and immutable submission
+
+Migration `0009_ticket_submission.sql` adds:
+
+- `ticket_drafts`: private incomplete JSON input, owner account ID, monotonic
+  version, timestamps, and a unique optional `submitted_ticket_id`. Input is
+  present exactly while unsubmitted; successful submission replaces it with a
+  tombstone. An owner index supports bounded pagination. Drafts are retained
+  until explicit owner deletion or submission, with no automatic expiry.
+- `tickets.intake_snapshot`: immutable original subject/description, catalog
+  `IntakeSnapshot` (including original priority and visible answers), and
+  screenshot references (empty until #19). Nullable for pre-existing records;
+  the new submission service always sets it. `tickets_intake_snapshot_immutable`
+  rejects updates after submission (`23001`). Effective `priority_id` remains
+  separate so staff priority changes cannot rewrite the original selection.
+- `ticket_submission_keys`: append-only receipts keyed by
+  `(requester_account_id, idempotency_key)`, SHA-256 request fingerprint, unique
+  ticket ID, and original submitted status. Retained for the ticket lifetime;
+  UPDATE/DELETE/TRUNCATE are rejected. Atomic with the ticket and transition.
+- Audit events `draft_created`, `draft_updated`, `draft_deleted` contain only
+  draft ID/version, attributable to the owning account. Submission uses the
+  existing immutable `submit` transition event, not a second routing event.
+
+See [submission.md](submission.md) for endpoints, concurrency, retention and
+backup deletion limits. No new configuration variables are needed.

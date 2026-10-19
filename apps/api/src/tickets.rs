@@ -10,10 +10,13 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    api::{ApiError, Json, Path, TicketAssignmentView, TicketStatus},
+    api::{
+        ApiError, Cursor, Json, Page, Pagination, Path, Query, TicketAssignmentView, TicketStatus,
+    },
     auth::{CurrentUser, ident},
     authz::{self, Actor, TicketScope, TicketView},
     lifecycle::{ClosureReason, ResolutionSource},
+    submission::SubmittedIntake,
 };
 
 /// One ticket as the caller may see it.
@@ -33,6 +36,9 @@ pub struct TicketDetail {
     pub priority_id: Uuid,
     pub priority_name: String,
     pub assignment: TicketAssignmentView,
+    /// Frozen original intake; null only for legacy records predating submission.
+    #[schema(required = true)]
+    pub intake_snapshot: Option<SubmittedIntake>,
     /// Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets.
     #[schema(required = true)]
     pub resolution_source: Option<ResolutionSource>,
@@ -96,6 +102,7 @@ struct DetailRow {
     description: String,
     category_id: Uuid,
     category_name: String,
+    intake_snapshot: Option<sqlx::types::Json<SubmittedIntake>>,
     priority_id: Uuid,
     priority_name: String,
     requester_account_id: Uuid,
@@ -146,7 +153,8 @@ pub async fn ticket_detail(
     let actor = Actor::load(&mut *tx, &user).await?;
     let row: DetailRow = sqlx::query_as(
         "SELECT t.id, t.reference, t.status::text AS status, t.subject, t.description,
-                t.category_id, c.name AS category_name, t.priority_id, p.name AS priority_name,
+                t.category_id, COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
+                t.intake_snapshot, t.priority_id, p.name AS priority_name,
                 t.requester_account_id, r.username AS requester_username,
                 r.display_name AS requester_display_name, t.team_id, tm.name AS team_name,
                 t.assignee_account_id, a.display_name AS assignee_display_name,
@@ -204,6 +212,7 @@ pub async fn ticket_detail(
         description: row.description,
         category_id: row.category_id,
         category_name: row.category_name,
+        intake_snapshot: row.intake_snapshot.map(|s| s.0),
         priority_id: row.priority_id,
         priority_name: row.priority_name,
         assignment: TicketAssignmentView {
@@ -223,4 +232,86 @@ pub async fn ticket_detail(
         updated_at: row.updated_at,
         transitions,
     }))
+}
+
+/// Minimal requester history. No staff-only metadata; all roles see only their own.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TicketSummary {
+    pub id: Uuid,
+    pub reference: i64,
+    pub status: TicketStatus,
+    pub subject: String,
+    pub category_name: String,
+    pub priority_name: String,
+    pub assignment: TicketAssignmentView,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(sqlx::FromRow)]
+struct SummaryRow {
+    id: Uuid,
+    reference: i64,
+    status: String,
+    subject: String,
+    category_name: String,
+    priority_name: String,
+    team_name: Option<String>,
+    assignee_display_name: Option<String>,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+/// Own submitted tickets, newest first, including final AI-solved history.
+/// This is a requester list for every role, never a staff queue or Admin report.
+#[utoipa::path(get, path = "/api/tickets", tag = "tickets", params(Pagination),
+    responses((status = 200, body = Page<TicketSummary>),
+        (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope)))]
+pub async fn list_own_tickets(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(page): Query<Pagination>,
+) -> Result<Json<Page<TicketSummary>>, ApiError> {
+    let cursor = page.cursor()?;
+    let rows: Vec<SummaryRow> = sqlx::query_as(
+        "SELECT t.id, t.reference, t.status::text AS status, t.subject,
+                COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
+                p.name AS priority_name, tm.name AS team_name, a.display_name AS assignee_display_name,
+                t.created_at, t.updated_at
+         FROM tickets t JOIN categories c ON c.id = t.category_id
+         JOIN priorities p ON p.id = t.priority_id
+         LEFT JOIN teams tm ON tm.id = t.team_id
+         LEFT JOIN accounts a ON a.id = t.assignee_account_id
+         WHERE t.requester_account_id = $1 AND t.status <> 'draft'
+           AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2, $3))
+         ORDER BY t.created_at DESC, t.id DESC LIMIT $4")
+        .bind(user.account_id()).bind(cursor.map(|c| c.created_at))
+        .bind(cursor.map(|c| c.id)).bind(page.limit() + 1).fetch_all(&state.pool).await?;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(TicketSummary {
+                id: row.id,
+                reference: row.reference,
+                status: ident(row.status)?,
+                subject: row.subject,
+                category_name: row.category_name,
+                priority_name: row.priority_name,
+                assignment: TicketAssignmentView {
+                    team_name: row.team_name,
+                    assignee_display_name: row.assignee_display_name,
+                },
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    Ok(Json(Page::from_rows(items, page.limit(), |t| Cursor {
+        created_at: t.created_at,
+        id: t.id,
+    })))
 }
