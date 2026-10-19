@@ -108,13 +108,28 @@ After setup, accounts are created only from Admin invitations.
 
 ## Email delivery
 
-SMTP is optional (`SMTP_URL`, `SMTP_FROM`, see [configuration.md](configuration.md)).
-Messages are plain text in the recipient's language and sent in the background,
-so the response time does not depend on delivery. Without SMTP, or when sending
-fails, nothing is retried: Admins copy invitation links from the response, and a
-recovery request only logs `no email was sent` at info level. Logs never contain
-tokens, links, addresses, or SMTP credentials. (ponytail: no outbox or retries
-yet; the notification outbox and Admin-managed SMTP settings replace this.)
+Outbound SMTP is optional and configured by an Admin (`GET`/`PUT`/`DELETE
+/api/settings/smtp`, test with `POST /api/settings/smtp/test`). See
+[configuration.md](configuration.md) and [schema.md](schema.md). Only an Admin
+(`manage_settings`) can read or change it. The saved username and password are
+encrypted with `ENCRYPTION_KEY` and are never returned; omit them on `PUT` to
+keep them. Changing the host requires entering both again, so stored credentials
+are never sent to a new server. A test message can be sent only to the
+acting Admin's own email or the configured sender address, through the saved
+host, and only with required STARTTLS or implicit TLS. Certificate verification
+cannot be turned off. The test makes one attempt, so it answers within the
+15-second SMTP timeout.
+
+Invitation and recovery messages are plain text in the recipient's language and
+sent in the background, so the response time does not depend on delivery. Links
+use `PUBLIC_ORIGIN` and tell the reader to create and answer tickets in the
+portal. Without an enabled connection, Admins copy invitation links from the
+response, and a recovery request only logs `no email was sent` at info level.
+Logs, errors, and audit events never contain tokens, links, addresses, or SMTP
+credentials. A failed background send is recorded on the connection as a stable
+error code (`last_delivery_error`) and does not undo the invitation or recovery
+token. The same send path accepts an idempotency key so the notification outbox
+can retry without a second copy; this API does not implement that outbox.
 
 The `/invite/...` and `/reset-password/...` page URLs do contain the token; keep
 reverse-proxy access logs off or path-redacted. Every web page is served with

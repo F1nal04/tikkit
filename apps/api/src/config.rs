@@ -4,8 +4,6 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use sqlx::postgres::PgConnectOptions;
 use url::Url;
 
-use crate::mail::Mailer;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Environment {
     Development,
@@ -27,8 +25,6 @@ pub struct Config {
     pub session_rotate: Duration,
     /// Take the client IP from `X-Forwarded-For` (only behind a trusted reverse proxy).
     pub trust_proxy_headers: bool,
-    /// Outbound email from `SMTP_URL`/`SMTP_FROM`; `Mailer::None` when unset.
-    pub mailer: Mailer,
 }
 
 /// Every configuration problem found, one actionable line each. Never contains values.
@@ -57,7 +53,6 @@ impl fmt::Debug for Config {
             .field("session_ttl", &self.session_ttl)
             .field("session_rotate", &self.session_rotate)
             .field("trust_proxy_headers", &self.trust_proxy_headers)
-            .field("mailer", &self.mailer)
             .finish()
     }
 }
@@ -166,27 +161,6 @@ impl Config {
                 false
             }
         };
-        let mailer = match (var("SMTP_URL"), var("SMTP_FROM")) {
-            (None, None) => Mailer::None,
-            (Some(url), Some(from)) => {
-                let tls = Url::parse(&url).is_ok_and(|u| {
-                    u.scheme() == "smtps"
-                        || u.query_pairs().any(|(k, v)| k == "tls" && v == "required")
-                });
-                if environment == Environment::Production && !tls {
-                    fail("SMTP_URL must use smtps:// or ?tls=required when ENVIRONMENT=production");
-                }
-                Mailer::smtp(&url, &from).unwrap_or_else(|e| {
-                    fail(e);
-                    Mailer::None
-                })
-            }
-            _ => {
-                fail("SMTP_URL and SMTP_FROM must be set together (or both left unset)");
-                Mailer::None
-            }
-        };
-
         match (public_origin, session_secret, encryption_key) {
             (Some(public_origin), Some(session_secret), Some(encryption_key))
                 if errors.is_empty() =>
@@ -202,7 +176,6 @@ impl Config {
                     session_ttl,
                     session_rotate,
                     trust_proxy_headers,
-                    mailer,
                 })
             }
             _ => Err(ConfigError(errors)),
@@ -257,7 +230,6 @@ mod tests {
         assert_eq!(c.session_ttl, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(c.session_rotate, Duration::from_secs(24 * 3600));
         assert!(!c.trust_proxy_headers);
-        assert!(!c.mailer.is_configured());
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
     }
@@ -275,10 +247,9 @@ mod tests {
             ("SESSION_TTL_HOURS", "0"),
             ("SESSION_ROTATE_HOURS", "soon"),
             ("TRUST_PROXY_HEADERS", "yes"),
-            ("SMTP_URL", "smtp://mailer:hunter2@mail.example.com"),
         ])
         .unwrap_err();
-        assert_eq!(err.0.len(), 11, "{err}");
+        assert_eq!(err.0.len(), 10, "{err}");
         let text = err.to_string();
         assert!(!text.contains("hunter2") && !text.contains("c2hvcnQ="));
     }
@@ -304,25 +275,5 @@ mod tests {
         .unwrap_err();
         assert!(err.0[0].contains("https"));
         assert!(config(&[("ENVIRONMENT", "production")]).is_ok());
-    }
-
-    #[test]
-    fn smtp_is_optional_and_needs_tls_in_production() {
-        let url = (
-            "SMTP_URL",
-            "smtp://u:hunter2@mail.example.com:587?tls=required",
-        );
-        let from = ("SMTP_FROM", "Tikkit <help@example.com>");
-        assert!(config(&[url, from]).unwrap().mailer.is_configured());
-        let debug = format!("{:?}", config(&[url, from]).unwrap());
-        assert!(!debug.contains("hunter2"), "{debug}");
-        let prod = ("ENVIRONMENT", "production");
-        assert!(config(&[prod, url, from]).is_ok());
-        let plain = ("SMTP_URL", "smtp://u:hunter2@mail.example.com:25");
-        let err = config(&[prod, plain, from]).unwrap_err();
-        assert!(err.0[0].contains("tls=required"));
-        assert!(!err.to_string().contains("hunter2"));
-        let bad_from = ("SMTP_FROM", "not an address");
-        assert_eq!(config(&[url, bad_from]).unwrap_err().0.len(), 1);
     }
 }

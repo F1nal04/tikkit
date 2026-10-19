@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    fmt,
     net::SocketAddr,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
@@ -39,7 +40,6 @@ use crate::{
     AppState,
     api::{ApiError, FieldErrors, Json, Language, Role},
     config::{Config, Environment},
-    mail::Mailer,
 };
 
 pub const COOKIE_NAME: &str = "tikkit_session";
@@ -54,7 +54,7 @@ const LIMIT_MAX_KEYS: usize = 10_000;
 /// How long a rotated-away token keeps working, for requests already in flight.
 const ROTATION_GRACE: &str = "interval '1 minute'";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Settings {
     pub session_ttl: Duration,
     pub session_rotate: Duration,
@@ -62,7 +62,28 @@ pub struct Settings {
     pub trust_proxy_headers: bool,
     /// Origin for links in invitations and emails, without trailing slash.
     pub public_origin: String,
-    pub mailer: Mailer,
+    /// Decrypts the stored SMTP password. Never logged.
+    pub encryption_key: [u8; 32],
+    /// Test-only PEM trust anchor for the SMTP client. Production leaves this
+    /// empty so verification uses the default WebPKI roots. Never disables checks.
+    pub smtp_trust_root_pem: Option<Vec<u8>>,
+}
+
+impl fmt::Debug for Settings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Settings")
+            .field("session_ttl", &self.session_ttl)
+            .field("session_rotate", &self.session_rotate)
+            .field("secure_cookie", &self.secure_cookie)
+            .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("public_origin", &self.public_origin)
+            .field("encryption_key", &"<redacted>")
+            .field(
+                "smtp_trust_root_pem",
+                &self.smtp_trust_root_pem.as_ref().map(|_| "<set>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for Settings {
@@ -73,7 +94,8 @@ impl Default for Settings {
             secure_cookie: false,
             trust_proxy_headers: false,
             public_origin: "http://localhost:3000".into(),
-            mailer: Mailer::None,
+            encryption_key: [0; 32],
+            smtp_trust_root_pem: None,
         }
     }
 }
@@ -86,7 +108,8 @@ impl From<&Config> for Settings {
             secure_cookie: c.environment == Environment::Production,
             trust_proxy_headers: c.trust_proxy_headers,
             public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
-            mailer: c.mailer.clone(),
+            encryption_key: c.encryption_key,
+            smtp_trust_root_pem: None,
         }
     }
 }

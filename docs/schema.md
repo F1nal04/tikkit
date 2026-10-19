@@ -30,7 +30,8 @@ language; translations map them to display text.
   `login_failed`, `logout`, `password_changed`, `session_revoked`,
   `invitation_created`, `invitation_revoked`, `invitation_accepted`,
   `recovery_requested`, `recovery_completed`, `profile_updated`,
-  `account_deactivated`, `account_reactivated`
+  `account_deactivated`, `account_reactivated`, `smtp_configured`,
+  `smtp_updated`, `smtp_removed`, `smtp_tested`
 - `invitations.role`: an `account_role`; `invitations.language`: `en`, `de`
 
 ## Invariants enforced by the database
@@ -77,6 +78,14 @@ Rust validates and authorizes first; these constraints are the backstop.
   The same holds for `invitations.token_hash` and `password_resets.token_hash`.
 - An invitation is accepted (`accepted_at` and the created `account_id`, unique,
   set together) or revoked, never both.
+- `smtp_connection` has at most one row (`id boolean PRIMARY KEY CHECK (id)`).
+  `security` is `starttls` or `implicit_tls`. `username_ciphertext` and
+  `password_ciphertext` are AES-256-GCM (12-byte nonce, then ciphertext and
+  tag), never the plaintext credentials.
+  `last_delivery_error` and `last_test_error` store a stable error code only.
+- `smtp_deliveries.idempotency_key` records a successful send. A later delivery
+  with the same key does not send again. The row holds no message body, address,
+  or credential. The table is append-only.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change.

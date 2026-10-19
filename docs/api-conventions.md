@@ -57,6 +57,12 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Stale or concurrent update lost | 409 | `conflict` |
 | Demoting or deactivating the last active Admin | 409 | `last_active_admin` |
 | Demoting or deactivating an active team's lead | 409 | `active_team_lead` |
+| SMTP is not configured | 409 | `smtp_not_configured` |
+| Mail server rejected the username or password | 502 | `smtp_auth_failed` |
+| Verified TLS to the mail server failed | 502 | `smtp_tls_failed` |
+| Mail server DNS, connect, or timeout | 502 | `smtp_network_failed` |
+| Mail server refused the message | 502 | `smtp_delivery_failed` |
+| Stored mail password cannot be decrypted | 502 | `smtp_credential_unreadable` |
 | Anything unexpected (logged with the request ID) | 500 | `internal` |
 
 **Denied access does not reveal existence.** When the caller may not see a

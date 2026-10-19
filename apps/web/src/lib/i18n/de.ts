@@ -125,6 +125,7 @@ export default {
     accounts: 'Konten',
     teams: 'Teams',
     settings: 'Organisationseinstellungen',
+    email: 'Ausgehende E-Mail',
   },
   myTicketsTitle: 'Meine Tickets',
   myTicketsEmpty: 'Sie haben noch keine Tickets eingereicht.',
@@ -162,6 +163,35 @@ export default {
     notFound: { title: 'Seite nicht gefunden', text: 'Diese Seite existiert nicht oder ist für Sie nicht verfügbar.' },
     generic: { title: 'Etwas ist schiefgelaufen', text: 'Bitte versuchen Sie es gleich noch einmal.' },
   },
+  emailSettingsTitle: 'Ausgehende E-Mail',
+  emailSettingsIntro:
+    'Verbinden Sie einen SMTP-Dienst für Einladungen, Passwortwiederherstellung und Benachrichtigungen. Tickets werden weiterhin im Portal erstellt und beantwortet, nicht per E-Mail.',
+  smtpHost: 'Host',
+  smtpPort: 'Port',
+  smtpSecurity: 'Transportsicherheit',
+  smtpStarttls: 'STARTTLS (meist Port 587)',
+  smtpImplicitTls: 'Implizites TLS (meist Port 465)',
+  smtpSecurityHint:
+    'Das Zertifikat des Servers wird immer geprüft. Die Verbindung wird nie auf Klartext herabgestuft.',
+  smtpSenderName: 'Absendername',
+  smtpSenderAddress: 'Absenderadresse',
+  smtpUsername: 'Benutzername',
+  smtpPassword: 'Passwort',
+  smtpCredentialsKeep:
+    'Benutzername und Passwort sind gespeichert. Lassen Sie beide Felder leer, um sie zu behalten. Geben Sie beide erneut ein, wenn Sie den Host ändern.',
+  smtpEnabled: 'Aktiviert',
+  smtpEnabledHint: 'Wenn dies aus ist, funktioniert das Portal weiter. Kopieren Sie Einladungslinks von Hand.',
+  smtpRemove: 'Verbindung entfernen',
+  smtpRemoved: 'Die SMTP-Verbindung wurde entfernt.',
+  smtpTest: 'Test-E-Mail senden',
+  smtpTestTo: 'Test senden an',
+  smtpTestHint:
+    'Der Test nutzt die gespeicherte Verbindung und darf nur an die E-Mail Ihres Kontos oder die Absenderadresse gehen.',
+  smtpTestSent: 'Der Mailserver hat die Testnachricht angenommen.',
+  smtpNotConfigured: 'Es ist noch keine Verbindung für ausgehende E-Mail gespeichert.',
+  smtpLastError: 'Letztes Zustellproblem',
+  smtpLastTestOk: 'Der letzte Test war erfolgreich.',
+  smtpLastTestFailed: 'Der letzte Test ist fehlgeschlagen.',
   errors: {
     unauthorized: 'Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.',
     invitation_invalid:
@@ -178,6 +208,12 @@ export default {
     validation_failed: 'Bitte korrigieren Sie die markierten Felder.',
     unavailable: 'Der Dienst ist nicht erreichbar. Bitte versuchen Sie es später erneut.',
     generic: 'Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.',
+    smtp_not_configured: 'Ausgehende E-Mail ist nicht eingerichtet.',
+    smtp_auth_failed: 'Der Mailserver hat Benutzername oder Passwort abgelehnt.',
+    smtp_tls_failed: 'Eine geprüfte TLS-Verbindung zum Mailserver war nicht möglich.',
+    smtp_network_failed: 'Der Mailserver war nicht erreichbar.',
+    smtp_delivery_failed: 'Der Mailserver hat die Nachricht abgelehnt.',
+    smtp_credential_unreadable: 'Das gespeicherte Mail-Passwort konnte nicht gelesen werden. Geben Sie es erneut ein.',
   },
   fieldErrors: {
     required: 'Dieses Feld ist erforderlich.',
@@ -187,5 +223,6 @@ export default {
     too_common: 'Dieses Passwort ist zu leicht zu erraten.',
     taken: 'Dieser Benutzername ist bereits vergeben.',
     incorrect: 'Dieses Passwort ist falsch.',
+    not_allowed: 'Verwenden Sie die E-Mail Ihres Kontos oder die Absenderadresse.',
   },
 } satisfies typeof en
