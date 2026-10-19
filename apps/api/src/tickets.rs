@@ -2,10 +2,10 @@
 //! is [`authz::ticket_view`]. See docs/lifecycle.md.
 
 use axum::extract::State;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     },
     auth::{CurrentUser, ident},
     authz::{self, Actor, TicketScope, TicketView},
-    lifecycle::{ClosureReason, ResolutionSource},
+    lifecycle::{self, By, ClosureReason, ResolutionSource, Transition},
     submission::SubmittedIntake,
 };
 
@@ -31,6 +31,9 @@ pub struct TicketDetail {
     pub view: TicketView,
     pub subject: String,
     pub description: String,
+    /// The single persisted AI suggestion, plain text; null for tickets without one.
+    #[schema(required = true)]
+    pub ai_solution: Option<String>,
     pub category_id: Uuid,
     pub category_name: String,
     pub priority_id: Uuid,
@@ -100,6 +103,7 @@ struct DetailRow {
     status: String,
     subject: String,
     description: String,
+    ai_solution: Option<String>,
     category_id: Uuid,
     category_name: String,
     intake_snapshot: Option<sqlx::types::Json<SubmittedIntake>>,
@@ -152,7 +156,7 @@ pub async fn ticket_detail(
         .await?;
     let actor = Actor::load(&mut *tx, &user).await?;
     let row: DetailRow = sqlx::query_as(
-        "SELECT t.id, t.reference, t.status::text AS status, t.subject, t.description,
+        "SELECT t.id, t.reference, t.status::text AS status, t.subject, t.description, t.ai_solution,
                 t.category_id, COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
                 t.intake_snapshot, t.priority_id, p.name AS priority_name,
                 t.requester_account_id, r.username AS requester_username,
@@ -210,6 +214,7 @@ pub async fn ticket_detail(
         view,
         subject: row.subject,
         description: row.description,
+        ai_solution: row.ai_solution,
         category_id: row.category_id,
         category_name: row.category_name,
         intake_snapshot: row.intake_snapshot.map(|s| s.0),
@@ -268,15 +273,33 @@ struct SummaryRow {
 
 /// Own submitted tickets, newest first, including final AI-solved history.
 /// This is a requester list for every role, never a staff queue or Admin report.
-#[utoipa::path(get, path = "/api/tickets", tag = "tickets", params(Pagination),
+#[utoipa::path(get, path = "/api/tickets", tag = "tickets", params(OwnTicketsQuery),
     responses((status = 200, body = Page<TicketSummary>),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope)))]
 pub async fn list_own_tickets(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(page): Query<Pagination>,
+    Query(filters): Query<OwnTicketsQuery>,
 ) -> Result<Json<Page<TicketSummary>>, ApiError> {
+    let page = Pagination {
+        limit: filters.limit,
+        cursor: filters.cursor,
+    };
     let cursor = page.cursor()?;
+    let parse = |value: Option<String>| {
+        value
+            .map(|s| {
+                OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339)
+                    .map_err(|_| ApiError::InvalidQuery)
+            })
+            .transpose()
+    };
+    let from = parse(filters.created_from)?;
+    let before = parse(filters.created_before)?;
+    if from.zip(before).is_some_and(|(a, b)| a >= b) {
+        return Err(ApiError::InvalidQuery);
+    }
+    let status = filters.status.map(crate::auth::ident_str);
     let rows: Vec<SummaryRow> = sqlx::query_as(
         "SELECT t.id, t.reference, t.status::text AS status, t.subject,
                 COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
@@ -288,9 +311,13 @@ pub async fn list_own_tickets(
          LEFT JOIN accounts a ON a.id = t.assignee_account_id
          WHERE t.requester_account_id = $1 AND t.status <> 'draft'
            AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2, $3))
+           AND ($5::text IS NULL OR t.status::text = $5)
+           AND ($6::timestamptz IS NULL OR t.created_at >= $6)
+           AND ($7::timestamptz IS NULL OR t.created_at < $7)
          ORDER BY t.created_at DESC, t.id DESC LIMIT $4")
         .bind(user.account_id()).bind(cursor.map(|c| c.created_at))
-        .bind(cursor.map(|c| c.id)).bind(page.limit() + 1).fetch_all(&state.pool).await?;
+        .bind(cursor.map(|c| c.id)).bind(page.limit() + 1)
+        .bind(status).bind(from).bind(before).fetch_all(&state.pool).await?;
     let items = rows
         .into_iter()
         .map(|row| {
@@ -314,4 +341,66 @@ pub async fn list_own_tickets(
         created_at: t.created_at,
         id: t.id,
     })))
+}
+
+/// Own history filters, applied before the page limit. Dates are UTC RFC 3339 instants.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct OwnTicketsQuery {
+    pub status: Option<TicketStatus>,
+    /// Inclusive creation timestamp.
+    pub created_from: Option<String>,
+    /// Exclusive creation timestamp.
+    pub created_before: Option<String>,
+    /// Page size, 1–100 (default 25).
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
+}
+
+/// Explicit decisions only: replies and views never implicitly accept a proposal.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RequesterAction {
+    AcceptResolution { proposal_version: i32 },
+    RejectResolution { proposal_version: i32 },
+    Cancel { reason: String },
+    Reopen,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ActionResult {
+    pub status: TicketStatus,
+}
+
+/// Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
+/// return 409; policy is read again by the lifecycle inside the transaction.
+#[utoipa::path(post, path = "/api/tickets/{id}/actions", tag = "tickets",
+    params(("id" = Uuid, Path)), request_body = RequesterAction,
+    responses((status = 200, body = ActionResult),
+        (status = 401, body = crate::api::ErrorEnvelope),
+        (status = 403, description = "Current policy or actor denies the action", body = crate::api::ErrorEnvelope),
+        (status = 404, body = crate::api::ErrorEnvelope),
+        (status = 409, description = "Stale state or proposal version", body = crate::api::ErrorEnvelope),
+        (status = 422, body = crate::api::ErrorEnvelope)))]
+pub async fn requester_action(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(action): Json<RequesterAction>,
+) -> Result<Json<ActionResult>, ApiError> {
+    let transition = match action {
+        RequesterAction::AcceptResolution { proposal_version } => {
+            Transition::AcceptResolution { proposal_version }
+        }
+        RequesterAction::RejectResolution { proposal_version } => {
+            Transition::RejectResolution { proposal_version }
+        }
+        RequesterAction::Cancel { reason } => Transition::Cancel { reason },
+        RequesterAction::Reopen => Transition::Reopen,
+    };
+    let mut tx = state.pool.begin().await?;
+    let status =
+        lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await?;
+    tx.commit().await?;
+    Ok(Json(ActionResult { status }))
 }

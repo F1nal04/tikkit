@@ -133,3 +133,10 @@ subject, category name, effective priority name, timestamps, and the public
 `GET /api/tickets/{id}` retains the lifecycle visibility policy and now includes
 the frozen intake. Full requester UI, filtering, replies and actions are #20;
 staff queues are #22.
+
+Own history now also accepts `status`, `created_from` (inclusive RFC 3339
+instant), and `created_before` (exclusive RFC 3339 instant). Invalid dates,
+unknown statuses, and reversed/equal bounds return `400 invalid_query`.
+Filters apply in SQL before the bounded cursor page. The requester UI exposes
+inclusive UTC calendar-date bounds (`from`/`until`) and converts the end date to
+the next midnight. See [frontend.md](frontend.md#requester-history-and-detail).
