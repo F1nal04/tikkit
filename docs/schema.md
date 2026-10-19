@@ -241,3 +241,19 @@ record the actor and `{message_id}` only, without content or screenshot IDs;
 they have no status columns. Requester transition history never includes
 these events. See [conversations.md](conversations.md) for endpoints,
 authorization, rendering, ordering, retries, and notification integration.
+
+## Search and saved views
+
+Migration `0017_search_saved_views.sql` enables `pg_trgm` (a trusted extension:
+the database owner can create it; the official `postgres` image ships it) and adds
+GIN trigram indexes for staff search ([queues.md](queues.md#search)):
+`tickets_search_trgm_idx` over `subject || ' ' || description || ' ' ||
+coalesce(intake_snapshot #>> '{catalog,category_name}', '')` (all frozen after
+submission), `accounts_search_trgm_idx` over `username || ' ' || display_name`, and
+`ticket_messages_body_trgm_idx` over `body`. Reference lookups use the existing
+unique `tickets_reference_key`.
+
+`saved_views`: owner account (`ON DELETE CASCADE`), `name` (1-80 characters,
+trimmed, unique per owner), `filters` (a JSON object of `GET /api/queue`
+parameters, see [queues.md](queues.md#saved-views)), `created_at`. Views store
+filters, never ticket IDs or results.

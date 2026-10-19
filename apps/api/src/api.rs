@@ -129,6 +129,11 @@ pub struct ErrorDetails {
 }
 
 impl ApiError {
+    /// The stable code this error renders with, e.g. per item of a bulk action.
+    pub fn code(&self) -> ErrorCode {
+        self.parts().1
+    }
+
     fn parts(&self) -> (StatusCode, ErrorCode, &'static str) {
         use ApiError::*;
         match self {

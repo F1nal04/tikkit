@@ -1821,6 +1821,15 @@
             }
           },
           {
+            "name": "q",
+            "in": "query",
+            "description": "Search text, up to 200 characters: a ticket reference (`123` or `#123`), or\nat least 3 characters matched anywhere in the subject, description, category,\nrequester username or display name, or message text the caller may read.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Page size, 1-100 (default 25).",
@@ -1883,6 +1892,56 @@
           },
           "404": {
             "description": "`not_found` (another team's `team_id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`: `q` is `too_short` or `too_long`, or the cursor is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/bulk-options": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "operationId": "bulk_options",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1959,6 +2018,154 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/saved-views": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "The caller's saved views, by name (at most 50, not paged).",
+        "operationId": "list_views",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Saves the caller's current filters under a name. Every filter must apply now\n(`422`, `filters.<name>: invalid`).",
+        "operationId": "create_view",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSavedView"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`name` is `required`, `too_long`, or `taken`; `saved_views: too_many`; or a filter is `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/saved-views/{id}": {
+      "delete": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Deletes one of the caller's views; anyone else's is `404`.",
+        "operationId": "delete_view",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -3327,6 +3534,67 @@
         }
       }
     },
+    "/api/tickets/bulk": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Applies one change to up to 50 tickets, each independently authorized, locked,\nand checked for staleness. A retry never applies twice: an applied item moved\nits `updated_at`, so repeating it reports `conflict` and writes nothing.",
+        "operationId": "bulk_change",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`tickets` is empty (`required`), over 50 (`too_many`), or repeats a ticket (`duplicate`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tickets/{id}": {
       "get": {
         "tags": [
@@ -4358,6 +4626,266 @@
           "staff"
         ]
       },
+      "BulkAssignee": {
+        "type": "object",
+        "description": "An eligible assignee for bulk assignment.",
+        "required": [
+          "id",
+          "display_name",
+          "team_id",
+          "team_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "team_name": {
+            "type": "string"
+          }
+        }
+      },
+      "BulkChange": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "team_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "dispatch"
+                ]
+              },
+              "team_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "return_to_general"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "claim"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "assignee_account_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "assign"
+                ]
+              },
+              "assignee_account_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "unassign"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "start_work"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "request_information"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "priority_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "set_priority"
+                ]
+              },
+              "priority_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "The change applied to every listed ticket; the same rules as the single-ticket\n`assignment` and `staff-actions` endpoints."
+      },
+      "BulkItemResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorCode",
+                "description": "`null` when applied. Otherwise what the single-ticket endpoint would answer:\n`not_found` (not visible), `forbidden` (visible, not allowed), `conflict`\n(changed since listed, or nothing to change), `validation_failed` (not an\neligible target for this ticket), or `internal`."
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "BulkOptions": {
+        "type": "object",
+        "description": "Targets the bulk bar offers. Affordances only: each item is rechecked.",
+        "required": [
+          "teams",
+          "assignees"
+        ],
+        "properties": {
+          "assignees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkAssignee"
+            },
+            "description": "Active staff members a caller may assign: a Team Lead's own team, every\nactive team for an Admin, nobody otherwise."
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "description": "Active teams (dispatch targets)."
+          }
+        }
+      },
+      "BulkRequest": {
+        "type": "object",
+        "required": [
+          "change",
+          "tickets"
+        ],
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/BulkChange"
+          },
+          "tickets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkTicket"
+            },
+            "description": "1-50 distinct tickets."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkResponse": {
+        "type": "object",
+        "description": "One result per requested ticket, in request order.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkItemResult"
+            }
+          }
+        }
+      },
+      "BulkTicket": {
+        "type": "object",
+        "description": "A ticket and the `updated_at` the client listed it with (`QueueTicket.updated_at`).",
+        "required": [
+          "id",
+          "expected_updated_at"
+        ],
+        "properties": {
+          "expected_updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
       "CancellationPolicy": {
         "type": "string",
         "description": "When the owning requester may cancel a submitted open ticket.",
@@ -4576,6 +5104,23 @@
                 "description": "Role of the account created from this invitation. Default `user`."
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateSavedView": {
+        "type": "object",
+        "required": [
+          "name",
+          "filters"
+        ],
+        "properties": {
+          "filters": {
+            "$ref": "#/components/schemas/QueueFilters"
+          },
+          "name": {
+            "type": "string",
+            "description": "1-80 characters after trimming, unique per account."
           }
         },
         "additionalProperties": false
@@ -5926,6 +6471,76 @@
           }
         }
       },
+      "QueueFilters": {
+        "type": "object",
+        "description": "The `GET /api/queue` filters a view applies (no cursor or page size).",
+        "properties": {
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "priority_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueueSort"
+              }
+            ]
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus"
+              }
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "unassigned": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "view": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueueView"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "QueueSort": {
         "type": "string",
         "description": "Fixed orders; ties break on `(created_at, id)`.",
@@ -6142,6 +6757,39 @@
           "team_lead",
           "admin"
         ]
+      },
+      "SavedView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "filters",
+          "stale",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/QueueFilters"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stale": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaleFilter"
+            },
+            "description": "Filters to drop when applying: the rest still work as saved."
+          }
+        }
       },
       "Screenshot": {
         "type": "object",
@@ -6583,6 +7231,18 @@
           }
         ],
         "description": "Staff work on a ticket. Every action carries the `updated_at` the client last\nloaded; a newer change (reply, status, priority) is `409 conflict`."
+      },
+      "StaleFilter": {
+        "type": "string",
+        "description": "A filter that no longer applies to the caller.",
+        "enum": [
+          "view",
+          "team_id",
+          "status",
+          "category_id",
+          "priority_id",
+          "q"
+        ]
       },
       "SubmissionReceipt": {
         "type": "object",

@@ -21,6 +21,7 @@ pub mod api;
 pub mod assignment;
 pub mod auth;
 pub mod authz;
+pub mod bulk;
 pub mod catalog;
 pub mod config;
 pub mod db;
@@ -33,6 +34,7 @@ pub mod screenshots;
 pub mod smtp;
 pub mod submission;
 pub mod tickets;
+pub mod views;
 
 use api::{ApiError, Json};
 
@@ -105,6 +107,11 @@ pub struct AppState {
         assignment::change_assignment,
         queues::list_queue,
         queues::queue_counts,
+        bulk::bulk_change,
+        bulk::bulk_options,
+        views::list_views,
+        views::create_view,
+        views::delete_view,
         messages::list,
         messages::reply,
         messages::note,
@@ -354,6 +361,16 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/screenshots/{id}/download", get(screenshots::download))
         .route("/api/queue", get(queues::list_queue))
         .route("/api/queue/counts", get(queues::queue_counts))
+        .route("/api/queue/bulk-options", get(bulk::bulk_options))
+        .route("/api/tickets/bulk", post(bulk::bulk_change))
+        .route(
+            "/api/saved-views",
+            get(views::list_views).post(views::create_view),
+        )
+        .route(
+            "/api/saved-views/{id}",
+            axum::routing::delete(views::delete_view),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::session,
