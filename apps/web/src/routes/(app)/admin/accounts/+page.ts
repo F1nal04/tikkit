@@ -1,14 +1,13 @@
 import { createClient } from '@tikkit/api-client'
+import { allPages } from '#lib/admin.ts'
 import type { PageLoad } from './$types'
-
-// ponytail: first 100 of each list; add paging controls when deployments outgrow it.
-export const load: PageLoad = async ({ fetch, parent }) => {
-  // The (app) layout rejects non-Admins first; the API answers 403 to them regardless.
+export const load: PageLoad = async ({ fetch, parent, url }) => {
   await parent()
   const api = createClient({ fetch })
-  const [accounts, invitations] = await Promise.all([
-    api.request('get', '/api/accounts', { query: { limit: 100 } }),
-    api.request('get', '/api/invitations', { query: { limit: 100 } }),
+  const [accounts, invitations, teams] = await Promise.all([
+    api.request('get', '/api/accounts', { query: { cursor: url.searchParams.get('accounts') ?? undefined } }),
+    api.request('get', '/api/invitations', { query: { include_history: true, cursor: url.searchParams.get('invitations') ?? undefined } }),
+    allPages((cursor) => api.request('get', '/api/teams', { query: { limit: 100, cursor } })),
   ])
-  return { accounts: accounts.items, invitations: invitations.items }
+  return { accounts: accounts.items, accountCursor: accounts.next_cursor, invitations: invitations.items, invitationCursor: invitations.next_cursor, teams }
 }
