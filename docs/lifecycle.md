@@ -124,7 +124,10 @@ while `awaiting_confirmation`; `resolution_source`/`closure_reason` match
 have no team. A trigger (`restrict_violation`, `23001`) rejects changing the
 requester, editing subject/description/category or returning to `draft` after
 submission, and any status/team/assignee change of an `ai_solved` or
-`cancelled` ticket.
+`cancelled` ticket. The one exception is clearing the assignee when that
+account is deactivated or leaves the team: the assignee is a foreign key to
+the team membership, and the attributed `assignment_changed` event keeps the
+history.
 
 ## Reading tickets
 

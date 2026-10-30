@@ -1226,6 +1226,116 @@ async fn staff_writes_recheck_assignee_leadership_and_role_at_commit() {
 }
 
 #[tokio::test]
+async fn staff_can_leave_while_assigned_to_cancelled_tickets() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let admin = login(&app, "admin", PASSWORD).await.session();
+    let other_team: Uuid = sqlx::query_scalar("SELECT id FROM teams WHERE name = 'Network'")
+        .fetch_one(w.pool())
+        .await
+        .unwrap();
+    // A requester cancelled a ticket `peer` (then `op`) had claimed. Moving `peer` to
+    // another team and deactivating `op` must still succeed (both used to fail with 500).
+    for (who, change) in [
+        (
+            w.peer,
+            serde_json::json!({ "role": "specialist", "team_id": other_team }),
+        ),
+        (w.op, Value::Null),
+    ] {
+        let cancelled = seed_as(
+            &w,
+            w.requester,
+            w.category,
+            S::Cancelled,
+            Some(w.team),
+            Some(who),
+        )
+        .await;
+        let open = seed_as(
+            &w,
+            w.requester,
+            w.category,
+            S::InProgress,
+            Some(w.team),
+            Some(who),
+        )
+        .await;
+        let session = login(&app, if who == w.op { "op" } else { "peer" }, PASSWORD)
+            .await
+            .session();
+        let deactivate = change.is_null();
+        let reply = if deactivate {
+            call(
+                &app,
+                "POST",
+                &format!("/api/accounts/{who}/deactivate"),
+                None,
+                Some(&admin),
+            )
+            .await
+        } else {
+            call(
+                &app,
+                "PUT",
+                &format!("/api/accounts/{who}"),
+                Some(change),
+                Some(&admin),
+            )
+            .await
+        };
+        assert_eq!(reply.status, StatusCode::NO_CONTENT, "{:?}", reply.body);
+        let assignee = |id: Uuid| {
+            sqlx::query_scalar::<_, Option<Uuid>>(
+                "SELECT assignee_account_id FROM tickets WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(w.pool())
+        };
+        // Both are unassigned; the cancelled record stays cancelled in its team.
+        assert_eq!(assignee(cancelled).await.unwrap(), None);
+        assert_eq!(assignee(open).await.unwrap(), None);
+        assert_eq!(
+            status_of(&mut w.pool().acquire().await.unwrap(), cancelled).await,
+            S::Cancelled
+        );
+        if deactivate {
+            // The deactivation committed, so its sessions are gone too.
+            let me = call(&app, "GET", "/api/auth/me", None, Some(&session)).await;
+            assert_eq!(me.status, StatusCode::UNAUTHORIZED);
+        }
+    }
+    // Clearing the assignee is the only change a final record accepts.
+    let cancelled = seed_as(
+        &w,
+        w.requester,
+        w.category,
+        S::Cancelled,
+        Some(w.team),
+        None,
+    )
+    .await;
+    for sql in [
+        "UPDATE tickets SET assignee_account_id = $2 WHERE id = $1",
+        "UPDATE tickets SET team_id = NULL WHERE id = $1 AND $2 IS NOT NULL",
+    ] {
+        let r = sqlx::query(sql)
+            .bind(cancelled)
+            .bind(w.lead)
+            .execute(w.pool())
+            .await;
+        let state = r
+            .unwrap_err()
+            .as_database_error()
+            .unwrap()
+            .code()
+            .unwrap()
+            .into_owned();
+        assert_eq!(state, "23001", "{sql}");
+    }
+}
+
+#[tokio::test]
 async fn the_requester_never_handles_their_own_ticket_in_any_role() {
     let Some(w) = world().await else { return };
     // The team lead submitted this ticket; it sits claimed by op in their own team.

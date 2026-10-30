@@ -27,7 +27,9 @@ CREATE INDEX tickets_confirmation_due_idx ON tickets (confirmation_deadline)
     WHERE status = 'awaiting_confirmation';
 
 -- The requester never changes; submitted intake is frozen and never returns to
--- draft; AI-solved and cancelled records are final.
+-- draft; AI-solved and cancelled records are final, except that an assignee who
+-- leaves the team or is deactivated is cleared (team memberships are the
+-- assignee's foreign key; the attributed assignment event keeps the history).
 CREATE FUNCTION check_ticket_update() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.requester_account_id <> OLD.requester_account_id THEN
@@ -38,7 +40,9 @@ BEGIN
         RAISE EXCEPTION 'submitted intake is frozen' USING ERRCODE = 'restrict_violation';
     END IF;
     IF OLD.status IN ('ai_solved', 'cancelled')
-        AND (NEW.status, NEW.team_id, NEW.assignee_account_id) IS DISTINCT FROM (OLD.status, OLD.team_id, OLD.assignee_account_id) THEN
+        AND (NEW.status, NEW.team_id, NEW.assignee_account_id) IS DISTINCT FROM (OLD.status, OLD.team_id, OLD.assignee_account_id)
+        AND NOT ((NEW.status, NEW.team_id) IS NOT DISTINCT FROM (OLD.status, OLD.team_id)
+                 AND NEW.assignee_account_id IS NULL) THEN
         RAISE EXCEPTION '% tickets are final', OLD.status USING ERRCODE = 'restrict_violation';
     END IF;
     RETURN NEW;
