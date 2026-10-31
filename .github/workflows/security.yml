@@ -28,10 +28,11 @@ jobs:
           bun-version-file: package.json
       - name: JavaScript advisories
         run: bun audit --audit-level=high
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-audit@0.22.2
       - name: Rust advisories
-        run: |
-          cargo install cargo-audit --locked --version 0.22.2
-          cargo audit
+        run: cargo audit
       - name: Secret scan
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
