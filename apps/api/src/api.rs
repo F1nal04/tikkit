@@ -57,6 +57,18 @@ pub enum ApiError {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    /// No outbound SMTP connection has been saved.
+    SmtpNotConfigured,
+    /// The relay rejected the username or password.
+    SmtpAuthFailed,
+    /// TLS could not be negotiated or the certificate did not verify.
+    SmtpTlsFailed,
+    /// DNS, connect, or timeout. The portal itself is still up.
+    SmtpNetworkFailed,
+    /// The relay accepted the connection but refused the message.
+    SmtpDeliveryFailed,
+    /// The stored password cannot be decrypted with the current encryption key.
+    SmtpCredentialUnreadable,
     Internal,
 }
 
@@ -85,6 +97,12 @@ pub enum ErrorCode {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    SmtpNotConfigured,
+    SmtpAuthFailed,
+    SmtpTlsFailed,
+    SmtpNetworkFailed,
+    SmtpDeliveryFailed,
+    SmtpCredentialUnreadable,
     Internal,
 }
 
@@ -111,6 +129,11 @@ pub struct ErrorDetails {
 }
 
 impl ApiError {
+    /// The stable code this error renders with, e.g. per item of a bulk action.
+    pub fn code(&self) -> ErrorCode {
+        self.parts().1
+    }
+
     fn parts(&self) -> (StatusCode, ErrorCode, &'static str) {
         use ApiError::*;
         match self {
@@ -219,6 +242,36 @@ impl ApiError {
                 ErrorCode::PayloadTooLarge,
                 "The request body is too large.",
             ),
+            SmtpNotConfigured => (
+                StatusCode::CONFLICT,
+                ErrorCode::SmtpNotConfigured,
+                "Outbound email is not configured.",
+            ),
+            SmtpAuthFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpAuthFailed,
+                "The mail server rejected the username or password.",
+            ),
+            SmtpTlsFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpTlsFailed,
+                "Could not establish a verified TLS connection to the mail server.",
+            ),
+            SmtpNetworkFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpNetworkFailed,
+                "The mail server could not be reached.",
+            ),
+            SmtpDeliveryFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpDeliveryFailed,
+                "The mail server refused the message.",
+            ),
+            SmtpCredentialUnreadable => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::SmtpCredentialUnreadable,
+                "The stored mail password could not be read. Enter it again.",
+            ),
             Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorCode::Internal,
@@ -299,11 +352,25 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
+/// Sensitive resource responses must not survive authorization changes in caches.
+pub async fn private_response(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-store"),
+    );
+    response
+}
+
 /// Middleware rendering every error response as the JSON envelope, including
 /// framework responses (unknown route, wrong method) that never saw an `ApiError`.
 pub async fn error_envelope(request: Request, next: Next) -> Response {
     let request_id = request_id(request.headers());
     let mut response = next.run(request).await;
+    // Permission changes must take effect on the next request, including cached API reads.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        "private, no-store".parse().unwrap(),
+    );
     let error = match response.extensions_mut().remove::<ApiError>() {
         Some(error) => error,
         None => {

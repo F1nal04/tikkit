@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
@@ -23,6 +23,7 @@ use crate::{
         new_token, revoke_all_sessions, signed_in, token_hash, unique_violation, valid_email,
     },
     authz::{Permission, require_permission},
+    mail::{self, OutboundMessage},
 };
 
 const INVITATION_DEFAULT_HOURS: u32 = 168;
@@ -50,8 +51,32 @@ pub struct CreateInvitationRequest {
     pub expires_in_hours: Option<u32>,
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InvitationStatus {
+    Pending,
+    Accepted,
+    Expired,
+    Revoked,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
+pub struct InvitationPagination {
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
+    /// Include accepted/expired/revoked invitations. Default false preserves the pending-only view.
+    pub include_history: Option<bool>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Invitation {
+    pub status: InvitationStatus,
+    #[schema(required = true)]
+    pub account_id: Option<Uuid>,
+    #[schema(required = true)]
+    pub username: Option<String>,
     pub id: Uuid,
     pub role: Role,
     #[schema(required = true)]
@@ -76,6 +101,9 @@ pub struct CreatedInvitation {
 
 #[derive(sqlx::FromRow)]
 struct InvitationRow {
+    status: String,
+    account_id: Option<Uuid>,
+    username: Option<String>,
     id: Uuid,
     role: String,
     email: Option<String>,
@@ -88,6 +116,9 @@ impl TryFrom<InvitationRow> for Invitation {
     type Error = ApiError;
     fn try_from(r: InvitationRow) -> Result<Self, ApiError> {
         Ok(Self {
+            status: ident(r.status)?,
+            account_id: r.account_id,
+            username: r.username,
             id: r.id,
             role: ident(r.role)?,
             email: r.email,
@@ -98,7 +129,11 @@ impl TryFrom<InvitationRow> for Invitation {
     }
 }
 
-const INVITATION_COLUMNS: &str = "id, role::text AS role, email, language, created_at, expires_at";
+const INVITATION_COLUMNS: &str =
+    "id, role::text AS role, email, language, created_at, expires_at, account_id,
+    (SELECT username FROM accounts WHERE accounts.id = invitations.account_id) AS username,
+    CASE WHEN accepted_at IS NOT NULL THEN 'accepted' WHEN revoked_at IS NOT NULL THEN 'revoked'
+         WHEN expires_at <= now() THEN 'expired' ELSE 'pending' END AS status";
 /// Usable: not accepted, not revoked, not expired.
 const PENDING: &str = "accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()";
 
@@ -117,9 +152,41 @@ pub async fn create_invitation(
     user: CurrentUser,
     Json(body): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
-    require_permission(&user, Permission::ManageAccounts)?;
+    issue_invitation(&state, &auth, &user, body, None).await
+}
+
+async fn issue_invitation(
+    state: &AppState,
+    auth: &Auth,
+    user: &CurrentUser,
+    mut body: CreateInvitationRequest,
+    reissue: Option<Uuid>,
+) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
+    let mut tx = crate::management::transaction(state, user).await?;
+    if let Some(id) = reissue {
+        let old: Option<(String,Option<String>,String)> = sqlx::query_as("UPDATE invitations SET revoked_at=now() WHERE id=$1 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING role::text,email,language").bind(id).fetch_optional(&mut *tx).await?;
+        let (role, email, language) = old.ok_or(ApiError::Conflict)?;
+        body.role = Some(ident(role)?);
+        body.email = email;
+        body.language = Some(ident(language)?);
+        audit(
+            &mut *tx,
+            "invitation_revoked",
+            Some(user.account_id()),
+            None,
+            json!({"invitation_id":id,"reason":"reissued"}),
+        )
+        .await?;
+    }
     let role = body.role.unwrap_or(Role::User);
-    let language = body.language.unwrap_or(Language::En);
+    let language = match body.language {
+        Some(language) => language,
+        None => {
+            crate::management::load_settings(&mut *tx)
+                .await?
+                .default_language
+        }
+    };
     let hours = body.expires_in_hours.unwrap_or(INVITATION_DEFAULT_HOURS);
     let email = body
         .email
@@ -136,7 +203,6 @@ pub async fn create_invitation(
         return Err(ApiError::Validation(errors));
     }
     let token = new_token();
-    let mut tx = state.pool.begin().await?;
     let row: InvitationRow = sqlx::query_as(&format!(
         "INSERT INTO invitations (token_hash, role, email, language, created_by, expires_at)
          VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6))
@@ -166,10 +232,24 @@ pub async fn create_invitation(
         auth.settings.public_origin,
         ident_str(language)
     );
-    let emailed = email.as_deref().is_some_and(|to| {
-        let (subject, text) = invitation_email(language, &url, hours);
-        auth.settings.mailer.send(to, subject, text)
-    });
+    let emailed = match email.as_deref() {
+        Some(to) => {
+            let (subject, text) = invitation_email(language, &url, hours);
+            mail::queue(
+                state.pool.clone(),
+                auth.settings.encryption_key,
+                auth.settings.smtp_trust_root_pem.clone(),
+                OutboundMessage {
+                    to: to.to_owned(),
+                    subject: subject.to_owned(),
+                    body: text,
+                    idempotency_key: Some(format!("invitation:{}", invitation.id)),
+                },
+            )
+            .await
+        }
+        None => false,
+    };
     let created = CreatedInvitation {
         invitation,
         url,
@@ -184,8 +264,9 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
             "You are invited to Tikkit",
             format!(
                 "An administrator invited you to create a Tikkit account.\n\n\
-                 Open this link to choose your username and password:\n{url}\n\n\
+                 Open this link in the portal to choose your username and password:\n{url}\n\n\
                  The link works once and expires in {hours} hours.\n\
+                 Create and reply to tickets in the portal. Do not reply to this email.\n\
                  If you did not expect this invitation, ignore this email."
             ),
         ),
@@ -193,16 +274,41 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
             "Einladung zu Tikkit",
             format!(
                 "Sie wurden eingeladen, ein Tikkit-Konto anzulegen.\n\n\
-                 Öffnen Sie diesen Link, um Benutzernamen und Passwort festzulegen:\n{url}\n\n\
+                 Öffnen Sie diesen Link im Portal, um Benutzernamen und Passwort festzulegen:\n{url}\n\n\
                  Der Link funktioniert einmal und läuft in {hours} Stunden ab.\n\
+                 Tickets werden im Portal erstellt und beantwortet. Antworten Sie nicht auf diese E-Mail.\n\
                  Wenn Sie diese Einladung nicht erwartet haben, ignorieren Sie diese E-Mail."
             ),
         ),
     }
 }
 
-/// Pending (usable) invitations, newest first (Admin only).
-#[utoipa::path(get, path = "/api/invitations", tag = "accounts", params(Pagination),
+/// Reissue replaces an unused invitation atomically; concurrent/replayed requests fail.
+#[utoipa::path(post, path = "/api/invitations/{id}/reissue", tag = "accounts", params(("id" = Uuid, Path)),
+    responses((status = 201, body = CreatedInvitation), (status = 401, body = crate::api::ErrorEnvelope), (status = 403, body = crate::api::ErrorEnvelope), (status = 409, body = crate::api::ErrorEnvelope)))]
+pub async fn reissue_invitation(
+    State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<CreatedInvitation>), ApiError> {
+    issue_invitation(
+        &state,
+        &auth,
+        &user,
+        CreateInvitationRequest {
+            role: None,
+            email: None,
+            language: None,
+            expires_in_hours: None,
+        },
+        Some(id),
+    )
+    .await
+}
+
+/// Invitations newest first, optionally including all historical statuses (Admin only).
+#[utoipa::path(get, path = "/api/invitations", tag = "accounts", params(InvitationPagination),
     responses(
         (status = 200, body = Page<Invitation>),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
@@ -211,18 +317,24 @@ fn invitation_email(language: Language, url: &str, hours: u32) -> (&'static str,
 pub async fn list_invitations(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(page): Query<Pagination>,
+    Query(query): Query<InvitationPagination>,
 ) -> Result<Json<Page<Invitation>>, ApiError> {
     require_permission(&user, Permission::ManageAccounts)?;
+    let history = query.include_history.unwrap_or(false);
+    let page = Pagination {
+        limit: query.limit,
+        cursor: query.cursor,
+    };
     let cursor = page.cursor()?;
     let rows: Vec<InvitationRow> = sqlx::query_as(&format!(
         "SELECT {INVITATION_COLUMNS} FROM invitations
-         WHERE {PENDING} AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
+         WHERE ($4 OR ({PENDING})) AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $1"
     ))
     .bind(page.limit() + 1)
     .bind(cursor.map(|c| c.created_at))
     .bind(cursor.map(|c| c.id))
+    .bind(history)
     .fetch_all(&state.pool)
     .await?;
     let items = rows
@@ -461,13 +573,14 @@ pub async fn request_recovery(
     .fetch_one(&mut *tx)
     .await?;
     let found = found.filter(|_| !cooling);
+    let recovery_hash = token_hash(&token);
     if let Some((id, ..)) = &found {
         sqlx::query(&format!(
             "INSERT INTO password_resets (account_id, token_hash, expires_at)
              VALUES ($1, $2, now() + {RESET_TTL})"
         ))
         .bind(id)
-        .bind(token_hash(&token))
+        .bind(&recovery_hash)
         .execute(&mut *tx)
         .await?;
     }
@@ -485,14 +598,34 @@ pub async fn request_recovery(
             ident_str(language)
         );
         let (subject, text) = recovery_email(language, &username, &url);
-        if !auth.settings.mailer.send(&email, subject, text) {
-            // Never log the token or link.
-            tracing::info!(
-                "password recovery requested, but no email was sent (SMTP not configured)"
-            );
+        let queued = mail::queue(
+            state.pool.clone(),
+            auth.settings.encryption_key,
+            auth.settings.smtp_trust_root_pem.clone(),
+            OutboundMessage {
+                to: email,
+                subject: subject.to_owned(),
+                body: text,
+                idempotency_key: Some(format!("recovery:{}", hex_bytes(&recovery_hash))),
+            },
+        )
+        .await;
+        if !queued {
+            // Never log the token, link, address, or SMTP credentials.
+            tracing::info!("password recovery requested, but no email was sent");
         }
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0xf) as usize] as char);
+    }
+    out
 }
 
 fn recovery_email(language: Language, username: &str, url: &str) -> (&'static str, String) {
@@ -501,8 +634,9 @@ fn recovery_email(language: Language, username: &str, url: &str) -> (&'static st
             "Reset your Tikkit password",
             format!(
                 "Someone asked to reset the password of the Tikkit account \"{username}\".\n\n\
-                 Open this link to choose a new password:\n{url}\n\n\
-                 The link works once and expires in one hour. If you did not ask for this, \
+                 Open this link in the portal to choose a new password:\n{url}\n\n\
+                 The link works once and expires in one hour. Create and reply to tickets \
+                 in the portal. Do not reply to this email. If you did not ask for this, \
                  ignore this email; your password stays unchanged."
             ),
         ),
@@ -510,9 +644,10 @@ fn recovery_email(language: Language, username: &str, url: &str) -> (&'static st
             "Tikkit-Passwort zurücksetzen",
             format!(
                 "Für das Tikkit-Konto „{username}“ wurde das Zurücksetzen des Passworts angefordert.\n\n\
-                 Öffnen Sie diesen Link, um ein neues Passwort festzulegen:\n{url}\n\n\
-                 Der Link funktioniert einmal und ist eine Stunde gültig. Wenn Sie das nicht \
-                 angefordert haben, ignorieren Sie diese E-Mail; Ihr Passwort bleibt unverändert."
+                 Öffnen Sie diesen Link im Portal, um ein neues Passwort festzulegen:\n{url}\n\n\
+                 Der Link funktioniert einmal und ist eine Stunde gültig. Tickets werden im \
+                 Portal erstellt und beantwortet. Antworten Sie nicht auf diese E-Mail. Wenn Sie \
+                 das nicht angefordert haben, ignorieren Sie diese E-Mail; Ihr Passwort bleibt unverändert."
             ),
         ),
     }
@@ -637,6 +772,11 @@ pub async fn update_profile(
 
 #[derive(Serialize, ToSchema)]
 pub struct AccountSummary {
+    #[schema(required = true)]
+    pub expertise: Option<String>,
+    #[schema(required = true)]
+    pub team_id: Option<Uuid>,
+    pub is_team_lead: bool,
     pub id: Uuid,
     pub username: String,
     pub display_name: String,
@@ -672,9 +812,14 @@ pub async fn list_accounts(
         String,
         bool,
         OffsetDateTime,
+        Option<String>,
+        Option<Uuid>,
+        bool,
     );
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, username, display_name, email, role::text, language, is_active, created_at
+        "SELECT id, username, display_name, email, role::text, language, is_active, created_at, expertise,
+         (SELECT team_id FROM team_memberships WHERE account_id=accounts.id),
+         EXISTS (SELECT 1 FROM teams WHERE lead_account_id=accounts.id AND archived_at IS NULL)
          FROM accounts WHERE ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $1",
     )
@@ -695,6 +840,9 @@ pub async fn list_accounts(
                 language: ident(r.5)?,
                 is_active: r.6,
                 created_at: r.7,
+                expertise: r.8,
+                team_id: r.9,
+                is_team_lead: r.10,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -750,7 +898,7 @@ async fn set_active(
     active: bool,
 ) -> Result<StatusCode, ApiError> {
     require_permission(user, Permission::ManageAccounts)?;
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::management::transaction(state, user).await?;
     // The last-admin and team-lead rules are database constraints that `?` maps
     // to `last_active_admin` / `active_team_lead`. Do not pre-lock Admin rows here.
     let changed =
@@ -776,6 +924,7 @@ async fn set_active(
     if active {
         audit(&mut *tx, "account_reactivated", actor, Some(id), json!({})).await?;
     } else {
+        crate::management::clear_assignments(&mut tx, user, id, "account_deactivated").await?;
         let revoked = revoke_all_sessions(&mut *tx, id).await?;
         // Its recovery links and, for an Admin, the invitations it issued die with it.
         sqlx::query(

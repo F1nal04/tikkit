@@ -57,6 +57,12 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Stale or concurrent update lost | 409 | `conflict` |
 | Demoting or deactivating the last active Admin | 409 | `last_active_admin` |
 | Demoting or deactivating an active team's lead | 409 | `active_team_lead` |
+| SMTP is not configured | 409 | `smtp_not_configured` |
+| Mail server rejected the username or password | 502 | `smtp_auth_failed` |
+| Verified TLS to the mail server failed | 502 | `smtp_tls_failed` |
+| Mail server DNS, connect, or timeout | 502 | `smtp_network_failed` |
+| Mail server refused the message | 502 | `smtp_delivery_failed` |
+| Stored mail password cannot be decrypted | 502 | `smtp_credential_unreadable` |
 | Anything unexpected (logged with the request ID) | 500 | `internal` |
 
 **Denied access does not reveal existence.** When the caller may not see a
@@ -92,6 +98,8 @@ Handlers take `auth::CurrentUser` to require a session (`401 unauthorized` other
   before a cursor and be missed by a client already paging; refresh from the
   first page when completeness matters. Endpoints that need another order
   document a fixed `sort` enum; there is no free-form ordering.
+- Conversation messages are ordered oldest first by internal commit sequence
+  instead of the default timestamp order; see [conversations.md](conversations.md).
 - Filters are plain query parameters with documented values (stable
   identifiers, e.g. `status=queued`). Unparsable or unknown filter
   values are rejected with 400 `invalid_query`. Filters and counts always apply the caller's visibility
@@ -109,8 +117,10 @@ or business rules. Timestamps are RFC 3339 UTC.
 
 Requester-facing ticket responses include `TicketAssignmentView`:
 `team_name` (`null` = shared general queue) and `assignee_display_name`
-(`null` = unassigned). Both keys are always present. Nothing else about staff,
-internal notes, or team membership is exposed to requesters.
+(`null` = unassigned). Both keys are always present. Public conversation
+messages additionally expose author display names and author kind, with
+account IDs redacted. Internal notes and team membership
+are never exposed to requesters.
 
 ## Typed client and drift checks
 

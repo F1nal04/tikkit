@@ -76,7 +76,8 @@ impl Drop for TestDb {
                     conn.execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
                         .await
                         .unwrap();
-                })
+                });
+            let _ = std::fs::remove_dir_all(std::env::temp_dir().join(&name));
         })
         .join()
         .unwrap();
@@ -107,7 +108,21 @@ pub fn test_app(pool: &PgPool) -> Router {
 }
 
 pub fn test_app_with(pool: &PgPool, settings: Settings) -> Router {
-    tikkit_api::app_with(AppState { pool: pool.clone() }, settings)
+    let state = AppState {
+        pool: pool.clone(),
+        screenshot_dir: screenshot_dir(pool).into(),
+    };
+    tikkit_api::app_with(state, settings)
+}
+
+/// This test database's private screenshot directory, removed with the [`TestDb`].
+pub fn screenshot_dir(pool: &PgPool) -> std::path::PathBuf {
+    let name = pool
+        .connect_options()
+        .get_database()
+        .unwrap_or("tikkit")
+        .to_owned();
+    std::env::temp_dir().join(name)
 }
 
 /// One HTTP exchange with the app, decoded for assertions.
@@ -188,6 +203,8 @@ pub async fn login(app: &Router, username: &str, password: &str) -> Reply {
     let body = json!({ "username": username, "password": password });
     call(app, "POST", "/api/auth/login", Some(body), None).await
 }
+
+pub mod smtp;
 
 pub mod fixtures {
     use sqlx::{PgExecutor, PgPool};

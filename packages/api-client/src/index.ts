@@ -11,8 +11,12 @@ export type ErrorCode = Schemas["ErrorCode"];
 export type Language = Schemas["Language"];
 export type Account = Schemas["Account"];
 export type Role = Schemas["Role"];
+export type TicketStatus = Schemas["TicketStatus"];
+export type TicketDetail = Schemas["TicketDetail"];
+export type ClosureReason = Schemas["ClosureReason"];
 export type AccountSummary = Schemas["AccountSummary"];
 export type Invitation = Schemas["Invitation"];
+export type Notification = Schemas["Notification"];
 /** API error codes plus `unavailable`, synthesized when the API could not be
  * reached or answered without an error envelope (e.g. a proxy's HTML 502). */
 export type ClientErrorCode = ErrorCode | "unavailable";

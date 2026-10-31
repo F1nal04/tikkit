@@ -270,7 +270,7 @@ async fn tickets_keep_stable_references_events_and_foreign_keys() {
 
     // Rolled-back work leaves no trace; the reference never changes.
     let mut tx = t.pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO ticket_messages (ticket_id, author_account_id, kind, body) VALUES ($1, $2, 'public_reply', 'hi')")
+    sqlx::query("INSERT INTO ticket_messages (ticket_id, author_account_id, kind, body, author_kind) VALUES ($1, $2, 'public_reply', 'hi', 'requester')")
         .bind(ticket)
         .bind(requester)
         .execute(&mut *tx)

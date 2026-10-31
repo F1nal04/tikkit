@@ -1,0 +1,450 @@
+//! Operator work queues: paginated lists and counts of the tickets staff may
+//! work on. Visibility is the one SQL predicate [`authz::staff_visible_sql`]
+//! (the twin of [`authz::ticket_view`]), applied in the query itself so lists,
+//! counts, search, and direct detail access always agree. See docs/queues.md.
+
+use axum::extract::State;
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use utoipa::{IntoParams, ToSchema};
+use uuid::Uuid;
+
+use crate::{
+    AppState,
+    api::{
+        ApiError, Cursor, FieldErrors, Json, Page, Pagination, Query, Role, TicketAssignmentView,
+        TicketStatus,
+    },
+    auth::{CurrentUser, ident, ident_str},
+    authz::{self, Actor, Permission},
+    tickets::TicketRequester,
+};
+
+/// Statuses of tickets that still need human work: the default of every queue.
+const OPEN: [&str; 4] = [
+    "queued",
+    "in_progress",
+    "waiting_for_requester",
+    "awaiting_confirmation",
+];
+/// Statuses a queue can be filtered to: operator work plus finished tickets.
+/// Drafts, AI stages, and AI-solved records never belong to a staff queue.
+pub(crate) const FILTERABLE: [&str; 6] = [
+    "queued",
+    "in_progress",
+    "waiting_for_requester",
+    "awaiting_confirmation",
+    "closed",
+    "cancelled",
+];
+
+/// Which slice of the visible tickets a queue shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueView {
+    /// Shared intake: tickets with no team yet. Every staff role.
+    #[default]
+    General,
+    /// Dispatched tickets of the caller's team, claimed or not. An Admin sees
+    /// every team, or one with `team_id`.
+    Team,
+    /// Tickets assigned to the caller.
+    Mine,
+    /// General intake plus every team. Admin only.
+    All,
+}
+
+/// Fixed orders; ties break on `(created_at, id)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueSort {
+    /// Newest first.
+    #[default]
+    Newest,
+    /// Oldest first (longest waiting).
+    Oldest,
+    /// Catalog priority order (the level Admins list first comes first), then
+    /// oldest first.
+    Priority,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct QueueQuery {
+    /// Default `general`.
+    pub view: Option<QueueView>,
+    /// `team` view, Admin only: restrict to one team.
+    pub team_id: Option<Uuid>,
+    /// One of the open statuses, `closed`, or `cancelled`; default: all open statuses.
+    pub status: Option<TicketStatus>,
+    pub category_id: Option<Uuid>,
+    pub priority_id: Option<Uuid>,
+    /// Only tickets without an individual assignee.
+    pub unassigned: Option<bool>,
+    pub sort: Option<QueueSort>,
+    /// Search text, up to 200 characters: a ticket reference (`123` or `#123`), or
+    /// at least 3 characters matched anywhere in the subject, description, category,
+    /// requester username or display name, or message text the caller may read.
+    pub q: Option<String>,
+    /// Page size, 1-100 (default 25).
+    pub limit: Option<i64>,
+    /// `next_cursor` from the previous page.
+    pub cursor: Option<String>,
+}
+
+/// One queue row.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct QueueTicket {
+    pub id: Uuid,
+    /// Stable human-facing number.
+    pub reference: i64,
+    pub status: TicketStatus,
+    pub subject: String,
+    pub category_name: String,
+    /// The current effective priority; the requester's original choice stays in
+    /// the ticket's intake snapshot.
+    pub priority_id: Uuid,
+    pub priority_name: String,
+    pub requester: TicketRequester,
+    pub assignment: TicketAssignmentView,
+    /// Age is derived from this.
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(sqlx::FromRow)]
+struct Row {
+    id: Uuid,
+    reference: i64,
+    status: String,
+    subject: String,
+    category_name: String,
+    priority_id: Uuid,
+    priority_name: String,
+    priority_rank: i32,
+    requester_id: Uuid,
+    requester_username: String,
+    requester_display_name: String,
+    team_name: Option<String>,
+    assignee_display_name: Option<String>,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+/// Open work counts per view, under the same visibility as the lists.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct QueueCounts {
+    pub general: i64,
+    /// The caller's team; for an Admin, every dispatched ticket.
+    pub team: i64,
+    pub mine: i64,
+    /// Admin only.
+    #[schema(required = true)]
+    pub all: Option<i64>,
+    /// Opaque change marker, compare for equality only: changes whenever an open
+    /// ticket the caller may see enters, leaves, or changes, or the caller's role or
+    /// team changes. Queue pages poll this endpoint and reload when it differs.
+    pub version: String,
+}
+
+/// Staff queue page, filtered and ordered as requested. `view=team` for a
+/// non-Admin is always their own team (another `team_id` is `404`).
+#[utoipa::path(get, path = "/api/queue", tag = "queue", params(QueueQuery),
+    responses(
+        (status = 200, body = Page<QueueTicket>),
+        (status = 400, description = "`invalid_query` (unknown or non-queue filter value)", body = crate::api::ErrorEnvelope),
+        (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
+        (status = 403, description = "`forbidden` (not staff, or `view=all` without Admin)", body = crate::api::ErrorEnvelope),
+        (status = 404, description = "`not_found` (another team's `team_id`)", body = crate::api::ErrorEnvelope),
+        (status = 422, description = "`validation_failed`: `q` is `too_short` or `too_long`, or the cursor is invalid", body = crate::api::ErrorEnvelope),
+    ))]
+pub async fn list_queue(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<QueueQuery>,
+) -> Result<Json<Page<QueueTicket>>, ApiError> {
+    authz::require_permission(&user, Permission::ViewGeneralQueue)?;
+    let sort = q.sort.unwrap_or_default();
+    // `sort=priority` cursors are `{rank}.{cursor}`: the last row's priority rank
+    // travels with it, so the next page never looks up the cursor's ticket (which
+    // may be hidden, forged, or reprioritized since).
+    let (rank, raw) = match (sort, q.cursor) {
+        (QueueSort::Priority, Some(c)) => {
+            let (rank, rest) = c
+                .split_once('.')
+                .and_then(|(rank, rest)| Some((rank.parse::<i32>().ok()?, rest.to_owned())))
+                .ok_or_else(invalid_cursor)?;
+            (Some(rank), Some(rest))
+        }
+        (_, c) => (None, c),
+    };
+    let page = Pagination {
+        limit: q.limit,
+        cursor: raw,
+    };
+    let cursor = page.cursor()?;
+    let search = search_terms(q.q.as_deref())?;
+    let statuses: Vec<String> = match q.status {
+        None => OPEN.map(String::from).to_vec(),
+        Some(s) => {
+            let s = ident_str(s);
+            if !FILTERABLE.contains(&s.as_str()) {
+                return Err(ApiError::InvalidQuery);
+            }
+            vec![s]
+        }
+    };
+    let actor = Actor::load(&state.pool, &user).await?;
+    let view = q.view.unwrap_or_default();
+    let Some((view_sql, team)) = scope(&actor, view, q.team_id)? else {
+        return Ok(Json(Page {
+            items: vec![],
+            next_cursor: None,
+        }));
+    };
+    let (order, after) = match sort {
+        QueueSort::Newest => (
+            "t.created_at DESC, t.id DESC",
+            "(t.created_at, t.id) < ($9, $10)",
+        ),
+        QueueSort::Oldest => ("t.created_at, t.id", "(t.created_at, t.id) > ($9, $10)"),
+        QueueSort::Priority => (
+            "p.sort_order, t.created_at, t.id",
+            "(p.sort_order, t.created_at, t.id) > ($12, $9, $10)",
+        ),
+    };
+    let sql = format!(
+        "SELECT t.id, t.reference, t.status::text AS status, t.subject,
+                COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
+                t.priority_id, p.name AS priority_name, p.sort_order AS priority_rank,
+                r.id AS requester_id, r.username AS requester_username,
+                r.display_name AS requester_display_name,
+                tm.name AS team_name, a.display_name AS assignee_display_name,
+                t.created_at, t.updated_at
+         FROM tickets t
+         JOIN categories c ON c.id = t.category_id
+         JOIN priorities p ON p.id = t.priority_id
+         JOIN accounts r ON r.id = t.requester_account_id
+         LEFT JOIN teams tm ON tm.id = t.team_id
+         LEFT JOIN accounts a ON a.id = t.assignee_account_id
+         WHERE {visible} AND {view_sql}
+           AND t.status = ANY($4::ticket_status[])
+           AND ($5::uuid IS NULL OR t.category_id = $5)
+           AND ($6::uuid IS NULL OR t.priority_id = $6)
+           AND ($7::bool IS NOT TRUE OR t.assignee_account_id IS NULL)
+           AND ($10::uuid IS NULL OR {after})
+           {search}
+         ORDER BY {order} LIMIT $11",
+        visible = authz::staff_visible_sql(1),
+        search = match search {
+            Some(_) => format!("AND {}", search_sql(13, 14, 2)),
+            None => String::new(),
+        },
+    );
+    let (pattern, reference) = search.unzip();
+    let (id, role, own_team) = actor.visibility_binds();
+    let rows: Vec<Row> = sqlx::query_as(&sql)
+        .bind(id)
+        .bind(role)
+        .bind(own_team)
+        .bind(statuses)
+        .bind(q.category_id)
+        .bind(q.priority_id)
+        .bind(q.unassigned)
+        .bind(team)
+        .bind(cursor.map(|c| c.created_at))
+        .bind(cursor.map(|c| c.id))
+        .bind(page.limit() + 1)
+        .bind(rank)
+        .bind(pattern.flatten())
+        .bind(reference.flatten())
+        .fetch_all(&state.pool)
+        .await?;
+    let last_rank = rows.get(page.limit() as usize - 1).map(|r| r.priority_rank);
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(QueueTicket {
+                id: row.id,
+                reference: row.reference,
+                status: ident(row.status)?,
+                subject: row.subject,
+                category_name: row.category_name,
+                priority_id: row.priority_id,
+                priority_name: row.priority_name,
+                requester: TicketRequester {
+                    id: row.requester_id,
+                    username: row.requester_username,
+                    display_name: row.requester_display_name,
+                },
+                assignment: TicketAssignmentView {
+                    team_name: row.team_name,
+                    assignee_display_name: row.assignee_display_name,
+                },
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let mut result = Page::from_rows(items, page.limit(), |t| Cursor {
+        created_at: t.created_at,
+        id: t.id,
+    });
+    if sort == QueueSort::Priority {
+        result.next_cursor = result
+            .next_cursor
+            .zip(last_rank)
+            .map(|(c, rank)| format!("{rank}.{c}"));
+    }
+    Ok(Json(result))
+}
+
+/// Longest accepted search text, in characters.
+pub const SEARCH_MAX: usize = 200;
+/// Shortest substring searched: trigram indexes need three characters.
+const SEARCH_MIN: usize = 3;
+
+/// An `ILIKE` substring pattern and a ticket reference from search text.
+type SearchTerms = (Option<String>, Option<i64>);
+
+/// Parses `q`: `None` without text. A number, optionally after `#`, also matches
+/// that reference; shorter than 3 characters it matches only the reference. The
+/// pattern escapes `\`, `%`, and `_`, so the text is always a literal substring.
+pub(crate) fn search_terms(q: Option<&str>) -> Result<Option<SearchTerms>, ApiError> {
+    let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) else {
+        return Ok(None);
+    };
+    let field = |code| ApiError::Validation(FieldErrors::from([("q".into(), vec![code])]));
+    let len = q.chars().count();
+    if len > SEARCH_MAX {
+        return Err(field("too_long"));
+    }
+    let digits = q.strip_prefix('#').unwrap_or(q);
+    let reference = digits
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| digits.parse::<i64>().ok())
+        .flatten();
+    let pattern = (len >= SEARCH_MIN).then(|| {
+        let escaped = q
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        format!("%{escaped}%")
+    });
+    if pattern.is_none() && reference.is_none() {
+        return Err(field("too_short"));
+    }
+    Ok(Some((pattern, reference)))
+}
+
+/// Narrows `tickets t` to search matches; `$pattern` is a [`search_terms`] pattern,
+/// `$reference` a ticket number (either may be NULL), `$role` the caller's role from
+/// [`Actor::visibility_binds`]. Callers still apply [`authz::staff_visible_sql`],
+/// so a match never widens visibility. Internal notes match only where the caller
+/// may read them (`messages::can_read_notes`): a team ticket, or an Admin. Every
+/// branch is an index scan (migration `0017_search_saved_views.sql`); the ticket
+/// expression must stay identical to `tickets_search_trgm_idx`.
+pub fn search_sql(pattern: usize, reference: usize, role: usize) -> String {
+    format!(
+        "t.id IN (
+           SELECT s.id FROM tickets s
+           WHERE s.reference = ${reference}::bigint
+              OR (s.subject || ' ' || s.description || ' '
+                  || coalesce(s.intake_snapshot #>> '{{catalog,category_name}}', '')) ILIKE ${pattern}::text
+           UNION ALL
+           SELECT s.id FROM accounts a JOIN tickets s ON s.requester_account_id = a.id
+           WHERE (a.username || ' ' || a.display_name) ILIKE ${pattern}::text
+           UNION ALL
+           SELECT m.ticket_id FROM ticket_messages m JOIN tickets s ON s.id = m.ticket_id
+           WHERE m.body ILIKE ${pattern}::text
+             AND (m.kind = 'public_reply' OR s.team_id IS NOT NULL OR ${role}::text = 'admin'))"
+    )
+}
+
+fn invalid_cursor() -> ApiError {
+    ApiError::Validation(FieldErrors::from([(
+        "cursor".into(),
+        vec!["invalid_cursor"],
+    )]))
+}
+
+/// Intake and the Admin overview leave out cancelled tickets that never reached a
+/// team: they may have ended during AI, which is Admin reporting, not operator work.
+///
+/// The SQL narrowing a view (binds `$8` as the team filter) and the team
+/// it filters to; `None` when the caller can see nothing there (no team).
+fn scope(
+    actor: &Actor,
+    view: QueueView,
+    team_id: Option<Uuid>,
+) -> Result<Option<(&'static str, Option<Uuid>)>, ApiError> {
+    let admin = actor.role == Role::Admin;
+    Ok(match view {
+        QueueView::General if team_id.is_none() => {
+            Some(("t.team_id IS NULL AND t.status <> 'cancelled'", None))
+        }
+        QueueView::Mine if team_id.is_none() => Some(("t.assignee_account_id = $1", None)),
+        QueueView::All if admin && team_id.is_none() => {
+            Some(("(t.team_id IS NOT NULL OR t.status <> 'cancelled')", None))
+        }
+        QueueView::All if !admin => return Err(ApiError::Forbidden),
+        QueueView::Team => match (admin, team_id, actor.team) {
+            (true, None, _) => Some(("t.team_id IS NOT NULL", None)),
+            (true, Some(team), _) => Some(("t.team_id = $8", Some(team))),
+            (false, Some(team), own) if own.map(|t| t.team_id) != Some(team) => {
+                return Err(ApiError::NotFound);
+            }
+            (false, _, Some(own)) => Some(("t.team_id = $8", Some(own.team_id))),
+            (false, _, None) => None,
+        },
+        _ => return Err(ApiError::InvalidQuery), // `team_id` only narrows the team view
+    })
+}
+
+/// Open work counts for the caller's queue tabs.
+#[utoipa::path(get, path = "/api/queue/counts", tag = "queue",
+    responses(
+        (status = 200, body = QueueCounts),
+        (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
+        (status = 403, description = "`forbidden` (not staff)", body = crate::api::ErrorEnvelope),
+    ))]
+pub async fn queue_counts(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<QueueCounts>, ApiError> {
+    authz::require_permission(&user, Permission::ViewGeneralQueue)?;
+    let actor = Actor::load(&state.pool, &user).await?;
+    let admin = actor.role == Role::Admin;
+    let (id, role, team) = actor.visibility_binds();
+    // Finished tickets only change by leaving or re-entering open work (or by the
+    // caller's team changing), so open work alone moves the marker for every view.
+    // ponytail: hashes every visible open ticket per poll; fine for one organization.
+    let (general, team_count, mine, all, digest): (i64, i64, i64, i64, String) = sqlx::query_as(&format!(
+        "SELECT count(*) FILTER (WHERE t.team_id IS NULL),
+                count(*) FILTER (WHERE t.team_id IS NOT NULL),
+                count(*) FILTER (WHERE t.assignee_account_id = $1),
+                count(*),
+                md5(COALESCE(string_agg(t.id::text || '@' || t.updated_at::text, ',' ORDER BY t.id), ''))
+         FROM tickets t
+         WHERE {visible} AND t.status = ANY($4::ticket_status[])",
+        visible = authz::staff_visible_sql(1),
+    ))
+    .bind(id)
+    .bind(role)
+    .bind(team)
+    .bind(OPEN.map(String::from).to_vec())
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(QueueCounts {
+        general,
+        team: team_count,
+        mine,
+        all: admin.then_some(all),
+        version: format!("{digest}.{}", authz::capability_key(&actor)),
+    }))
+}

@@ -37,6 +37,8 @@ services:
       # Caddy is the socket peer for every client; rate limits use the X-Forwarded-For
       # it sets (Caddy overwrites client-supplied values by default).
       TRUST_PROXY_HEADERS: "true"
+      SCREENSHOT_DIR: /var/lib/tikkit/screenshots
+    volumes: [screenshots-data:/var/lib/tikkit/screenshots] # private: never served by the proxy
     stop_grace_period: 30s # longer than SHUTDOWN_TIMEOUT_SECS + 5s pool close
     networks: [edge, internal]
     depends_on:
@@ -75,3 +77,4 @@ networks:
 volumes:
   caddy-data:
   postgres-data:
+  screenshots-data:

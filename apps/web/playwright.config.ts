@@ -4,7 +4,7 @@ import { defineConfig, devices } from '@playwright/test'
 // The app on WEB talks to a stub API; the one on DOWN points at a closed port.
 export const WEB = 'http://127.0.0.1:4173'
 export const DOWN = 'http://127.0.0.1:4174'
-const STUB = 'http://127.0.0.1:4175'
+export const STUB = 'http://127.0.0.1:4175'
 
 const web = (url: string, apiOrigin: string) => ({
   command: 'node build/index.js',
@@ -22,7 +22,11 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    // Layout and navigation at phone size.
+    { name: 'mobile', use: { ...devices['Pixel 7'] }, testMatch: 'shell.spec.ts' },
+  ],
   webServer: [
     {
       command: 'node e2e/stub-api.mjs',

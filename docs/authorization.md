@@ -68,9 +68,15 @@ Staff actions (`authorize_ticket`), in order:
    member. General-queue tickets are dispatch-only: replies, notes, priority, and
    resolution happen after dispatch to a team, never in shared intake.
 
-Assignment targets are checked by the schema (assignee is a member of the
-ticket's team and never its requester); `authz::active_team_members` lists
-eligible accounts.
+`authz::is_staff_writer` is rule 4 without the open-status and permission
+checks, for actions on finished tickets (reopening). Status changes combine
+these rules with ticket ownership and policy in `lifecycle::decide`
+([lifecycle.md](lifecycle.md)).
+
+Assignment targets are checked by the assignment handler (an active staff member of
+the ticket's active team, never its requester; see [queues.md](queues.md#dispatch-and-assignment))
+and backed by the schema (assignee is a member of the ticket's team and never its
+requester); `authz::active_team_members` lists eligible accounts.
 
 ## Denials
 
@@ -95,7 +101,8 @@ authz::authorize_ticket(&actor, &scope, Permission::ReplyAsStaff)?;
 ```
 
 List, search, count, and export queries must apply the same rules in SQL, not
-after fetching. Team helpers: `authz::team_of`, `authz::is_lead_of`,
+after fetching: use `authz::staff_visible_sql` (see [queues.md](queues.md)), which
+a test keeps equal to `ticket_view`. Team helpers: `authz::team_of`, `authz::is_lead_of`,
 `authz::active_team_members`.
 
 ## Last active Admin
@@ -108,3 +115,13 @@ changes run one after another; the row trigger then fails with constraint
 concurrent loser under `REPEATABLE READ` gets `40001` instead, which `ApiError`
 maps to `409 conflict` (as is `40P01`). `ApiError` maps the
 constraint to `409 last_active_admin` via `?`, so handlers just run the update.
+
+## Conversation enforcement
+
+[Conversation APIs](conversations.md) use the ticket policy above for every
+read and write. Requester ownership takes precedence over staff role. Private
+notes (and their screenshots) require the staff view; on tickets returned to
+general intake, they remain Admin-only until dispatch. SQL filters private
+messages before pagination, so hidden messages cannot create extra pages.
+New sends share the lifecycle service's locked actor loader and lock the ticket,
+serializing writes with reassignment, transfer, and status transitions.

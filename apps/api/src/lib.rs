@@ -1,11 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use axum::{
     Extension, Router,
     extract::{DefaultBodyLimit, State},
     http::{Request, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post, put},
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -18,17 +18,33 @@ use utoipa::{OpenApi, ToSchema};
 
 pub mod accounts;
 pub mod api;
+pub mod assignment;
 pub mod auth;
 pub mod authz;
+pub mod autoclose;
+pub mod bulk;
+pub mod catalog;
 pub mod config;
 pub mod db;
+pub mod lifecycle;
 pub mod mail;
+pub mod management;
+pub mod messages;
+pub mod notifications;
+pub mod queues;
+pub mod screenshots;
+pub mod smtp;
+pub mod submission;
+pub mod tickets;
+pub mod views;
 
 use api::{ApiError, Json};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    /// Private screenshot volume (`SCREENSHOT_DIR`); never served directly.
+    pub screenshot_dir: Arc<Path>,
 }
 
 #[derive(OpenApi)]
@@ -62,6 +78,64 @@ pub struct AppState {
         accounts::list_accounts,
         accounts::deactivate_account,
         accounts::reactivate_account,
+        accounts::reissue_invitation,
+        management::update_account,
+        management::list_teams,
+        management::create_team,
+        management::update_team,
+        management::organization,
+        management::settings,
+        management::update_settings,
+        smtp::get_smtp,
+        smtp::put_smtp,
+        smtp::delete_smtp,
+        smtp::test_smtp,
+        catalog::active_catalog,
+        catalog::full_catalog,
+        catalog::create_category,
+        catalog::update_category,
+        catalog::reorder_categories,
+        catalog::create_priority,
+        catalog::update_priority,
+        catalog::reorder_priorities,
+        catalog::create_intake_field,
+        catalog::update_intake_field,
+        catalog::reorder_intake_fields,
+        tickets::ticket_detail,
+        tickets::list_own_tickets,
+        tickets::requester_action,
+        tickets::staff_action,
+        tickets::ticket_activity,
+        assignment::change_assignment,
+        queues::list_queue,
+        queues::queue_counts,
+        bulk::bulk_change,
+        bulk::bulk_options,
+        views::list_views,
+        views::create_view,
+        views::delete_view,
+        messages::list,
+        messages::reply,
+        messages::note,
+        notifications::notification_preferences,
+        notifications::update_notification_preferences,
+        notifications::list_notifications,
+        notifications::unread_count,
+        notifications::mark_notification_read,
+        notifications::delivery_stats,
+        notifications::retry_failed,
+        submission::create_draft,
+        submission::list_drafts,
+        submission::get_draft,
+        submission::update_draft,
+        submission::delete_draft,
+        submission::submit_ticket,
+        submission::submit_draft,
+        screenshots::upload,
+        screenshots::metadata,
+        screenshots::preview,
+        screenshots::download,
+        screenshots::delete,
     ),
     components(schemas(
         api::ErrorEnvelope,
@@ -70,6 +144,8 @@ pub struct AppState {
         api::Role,
         api::TicketStatus,
         api::TicketAssignmentView,
+        queues::QueueView,
+        queues::QueueSort,
     ))
 )]
 pub struct ApiDoc;
@@ -183,12 +259,153 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route("/api/accounts", get(accounts::list_accounts))
         .route(
+            "/api/accounts/{id}",
+            axum::routing::put(management::update_account),
+        )
+        .route(
+            "/api/teams",
+            get(management::list_teams).post(management::create_team),
+        )
+        .route(
+            "/api/teams/{id}",
+            axum::routing::put(management::update_team),
+        )
+        .route("/api/organization", get(management::organization))
+        .route(
+            "/api/admin/settings",
+            get(management::settings).put(management::update_settings),
+        )
+        .route(
+            "/api/invitations/{id}/reissue",
+            post(accounts::reissue_invitation),
+        )
+        .route(
             "/api/accounts/{id}/deactivate",
             post(accounts::deactivate_account),
         )
         .route(
             "/api/accounts/{id}/reactivate",
             post(accounts::reactivate_account),
+        )
+        .route(
+            "/api/settings/smtp",
+            get(smtp::get_smtp)
+                .put(smtp::put_smtp)
+                .delete(smtp::delete_smtp),
+        )
+        .route("/api/settings/smtp/test", post(smtp::test_smtp))
+        .route("/api/catalog", get(catalog::active_catalog))
+        .route("/api/catalog/all", get(catalog::full_catalog))
+        .route("/api/categories", post(catalog::create_category))
+        .route("/api/categories/order", put(catalog::reorder_categories))
+        .route("/api/categories/{id}", patch(catalog::update_category))
+        .route("/api/priorities", post(catalog::create_priority))
+        .route("/api/priorities/order", put(catalog::reorder_priorities))
+        .route("/api/priorities/{id}", patch(catalog::update_priority))
+        .route("/api/intake-fields", post(catalog::create_intake_field))
+        .route(
+            "/api/intake-fields/order",
+            put(catalog::reorder_intake_fields),
+        )
+        .route(
+            "/api/intake-fields/{id}",
+            patch(catalog::update_intake_field),
+        )
+        .route(
+            "/api/tickets",
+            get(tickets::list_own_tickets).post(submission::submit_ticket),
+        )
+        .route(
+            "/api/ticket-drafts",
+            get(submission::list_drafts).post(submission::create_draft),
+        )
+        .route(
+            "/api/ticket-drafts/{id}",
+            get(submission::get_draft)
+                .patch(submission::update_draft)
+                .delete(submission::delete_draft),
+        )
+        .route(
+            "/api/ticket-drafts/{id}/submit",
+            post(submission::submit_draft),
+        )
+        .route("/api/tickets/{id}", get(tickets::ticket_detail))
+        .route("/api/tickets/{id}/actions", post(tickets::requester_action))
+        .route(
+            "/api/tickets/{id}/activity",
+            get(tickets::ticket_activity)
+                .layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/tickets/{id}/staff-actions",
+            post(tickets::staff_action),
+        )
+        .route(
+            "/api/tickets/{id}/assignment",
+            post(assignment::change_assignment),
+        )
+        .route(
+            "/api/tickets/{id}/messages",
+            get(messages::list).layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/tickets/{id}/replies",
+            post(messages::reply).layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/tickets/{id}/notes",
+            post(messages::note).layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/screenshots",
+            post(screenshots::upload).layer(DefaultBodyLimit::max(screenshots::MAX_BYTES)),
+        )
+        .route(
+            "/api/screenshots/{id}",
+            get(screenshots::metadata)
+                .delete(screenshots::delete)
+                .layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route("/api/screenshots/{id}/preview", get(screenshots::preview))
+        .route("/api/screenshots/{id}/download", get(screenshots::download))
+        .route(
+            "/api/notification-preferences",
+            get(notifications::notification_preferences)
+                .put(notifications::update_notification_preferences),
+        )
+        .route(
+            "/api/notifications",
+            get(notifications::list_notifications)
+                .layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/notifications/unread",
+            get(notifications::unread_count)
+                .layer(axum::middleware::map_response(api::private_response)),
+        )
+        .route(
+            "/api/notifications/{id}/read",
+            post(notifications::mark_notification_read),
+        )
+        .route(
+            "/api/admin/notifications",
+            get(notifications::delivery_stats),
+        )
+        .route(
+            "/api/admin/notifications/retry",
+            post(notifications::retry_failed),
+        )
+        .route("/api/queue", get(queues::list_queue))
+        .route("/api/queue/counts", get(queues::queue_counts))
+        .route("/api/queue/bulk-options", get(bulk::bulk_options))
+        .route("/api/tickets/bulk", post(bulk::bulk_change))
+        .route(
+            "/api/saved-views",
+            get(views::list_views).post(views::create_view),
+        )
+        .route(
+            "/api/saved-views/{id}",
+            axum::routing::delete(views::delete_view),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -247,7 +464,10 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(200))
             .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
             .unwrap();
-        super::AppState { pool }
+        super::AppState {
+            pool,
+            screenshot_dir: std::env::temp_dir().into(),
+        }
     }
 
     #[derive(Deserialize)]
@@ -315,6 +535,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
         let body = to_bytes(response.into_body(), 1024).await.unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload, serde_json::json!({ "status": "ok" }));

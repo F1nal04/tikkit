@@ -14,6 +14,7 @@
 
 use serde::Serialize;
 use sqlx::PgExecutor;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
@@ -124,6 +125,16 @@ impl Actor {
     }
 }
 
+/// Everything about the actor the ticket policy reads (role, team, leadership), as a
+/// string for change markers: open pages refresh their capabilities when it changes.
+pub fn capability_key(actor: &Actor) -> String {
+    let role = crate::auth::ident_str(actor.role);
+    match actor.team {
+        Some(t) => format!("{role}.{}.{}", t.team_id.simple(), u8::from(t.is_lead)),
+        None => role,
+    }
+}
+
 /// The one team an account belongs to (schema: at most one), ignoring archived teams.
 pub async fn team_of<'c>(
     db: impl PgExecutor<'c>,
@@ -183,7 +194,8 @@ pub struct TicketScope {
 }
 
 /// Which representation of a ticket the actor may read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum TicketView {
     /// Public ticket data only: no internal notes or staff-only screenshots.
     Requester,
@@ -223,6 +235,36 @@ pub fn ticket_view(actor: &Actor, ticket: &TicketScope) -> Option<TicketView> {
     visible.then_some(TicketView::Staff)
 }
 
+/// Bind values for [`staff_visible_sql`]: actor ID, role (`user` … `admin`), team ID.
+pub type VisibilityBinds = (Uuid, String, Option<Uuid>);
+
+impl Actor {
+    pub fn visibility_binds(&self) -> VisibilityBinds {
+        (
+            self.id,
+            crate::auth::ident_str(self.role),
+            self.team.map(|t| t.team_id),
+        )
+    }
+}
+
+/// SQL twin of `ticket_view(actor, ticket) == Some(TicketView::Staff)` over
+/// `tickets` aliased `t`: the one predicate for staff lists, counts, search, and
+/// exports (docs/authorization.md). `n` is the first of three consecutive bind
+/// parameters filled from [`Actor::visibility_binds`]; keep it in step with
+/// `ticket_view` (a database test compares them on every status and team).
+pub fn staff_visible_sql(n: usize) -> String {
+    let (actor, role, team) = (n, n + 1, n + 2);
+    format!(
+        "(t.requester_account_id <> ${actor}::uuid AND t.status <> 'draft'
+          AND ${role}::text <> 'user'
+          AND (${role}::text = 'admin' OR (
+               t.status NOT IN ('ai_processing', 'awaiting_ai_decision', 'ai_solved')
+               AND CASE WHEN t.team_id IS NULL THEN t.status <> 'cancelled'
+                        ELSE t.team_id = ${team}::uuid END)))"
+    )
+}
+
 /// Staff action on one ticket. `404` if invisible, `403` if visible but denied.
 ///
 /// Rules, in order: the role must hold `action`; the requester can never act as
@@ -247,23 +289,38 @@ pub fn authorize_ticket(
         Queued | InProgress | WaitingForRequester | AwaitingConfirmation
     );
     let admin = actor.role == Role::Admin;
-    let in_charge = || match ticket.assignee_account_id {
-        None => true,
-        Some(assignee) => assignee == actor.id || admin || actor.leads(ticket.team_id),
-    };
     let ok = open
         && allows(actor.role, action)
         && match action {
             ClaimTicket => ticket.team_id.is_some() && ticket.assignee_account_id.is_none(),
             AssignTicket => ticket.team_id.is_some() && (admin || actor.leads(ticket.team_id)),
-            DispatchTicket => in_charge(),
+            DispatchTicket => in_charge(actor, ticket),
             // General-queue tickets are dispatch-only; work happens in a team.
             ReplyAsStaff | AddInternalNote | ChangePriority | ProposeResolution => {
-                ticket.team_id.is_some() && in_charge()
+                ticket.team_id.is_some() && in_charge(actor, ticket)
             }
             _ => false, // not a ticket action
         };
     if ok { Ok(()) } else { Err(ApiError::Forbidden) }
+}
+
+/// Unclaimed, or claimed by the actor, or the actor leads its team or is an Admin.
+fn in_charge(actor: &Actor, ticket: &TicketScope) -> bool {
+    match ticket.assignee_account_id {
+        None => true,
+        Some(assignee) => {
+            assignee == actor.id || actor.role == Role::Admin || actor.leads(ticket.team_id)
+        }
+    }
+}
+
+/// Staff who would hold write access to this team ticket whatever its status:
+/// it is visible to them as staff and they are [`in_charge`]. For actions on
+/// finished tickets (reopening); open-ticket actions use [`authorize_ticket`].
+pub fn is_staff_writer(actor: &Actor, ticket: &TicketScope) -> bool {
+    ticket_view(actor, ticket) == Some(TicketView::Staff)
+        && ticket.team_id.is_some()
+        && in_charge(actor, ticket)
 }
 
 #[cfg(test)]

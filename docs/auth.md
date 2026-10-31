@@ -108,13 +108,28 @@ After setup, accounts are created only from Admin invitations.
 
 ## Email delivery
 
-SMTP is optional (`SMTP_URL`, `SMTP_FROM`, see [configuration.md](configuration.md)).
-Messages are plain text in the recipient's language and sent in the background,
-so the response time does not depend on delivery. Without SMTP, or when sending
-fails, nothing is retried: Admins copy invitation links from the response, and a
-recovery request only logs `no email was sent` at info level. Logs never contain
-tokens, links, addresses, or SMTP credentials. (ponytail: no outbox or retries
-yet; the notification outbox and Admin-managed SMTP settings replace this.)
+Outbound SMTP is optional and configured by an Admin (`GET`/`PUT`/`DELETE
+/api/settings/smtp`, test with `POST /api/settings/smtp/test`). See
+[configuration.md](configuration.md) and [schema.md](schema.md). Only an Admin
+(`manage_settings`) can read or change it. The saved username and password are
+encrypted with `ENCRYPTION_KEY` and are never returned; omit them on `PUT` to
+keep them. Changing the host requires entering both again, so stored credentials
+are never sent to a new server. A test message can be sent only to the
+acting Admin's own email or the configured sender address, through the saved
+host, and only with required STARTTLS or implicit TLS. Certificate verification
+cannot be turned off. The test makes one attempt, so it answers within the
+15-second SMTP timeout.
+
+Invitation and recovery messages are plain text in the recipient's language and
+sent in the background, so the response time does not depend on delivery. Links
+use `PUBLIC_ORIGIN` and tell the reader to create and answer tickets in the
+portal. Without an enabled connection, Admins copy invitation links from the
+response, and a recovery request only logs `no email was sent` at info level.
+Logs, errors, and audit events never contain tokens, links, addresses, or SMTP
+credentials. A failed background send is recorded on the connection as a stable
+error code (`last_delivery_error`) and does not undo the invitation or recovery
+token. The same send path accepts an idempotency key so the notification outbox
+can retry without a second copy; this API does not implement that outbox.
 
 The `/invite/...` and `/reset-password/...` page URLs do contain the token; keep
 reverse-proxy access logs off or path-redacted. Every web page is served with
@@ -168,3 +183,47 @@ Append-only `audit_events`: `setup_completed`, `login_succeeded`, `login_failed`
 | POST | `/api/invitations/accept` | `200 Account` + cookie, `410`, `422`, `429` |
 | GET | `/api/accounts` | Admin: `200 Page<AccountSummary>` |
 | POST | `/api/accounts/{id}/deactivate`, `.../reactivate` | Admin: `204`, `404`, `409` |
+
+## Admin roles, teams and organization settings
+
+`PUT /api/accounts/{id}` takes `{role, expertise, team_id}` as the complete desired
+role/membership state. `expertise` and `team_id` may be null. Only Specialists may
+have nonblank expertise (at most 120 characters). Only active Operators,
+Specialists and Team Leads may join a non-archived team. Admins and Users must
+have no team. Membership is changed in the same transaction as the role; an
+invalid target rolls back everything. The sole lead is blocked with
+`active_team_lead` until replaced or archived. The existing last-active-Admin
+constraint also applies to role edits. Account lists include immutable ID,
+username, role, expertise, team ID and explicit `is_team_lead`; email never
+identifies the account being edited.
+
+`GET /api/teams` is a cursor-paginated Admin list including archived teams.
+`POST /api/teams {name, lead_account_id}` requires an active Team Lead who does
+not already lead another team. `PUT /api/teams/{id}
+{name, lead_account_id, archived}` renames, replaces leadership or archives.
+Names are nonblank, trimmed, unique and at most 120 characters. Replacing a lead
+removes only their leadership designation; membership remains. Selecting a
+replacement from another team explicitly moves that account, provided it does
+not lead that team. Archiving requires `lead_account_id: null`; restoring requires
+an eligible lead. Role alone never grants team leadership. Admin and operational
+duties need separate accounts, which may share an email.
+
+`GET /api/invitations?include_history=true` includes pending, accepted, expired
+and revoked invitations with a stable `status`. Accepted rows include the new
+account ID and username; tokens and links are never returned in lists. Omitting
+this flag retains the existing pending-only behavior. `POST
+/api/invitations/{id}/reissue` atomically revokes an unused, not-yet-revoked
+invitation and creates a replacement with the same role/contact/language,
+valid for 168 hours. Only this response reveals the new link. Accepted, revoked
+or already-reissued invitations return `409 conflict`; the Admin may create a
+separate invitation if needed. A concurrent acceptance/reissue has one winner.
+An omitted invitation language uses the organization default.
+
+`GET /api/admin/settings` and `PUT /api/admin/settings` are Admin-only. The PUT
+replaces the complete settings object. `GET /api/organization` gives signed-in
+clients the same non-secret effective policy. Settings are described in
+[configuration.md](configuration.md#organization-settings). The app reflects the
+organization name after refresh, formats invitation times in the organization's
+timezone and preselects its default invitation language. Existing accounts keep
+their own language preference. All API responses use `private, no-store` so
+permission-sensitive results are fetched again rather than reused from caches.

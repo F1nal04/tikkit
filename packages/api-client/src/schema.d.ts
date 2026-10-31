@@ -21,6 +21,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_account"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounts/{id}/deactivate": {
         parameters: {
             query?: never;
@@ -53,6 +69,58 @@ export interface paths {
         put?: never;
         /** Reactivates an account (Admin only). */
         post: operations["reactivate_account"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["delivery_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/notifications/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-queues every `failed` row. Rows keep their idempotency key, so a message
+         *     the relay already accepted is never sent twice.
+         */
+        post: operations["retry_failed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["settings"];
+        put: operations["update_settings"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -172,6 +240,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The active catalog for the shared ticket form: unarchived categories,
+         *     priorities, fields, and choices in display order. Any signed-in account.
+         */
+        get: operations["active_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalog/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The whole catalog including archived entries (Admin only). */
+        get: operations["full_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds a category at the end of the order (Admin only). */
+        post: operations["create_category"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the display order of all categories (Admin only). */
+        put: operations["reorder_categories"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/categories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Renames, sets "Skip AI automatically", archives, or restores a category
+         *     (Admin only). Submitted tickets keep their snapshot of the category.
+         */
+        patch: operations["update_category"];
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -189,6 +348,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/intake-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adds a conditional field at the end of the order (Admin only). A `select`
+         *     field needs at least one choice or `allow_other`.
+         */
+        post: operations["create_intake_field"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intake-fields/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the display order of all conditional fields (Admin only). */
+        put: operations["reorder_intake_fields"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intake-fields/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edits, archives, or restores a conditional field, its choices, and the
+         *     categories that reveal it (Admin only). The kind cannot change.
+         */
+        patch: operations["update_intake_field"];
+        trace?: never;
+    };
     "/api/invitations": {
         parameters: {
             query?: never;
@@ -196,7 +412,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Pending (usable) invitations, newest first (Admin only). */
+        /** Invitations newest first, optionally including all historical statuses (Admin only). */
         get: operations["list_invitations"];
         put?: never;
         /**
@@ -251,6 +467,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/invitations/{id}/reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reissue replaces an unused invitation atomically; concurrent/replayed requests fail. */
+        post: operations["reissue_invitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/invitations/{id}/revoke": {
         parameters: {
             query?: never;
@@ -271,6 +504,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["notification_preferences"];
+        put: operations["update_notification_preferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_notifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/unread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["unread_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Marks one of the caller's visible notifications read. Idempotent; anything
+         *     else (another account's, or one whose ticket is no longer visible) is `404`.
+         */
+        post: operations["mark_notification_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/openapi.json": {
         parameters: {
             query?: never;
@@ -280,6 +581,126 @@ export interface paths {
         };
         /** This OpenAPI document. */
         get: operations["openapi_json"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["organization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/priorities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds a priority level at the end of the order (Admin only). */
+        post: operations["create_priority"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/priorities/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the display order of all priority levels (Admin only). */
+        put: operations["reorder_priorities"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/priorities/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Renames, archives, or restores a priority level (Admin only). */
+        patch: operations["update_priority"];
+        trace?: never;
+    };
+    "/api/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Staff queue page, filtered and ordered as requested. `view=team` for a
+         *     non-Admin is always their own team (another `team_id` is `404`).
+         */
+        get: operations["list_queue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/bulk-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["bulk_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/queue/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open work counts for the caller's queue tabs. */
+        get: operations["queue_counts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -308,6 +729,168 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/saved-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's saved views, by name (at most 50, not paged). */
+        get: operations["list_views"];
+        put?: never;
+        /**
+         * Saves the caller's current filters under a name. Every filter must apply now
+         *     (`422`, `filters.<name>: invalid`).
+         */
+        post: operations["create_view"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/saved-views/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Deletes one of the caller's views; anyone else's is `404`. */
+        delete: operations["delete_view"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload one screenshot as the raw request body (`Content-Type: image/png`,
+         *     `image/jpeg`, or `image/webp`). It stays private to the uploader until
+         *     attached by submission; unreferenced uploads expire after 24 hours.
+         */
+        post: operations["upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Metadata of a screenshot the caller may currently read. */
+        get: operations["metadata"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an own pending upload immediately. Attached screenshots are frozen
+         *     (`409`); so are uploads still referenced by an editable draft: save the draft
+         *     without it first (or just save it; unreferenced uploads expire on their own).
+         */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The same bytes as an attachment download. */
+        get: operations["download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/screenshots/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inline image for `<img>` previews. Access is rechecked on every request and
+         *     never cached, so revoked access applies to old URLs immediately.
+         */
+        get: operations["preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/smtp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The saved outbound connection, or `connection: null` (Admin only). */
+        get: operations["get_smtp"];
+        /**
+         * Creates or replaces the outbound connection (Admin only).
+         *     A missing `password` keeps the stored one. The response never contains it.
+         */
+        put: operations["put_smtp"];
+        post?: never;
+        /** Removes the outbound connection (Admin only). Later mail is not sent. */
+        delete: operations["delete_smtp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/smtp/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sends a test message through the saved connection (Admin only).
+         *     The recipient must be this Admin's email or the configured sender address.
+         *     Transport security is the saved STARTTLS or implicit TLS setting; it is not
+         *     taken from the request. Failures use stable codes and do not echo credentials.
+         */
+        post: operations["test_smtp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/setup": {
         parameters: {
             query?: never;
@@ -320,6 +903,307 @@ export interface paths {
         put?: never;
         /** Creates the first Admin and signs them in. Works exactly once per deployment. */
         post: operations["setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_teams"];
+        put?: never;
+        post: operations["create_team"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_team"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ticket-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Active drafts of this account only (including for staff/Admin accounts). */
+        get: operations["list_drafts"];
+        put?: never;
+        /** Save incomplete input privately. Retained until the owner deletes or submits it. */
+        post: operations["create_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ticket-drafts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resume one owned draft. Other accounts, including Admins, get `404`. */
+        get: operations["get_draft"];
+        put?: never;
+        post?: never;
+        /** Delete an owned, unsubmitted draft at the last read version. */
+        delete: operations["delete_draft"];
+        options?: never;
+        head?: never;
+        /** Replace editable draft input using the last read version. Never edits a submitted ticket. */
+        patch: operations["update_draft"];
+        trace?: never;
+    };
+    "/api/ticket-drafts/{id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit exactly the owned draft version last read. On failure the draft stays
+         *     editable with the same version and input; success leaves an immutable tombstone.
+         */
+        post: operations["submit_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Own submitted tickets, newest first, including final AI-solved history.
+         *     This is a requester list for every role, never a staff queue or Admin report.
+         */
+        get: operations["list_own_tickets"];
+        put?: never;
+        /**
+         * Validate and submit new input. Owner is always the signed-in account. A
+         *     key reused with different input is `409`; identical retries replay the receipt.
+         */
+        post: operations["submit_ticket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Applies one change to up to 50 tickets, each independently authorized, locked,
+         *     and checked for staleness. A retry never applies twice: an applied item moved
+         *     its `updated_at`, so repeating it reports `conflict` and writes nothing.
+         */
+        post: operations["bulk_change"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A ticket the caller may see: their own (requester view, any status, any
+         *     role), or as staff under the ticket policy. Drafts, AI-stage and AI-solved
+         *     records are hidden from operators; dispatched tickets from other teams.
+         */
+        get: operations["ticket_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
+         *     return 409; policy is read again by the lifecycle inside the transaction.
+         */
+        post: operations["requester_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Poll target for open ticket pages: reload the ticket when `version` differs
+         *     from the one loaded with it. Same visibility as `GET /api/tickets/{id}`, checked
+         *     on every call, so a transfer, team removal, or revoked session stops it (`404`/`401`).
+         *     Internal notes count only in the staff view.
+         */
+        get: operations["ticket_activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch, transfer, return to general intake, claim, assign, or unassign.
+         *     Checks: visibility (`404`), self-handling (`403`), stale `expected_updated_at`
+         *     (`409`), the rest of the ticket policy (`403`), then the target (`422`).
+         *     Concurrent changes serialize on the ticket row; the later one is stale (`409`).
+         */
+        post: operations["change_assignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversation oldest first, with private rows excluded in SQL before pagination.
+         *     Ordered by commit sequence (never exposed: its gaps would count hidden notes);
+         *     the cursor names the last message, and one the caller cannot see ends the list.
+         */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a private internal note. Author, staff role, and visibility come from
+         *     the server's current ticket policy, never client-supplied fields.
+         */
+        post: operations["note"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a public reply. Ownership takes precedence over staff role: the ticket's
+         *     submitting account always speaks as requester. No AI work is scheduled.
+         */
+        post: operations["reply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tickets/{id}/staff-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Staff status work and priority changes. Thin over [`lifecycle::transition`]
+         *     (visibility, self-handling, claimed-ticket and policy rules live there and in
+         *     [`authz::authorize_ticket`]); stale clients get `409` and nothing is written.
+         */
+        post: operations["staff_action"];
         delete?: never;
         options?: never;
         head?: never;
@@ -355,12 +1239,200 @@ export interface components {
             created_at: string;
             display_name: string;
             email: string;
+            expertise: string | null;
             /** Format: uuid */
             id: string;
             is_active: boolean;
+            is_team_lead: boolean;
             language: components["schemas"]["Language"];
             role: components["schemas"]["Role"];
+            /** Format: uuid */
+            team_id: string | null;
             username: string;
+        };
+        ActionResult: {
+            status: components["schemas"]["TicketStatus"];
+        };
+        AnswerSnapshot: {
+            /**
+             * Format: uuid
+             * @description Set when a listed choice was picked; `None` for typed text.
+             */
+            choice_id?: string | null;
+            /** Format: uuid */
+            field_id: string;
+            label: string;
+            /** @description The choice label or the typed text. */
+            value: string;
+        };
+        /**
+         * @description One explicit team or assignee change, with the `updated_at` the client last
+         *     loaded (`TicketDetail.updated_at`); a newer change is `409 conflict`.
+         */
+        AssignmentAction: {
+            /** @enum {string} */
+            action: "dispatch";
+            /** Format: date-time */
+            expected_updated_at: string;
+            /** Format: uuid */
+            team_id: string;
+        } | {
+            /** @enum {string} */
+            action: "return_to_general";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "claim";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "assign";
+            /** Format: uuid */
+            assignee_account_id: string;
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "unassign";
+            /** Format: date-time */
+            expected_updated_at: string;
+        };
+        /** @description One immutable team/assignee change (`assignment_changed` event). Names are current. */
+        AssignmentChange: {
+            /**
+             * @description `dispatch`, `return_to_general`, `claim`, `assign`, or `unassign` (also
+             *     when an account lost eligibility; then `reason` says why).
+             */
+            action: string;
+            actor_display_name: string | null;
+            assignee_display_name: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            previous_assignee_display_name: string | null;
+            previous_team_name: string | null;
+            reason: string | null;
+            team_name: string | null;
+        };
+        /** @description What changed, safe to show even when the caller lost access by the change. */
+        AssignmentReceipt: {
+            assignee_display_name: string | null;
+            /** Format: int64 */
+            reference: number;
+            team_name: string | null;
+            /**
+             * @description The caller can still open the ticket as staff. False after a transfer to a
+             *     team the caller is not in: further reads are `404`.
+             */
+            visible: boolean;
+        };
+        /** @enum {string} */
+        AuthorKind: "requester" | "staff";
+        /** @description An eligible assignee for bulk assignment. */
+        BulkAssignee: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            team_id: string;
+            team_name: string;
+        };
+        /**
+         * @description The change applied to every listed ticket; the same rules as the single-ticket
+         *     `assignment` and `staff-actions` endpoints.
+         */
+        BulkChange: {
+            /** @enum {string} */
+            action: "dispatch";
+            /** Format: uuid */
+            team_id: string;
+        } | {
+            /** @enum {string} */
+            action: "return_to_general";
+        } | {
+            /** @enum {string} */
+            action: "claim";
+        } | {
+            /** @enum {string} */
+            action: "assign";
+            /** Format: uuid */
+            assignee_account_id: string;
+        } | {
+            /** @enum {string} */
+            action: "unassign";
+        } | {
+            /** @enum {string} */
+            action: "start_work";
+        } | {
+            /** @enum {string} */
+            action: "request_information";
+        } | {
+            /** @enum {string} */
+            action: "set_priority";
+            /** Format: uuid */
+            priority_id: string;
+        };
+        BulkItemResult: {
+            error: null | components["schemas"]["ErrorCode"];
+            /** Format: uuid */
+            id: string;
+        };
+        /** @description Targets the bulk bar offers. Affordances only: each item is rechecked. */
+        BulkOptions: {
+            /**
+             * @description Active staff members a caller may assign: a Team Lead's own team, every
+             *     active team for an Admin, nobody otherwise.
+             */
+            assignees: components["schemas"]["BulkAssignee"][];
+            /** @description Active teams (dispatch targets). */
+            teams: components["schemas"]["NamedId"][];
+        };
+        BulkRequest: {
+            change: components["schemas"]["BulkChange"];
+            /** @description 1-50 distinct tickets. */
+            tickets: components["schemas"]["BulkTicket"][];
+        };
+        /** @description One result per requested ticket, in request order. */
+        BulkResponse: {
+            results: components["schemas"]["BulkItemResult"][];
+        };
+        /** @description A ticket and the `updated_at` the client listed it with (`QueueTicket.updated_at`). */
+        BulkTicket: {
+            /** Format: date-time */
+            expected_updated_at: string;
+            /** Format: uuid */
+            id: string;
+        };
+        /**
+         * @description When the owning requester may cancel a submitted open ticket.
+         * @enum {string}
+         */
+        CancellationPolicy: "anytime_while_open" | "before_work_starts" | "disabled";
+        /** @description Everything in display order. */
+        Catalog: {
+            categories: components["schemas"]["Category"][];
+            fields: components["schemas"]["IntakeField"][];
+            priorities: components["schemas"]["Priority"][];
+        };
+        Category: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * @description "Skip AI automatically": submissions go straight to the operator queue
+             *     with no AI provider call, whatever the requester-skip setting says.
+             */
+            skip_ai: boolean;
+        };
+        CategoryUpdate: {
+            /** @description `true` hides it from new tickets; `false` restores it. Existing tickets are unaffected. */
+            archived?: boolean | null;
+            name?: string | null;
+            skip_ai?: boolean | null;
         };
         ChangePasswordRequest: {
             current_password: string;
@@ -373,6 +1445,28 @@ export interface components {
             /** @description `ok`, `pending`, `incompatible`, or `unknown`. */
             migrations: string;
         };
+        /** @description A select option. Its ID is stable: renaming keeps it, and it is archived, never deleted. */
+        Choice: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            label: string;
+        };
+        ChoiceInput: {
+            archived?: boolean | null;
+            /**
+             * Format: uuid
+             * @description An existing choice of this field to update; omit to add a new choice.
+             */
+            id?: string | null;
+            /** @description 1-100 characters, unique among the field's active choices. */
+            label: string;
+        };
+        /**
+         * @description How a resolved ticket was closed (`tickets.closure_reason`). A timeout is never an acceptance.
+         * @enum {string}
+         */
+        ClosureReason: "requester_confirmed" | "confirmation_timeout";
         CreateInvitationRequest: {
             /** @description Optional recipient. With SMTP configured the link is emailed there. */
             email?: string | null;
@@ -384,12 +1478,58 @@ export interface components {
             language?: null | components["schemas"]["Language"];
             role?: null | components["schemas"]["Role"];
         };
+        CreateSavedView: {
+            filters: components["schemas"]["QueueFilters"];
+            /** @description 1-80 characters after trimming, unique per account. */
+            name: string;
+        };
+        CreateTeamRequest: {
+            /** Format: uuid */
+            lead_account_id: string;
+            name: string;
+        };
         CreatedInvitation: {
             /** @description Whether an email was queued (SMTP configured and an email given). */
             emailed: boolean;
             invitation: components["schemas"]["Invitation"];
             /** @description Single-use acceptance link. Shown only now; only its hash is stored. */
             url: string;
+        };
+        DeliveryFailure: {
+            /** Format: int64 */
+            count: number;
+            /** @description Stable code, e.g. `smtp_auth_failed`. */
+            error: string;
+        };
+        DeliveryStats: {
+            /** Format: int64 */
+            failed: number;
+            failures: components["schemas"]["DeliveryFailure"][];
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            sent: number;
+            /** Format: int64 */
+            suppressed: number;
+        };
+        Draft: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            intake: components["schemas"]["TicketIntake"];
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        DraftUpdate: {
+            intake: components["schemas"]["TicketIntake"];
+            /**
+             * Format: int64
+             * @description The version last read; stale writes return `409 conflict`.
+             */
+            version: number;
         };
         ErrorBody: {
             code: components["schemas"]["ErrorCode"];
@@ -401,7 +1541,7 @@ export interface components {
          * @description Stable machine-readable error codes. Never translated; clients map them to text.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "internal";
+        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "internal";
         ErrorDetails: {
             /** @description Invalid input fields (dotted paths) and their stable error codes. */
             fields: {
@@ -413,10 +1553,70 @@ export interface components {
             /** @description Same value as the `x-request-id` response header. */
             request_id: string;
         };
+        /** @enum {string} */
+        FieldKind: "text" | "select";
         Health: {
             status: string;
         };
+        /**
+         * @description One conditional answer on the shared form: the `choice_id` of a `select`
+         *     field, or `text` (a `text` field, or a `select` field's free-text alternative).
+         */
+        IntakeAnswer: {
+            /** Format: uuid */
+            choice_id?: string | null;
+            text?: string | null;
+        };
+        IntakeField: {
+            /** @description `select` only: a free-text answer may be given instead of a choice. */
+            allow_other: boolean;
+            archived: boolean;
+            /** @description The categories whose selection reveals this field. */
+            category_ids: string[];
+            /** @description `select` only, in display order. */
+            choices: components["schemas"]["Choice"][];
+            /** @description Help text shown with the field; may be empty. */
+            guidance: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["FieldKind"];
+            label: string;
+            /** @description Required while visible. Hidden fields are never required. */
+            required: boolean;
+        };
+        IntakeFieldUpdate: {
+            allow_other?: boolean | null;
+            archived?: boolean | null;
+            /** @description Replaces the revealing categories. */
+            category_ids?: string[] | null;
+            /**
+             * @description The complete choice list in display order. Existing choices left out are
+             *     archived, never deleted, so their IDs stay valid for existing tickets.
+             */
+            choices?: components["schemas"]["ChoiceInput"][] | null;
+            guidance?: string | null;
+            label?: string | null;
+            required?: boolean | null;
+        };
+        /**
+         * @description What a submitted ticket stores: names, labels, and answers as they were at
+         *     submission, so later edits and archival never rewrite history, and the AI
+         *     route (`skip_ai`) is fixed for the whole attempt.
+         */
+        IntakeSnapshot: {
+            /** @description Answers to fields visible for the category, in display order. */
+            answers: components["schemas"]["AnswerSnapshot"][];
+            /** Format: uuid */
+            category_id: string;
+            category_name: string;
+            /** Format: uuid */
+            priority_id: string;
+            priority_name: string;
+            skip_ai: boolean;
+        };
         Invitation: {
+            /** Format: uuid */
+            account_id: string | null;
             /** Format: date-time */
             created_at: string;
             email: string | null;
@@ -426,6 +1626,8 @@ export interface components {
             id: string;
             language: components["schemas"]["Language"];
             role: components["schemas"]["Role"];
+            status: components["schemas"]["InvitationStatus"];
+            username: string | null;
         };
         /** @description What an invitee sees before accepting. Opening a link never consumes it. */
         InvitationPreview: {
@@ -435,6 +1637,8 @@ export interface components {
             language: components["schemas"]["Language"];
             role: components["schemas"]["Role"];
         };
+        /** @enum {string} */
+        InvitationStatus: "pending" | "accepted" | "expired" | "revoked";
         /**
          * @description Machine identifiers published in the contract; display text is localized by clients.
          * @enum {string}
@@ -444,6 +1648,95 @@ export interface components {
             password: string;
             username: string;
         };
+        Message: {
+            /**
+             * Format: uuid
+             * @description Immutable account identity for staff consumers; null in requester responses.
+             */
+            author_account_id: string | null;
+            /** @description User-authored plain text; render as text, never HTML. */
+            author_display_name: string;
+            author_kind: components["schemas"]["AuthorKind"];
+            /** @description Original plain text; render as text, never HTML or Markdown. */
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["MessageKind"];
+            screenshot_ids: string[];
+        };
+        /** @enum {string} */
+        MessageKind: "public_reply" | "internal_note";
+        NamedId: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        NewCategory: {
+            /** @description 1-100 characters, unique among active categories. */
+            name: string;
+            /** @description Default `false`: follow the organization AI policy. */
+            skip_ai?: boolean | null;
+        };
+        NewIntakeField: {
+            /** @description `select` only. */
+            allow_other?: boolean | null;
+            /** @description The categories that reveal this field. */
+            category_ids: string[];
+            /** @description `select` only, in display order (new choices, so without `id`). */
+            choices?: components["schemas"]["ChoiceInput"][] | null;
+            /** @description Up to 1000 characters. */
+            guidance?: string | null;
+            /** @description Fixed after creation. */
+            kind: components["schemas"]["FieldKind"];
+            /** @description 1-100 characters. */
+            label: string;
+            required?: boolean | null;
+        };
+        NewPriority: {
+            /** @description 1-100 characters, unique among active priorities. */
+            name: string;
+        };
+        Notification: {
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Portal path of the ticket; opening it still requires current access. */
+            href: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            read_at: string | null;
+            /** Format: uuid */
+            ticket_id: string;
+            /** @description System text in the caller's language. */
+            title: string;
+        };
+        NotificationPreferences: {
+            email: boolean;
+            in_app: boolean;
+        };
+        Order: {
+            /** @description Every ID of this kind, archived ones included, in the new display order. */
+            ids: string[];
+        };
+        OrganizationSettings: {
+            /** @description Human-closed tickets only. AI-solved records remain permanently non-reopenable. */
+            allow_reopening: boolean;
+            allow_requester_ai_skip: boolean;
+            default_language: components["schemas"]["Language"];
+            name: string;
+            /** @description Before work starts uses the first human work-start event, never current assignment. Every cancellation requires a reason. */
+            requester_cancellation_policy: components["schemas"]["CancellationPolicy"];
+            /**
+             * Format: int32
+             * @description Positive elapsed hours, default 168. Future proposals snapshot this policy; timeout closure is not requester acceptance.
+             */
+            resolution_confirmation_hours: number;
+            /** @description UTC or an IANA area/timezone name supported by PostgreSQL; timestamps remain UTC. */
+            timezone: string;
+        };
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_AccountSummary: {
             items: {
@@ -451,18 +1744,39 @@ export interface components {
                 created_at: string;
                 display_name: string;
                 email: string;
+                expertise: string | null;
                 /** Format: uuid */
                 id: string;
                 is_active: boolean;
+                is_team_lead: boolean;
                 language: components["schemas"]["Language"];
                 role: components["schemas"]["Role"];
+                /** Format: uuid */
+                team_id: string | null;
                 username: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Draft: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                intake: components["schemas"]["TicketIntake"];
+                /** Format: date-time */
+                updated_at: string;
+                /** Format: int64 */
+                version: number;
             }[];
             next_cursor: string | null;
         };
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_Invitation: {
             items: {
+                /** Format: uuid */
+                account_id: string | null;
                 /** Format: date-time */
                 created_at: string;
                 email: string | null;
@@ -472,6 +1786,95 @@ export interface components {
                 id: string;
                 language: components["schemas"]["Language"];
                 role: components["schemas"]["Role"];
+                status: components["schemas"]["InvitationStatus"];
+                username: string | null;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Message: {
+            items: {
+                /**
+                 * Format: uuid
+                 * @description Immutable account identity for staff consumers; null in requester responses.
+                 */
+                author_account_id: string | null;
+                /** @description User-authored plain text; render as text, never HTML. */
+                author_display_name: string;
+                author_kind: components["schemas"]["AuthorKind"];
+                /** @description Original plain text; render as text, never HTML or Markdown. */
+                body: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                kind: components["schemas"]["MessageKind"];
+                screenshot_ids: string[];
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Notification: {
+            items: {
+                body: string;
+                /** Format: date-time */
+                created_at: string;
+                /** @description Portal path of the ticket; opening it still requires current access. */
+                href: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                read_at: string | null;
+                /** Format: uuid */
+                ticket_id: string;
+                /** @description System text in the caller's language. */
+                title: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_QueueTicket: {
+            items: {
+                assignment: components["schemas"]["TicketAssignmentView"];
+                category_name: string;
+                /**
+                 * Format: date-time
+                 * @description Age is derived from this.
+                 */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /**
+                 * Format: uuid
+                 * @description The current effective priority; the requester's original choice stays in
+                 *     the ticket's intake snapshot.
+                 */
+                priority_id: string;
+                priority_name: string;
+                /**
+                 * Format: int64
+                 * @description Stable human-facing number.
+                 */
+                reference: number;
+                requester: components["schemas"]["TicketRequester"];
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_Team: {
+            items: {
+                archived: boolean;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                lead_account_id: string | null;
+                name: string;
             }[];
             next_cursor: string | null;
         };
@@ -483,6 +1886,127 @@ export interface components {
             }[];
             next_cursor: string | null;
         };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_TicketSummary: {
+            items: {
+                assignment: components["schemas"]["TicketAssignmentView"];
+                category_name: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                priority_name: string;
+                /** Format: int64 */
+                reference: number;
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor: string | null;
+        };
+        Priority: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /** @description One immutable change of the effective priority (`priority_changed` event). */
+        PriorityChange: {
+            /**
+             * Format: uuid
+             * @description Staff view only; `null` in the requester view.
+             */
+            actor_account_id: string | null;
+            actor_display_name: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            previous_priority_name: string;
+            priority_name: string;
+        };
+        PriorityUpdate: {
+            /** @description `true` hides it from new tickets; `false` restores it. Existing tickets are unaffected. */
+            archived?: boolean | null;
+            name?: string | null;
+        };
+        /** @description Open work counts per view, under the same visibility as the lists. */
+        QueueCounts: {
+            /**
+             * Format: int64
+             * @description Admin only.
+             */
+            all: number | null;
+            /** Format: int64 */
+            general: number;
+            /** Format: int64 */
+            mine: number;
+            /**
+             * Format: int64
+             * @description The caller's team; for an Admin, every dispatched ticket.
+             */
+            team: number;
+            /**
+             * @description Opaque change marker, compare for equality only: changes whenever an open
+             *     ticket the caller may see enters, leaves, or changes, or the caller's role or
+             *     team changes. Queue pages poll this endpoint and reload when it differs.
+             */
+            version: string;
+        };
+        /** @description The `GET /api/queue` filters a view applies (no cursor or page size). */
+        QueueFilters: {
+            /** Format: uuid */
+            category_id?: string | null;
+            /** Format: uuid */
+            priority_id?: string | null;
+            q?: string | null;
+            sort?: null | components["schemas"]["QueueSort"];
+            status?: null | components["schemas"]["TicketStatus"];
+            /** Format: uuid */
+            team_id?: string | null;
+            unassigned?: boolean | null;
+            view?: null | components["schemas"]["QueueView"];
+        };
+        /**
+         * @description Fixed orders; ties break on `(created_at, id)`.
+         * @enum {string}
+         */
+        QueueSort: "newest" | "oldest" | "priority";
+        /** @description One queue row. */
+        QueueTicket: {
+            assignment: components["schemas"]["TicketAssignmentView"];
+            category_name: string;
+            /**
+             * Format: date-time
+             * @description Age is derived from this.
+             */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description The current effective priority; the requester's original choice stays in
+             *     the ticket's intake snapshot.
+             */
+            priority_id: string;
+            priority_name: string;
+            /**
+             * Format: int64
+             * @description Stable human-facing number.
+             */
+            reference: number;
+            requester: components["schemas"]["TicketRequester"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description Which slice of the visible tickets a queue shows.
+         * @enum {string}
+         */
+        QueueView: "general" | "team" | "mine" | "all";
         Readiness: {
             checks: components["schemas"]["Checks"];
             /** @description `ready` or `unavailable`. */
@@ -491,13 +2015,85 @@ export interface components {
         RecoveryRequest: {
             username: string;
         };
+        /** @description Explicit decisions only: replies and views never implicitly accept a proposal. */
+        RequesterAction: {
+            /** @enum {string} */
+            action: "accept_resolution";
+            /** Format: int32 */
+            proposal_version: number;
+        } | {
+            /** @enum {string} */
+            action: "reject_resolution";
+            /** Format: int32 */
+            proposal_version: number;
+        } | {
+            /** @enum {string} */
+            action: "cancel";
+            reason: string;
+        } | {
+            /** @enum {string} */
+            action: "reopen";
+        };
         ResetPasswordRequest: {
             /** @description 12-256 characters. */
             new_password: string;
             token: string;
         };
+        /**
+         * @description Who resolved a finished ticket (`tickets.resolution_source`).
+         * @enum {string}
+         */
+        ResolutionSource: "ai" | "operator";
+        RetryResult: {
+            /** Format: int64 */
+            retried: number;
+        };
         /** @enum {string} */
         Role: "user" | "operator" | "specialist" | "team_lead" | "admin";
+        SavedView: {
+            /** Format: date-time */
+            created_at: string;
+            filters: components["schemas"]["QueueFilters"];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description Filters to drop when applying: the rest still work as saved. */
+            stale: components["schemas"]["StaleFilter"][];
+        };
+        /**
+         * @description Metadata of a validated screenshot. The bytes are only served by the
+         *     preview/download endpoints.
+         */
+        Screenshot: {
+            /**
+             * Format: int32
+             * @description Size of the stored, re-encoded file.
+             */
+            byte_size: number;
+            /** @description `image/png`, `image/jpeg`, or `image/webp`, from the decoded content. */
+            content_type: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Normalized server-side; the extension matches `content_type`. */
+            filename: string;
+            /** Format: int32 */
+            height: number;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            width: number;
+        };
+        SendMessage: {
+            /** @description Plain text, 1–10,000 characters, nonblank. HTML and Markdown are not interpreted. */
+            body: string;
+            /**
+             * Format: uuid
+             * @description New UUID per send. Reuse the UUID and exact input to retry safely.
+             */
+            idempotency_key: string;
+            /** @description Own pending screenshot uploads (at most 10, distinct). */
+            screenshot_ids?: string[];
+        };
         SetupRequest: {
             email: string;
             language: components["schemas"]["Language"];
@@ -509,6 +2105,187 @@ export interface components {
         SetupStatus: {
             setup_required: boolean;
         };
+        /** @description Masked connection. The username and password are never included. */
+        SmtpConnection: {
+            enabled: boolean;
+            host: string;
+            /** @description Stable code from the last background delivery failure, if any. */
+            last_delivery_error: string | null;
+            /** Format: date-time */
+            last_delivery_error_at: string | null;
+            /** Format: date-time */
+            last_test_at: string | null;
+            last_test_error: string | null;
+            /**
+             * @description Always true when a connection exists: a username and password are stored.
+             *     Neither value is returned.
+             */
+            password_set: boolean;
+            /** Format: int32 */
+            port: number;
+            security: components["schemas"]["SmtpSecurity"];
+            sender_address: string;
+            sender_name: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description How the relay expects the connection to be encrypted. There is no plaintext
+         *     or opportunistic mode: certificate verification stays on.
+         * @enum {string}
+         */
+        SmtpSecurity: "starttls" | "implicit_tls";
+        SmtpSettings: {
+            connection: null | components["schemas"]["SmtpConnection"];
+        };
+        SmtpSettingsWrite: {
+            enabled: boolean;
+            host: string;
+            /** @description Same rule as `username`. */
+            password?: string | null;
+            /** Format: int32 */
+            port: number;
+            security: components["schemas"]["SmtpSecurity"];
+            sender_address: string;
+            sender_name: string;
+            /**
+             * @description Required when creating the connection or changing the host, so stored
+             *     credentials are never sent to a new server. Omit to keep the stored value.
+             */
+            username?: string | null;
+        };
+        SmtpTestRequest: {
+            /** @description Recipient. Must be the acting Admin's email or the configured sender address. */
+            to: string;
+        };
+        SmtpTestResult: {
+            delivered: boolean;
+        };
+        /**
+         * @description Affordances for the staff view, from the same rules the write endpoints
+         *     enforce. Clients hide controls with them; the server rechecks every write.
+         */
+        StaffAccess: {
+            /**
+             * @description Eligible assignees: active staff members of the ticket's team other than
+             *     the requester and the current assignee (empty unless `can_assign`).
+             */
+            assignees: components["schemas"]["NamedId"][];
+            /** @description (Re)assign or unassign within the ticket's team (its Team Lead or an Admin). */
+            can_assign: boolean;
+            /** @description Take this unclaimed team ticket. */
+            can_claim: boolean;
+            /** @description Send to another team or return to the general queue. */
+            can_dispatch: boolean;
+            /**
+             * @description Staff reply, internal note, status work, resolution proposal, and priority
+             *     changes: the ticket is open, in a team, and the caller is in charge of it.
+             */
+            can_handle: boolean;
+            /**
+             * @description The ticket is closed with operator resolution, the Admin toggle is on, and
+             *     the caller is in charge of it.
+             */
+            can_reopen: boolean;
+            /** @description Active teams the ticket can be sent to (empty unless `can_dispatch`). */
+            dispatch_teams: components["schemas"]["NamedId"][];
+        };
+        /**
+         * @description Staff work on a ticket. Every action carries the `updated_at` the client last
+         *     loaded; a newer change (reply, status, priority) is `409 conflict`.
+         */
+        StaffAction: {
+            /** @enum {string} */
+            action: "start_work";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "request_information";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "propose_resolution";
+            /** Format: date-time */
+            expected_updated_at: string;
+            summary: string;
+        } | {
+            /** @enum {string} */
+            action: "reopen";
+            /** Format: date-time */
+            expected_updated_at: string;
+        } | {
+            /** @enum {string} */
+            action: "set_priority";
+            /** Format: date-time */
+            expected_updated_at: string;
+            /** Format: uuid */
+            priority_id: string;
+        };
+        /**
+         * @description A filter that no longer applies to the caller.
+         * @enum {string}
+         */
+        StaleFilter: "view" | "team_id" | "status" | "category_id" | "priority_id" | "q";
+        /**
+         * @description Immutable submission receipt. A replay returns the original submitted status;
+         *     read `/api/tickets/{id}` for the current status.
+         */
+        SubmissionReceipt: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            reference: number;
+            status: components["schemas"]["TicketStatus"];
+        };
+        SubmitDraft: {
+            /** Format: uuid */
+            idempotency_key: string;
+            requester_skip?: boolean;
+            /** Format: int64 */
+            version: number;
+        };
+        SubmitTicket: {
+            /**
+             * Format: uuid
+             * @description Generate once per logical submission; retain across network retries.
+             */
+            idempotency_key: string;
+            intake: components["schemas"]["TicketIntake"];
+            /** @description A request, never a bypass authority. The lifecycle checks current policy. */
+            requester_skip?: boolean;
+        };
+        /**
+         * @description Original intake, frozen when submission commits; current effective priority
+         *     stays on the ticket independently of the initial catalog selection here.
+         */
+        SubmittedIntake: {
+            catalog: components["schemas"]["IntakeSnapshot"];
+            description: string;
+            screenshot_ids: string[];
+            subject: string;
+        };
+        Team: {
+            archived: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            lead_account_id: string | null;
+            name: string;
+        };
+        /** @description A cheap change marker for an open ticket page (docs/lifecycle.md "Refreshing"). */
+        TicketActivity: {
+            /**
+             * @description Opaque digest; compare for equality only. Changes with every status, team,
+             *     assignee, or priority change, every message the caller may read, and the
+             *     caller's own role or team (so open pages refresh their capabilities). It is
+             *     not a counter, so it does not reveal how many staff-only events exist.
+             */
+            version: string;
+        };
         /**
          * @description Public handling details shown to a ticket's requester. `team_name: null`
          *     means the shared general queue; `assignee_display_name: null` means unassigned.
@@ -517,15 +2294,161 @@ export interface components {
             assignee_display_name: string | null;
             team_name: string | null;
         };
+        /** @description One ticket as the caller may see it. */
+        TicketDetail: {
+            assignment: components["schemas"]["TicketAssignmentView"];
+            /** @description Dispatch and assignment history, oldest first; staff view only (empty for the requester). */
+            assignment_changes: components["schemas"]["AssignmentChange"][];
+            /** Format: uuid */
+            category_id: string;
+            category_name: string;
+            closure_reason: null | components["schemas"]["ClosureReason"];
+            /**
+             * Format: date-time
+             * @description Auto-close time of the pending proposal; set only while `awaiting_confirmation`.
+             */
+            confirmation_deadline: string | null;
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            /** Format: uuid */
+            id: string;
+            intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            /** @description Staff-only effective-priority history, oldest first; empty in requester responses. */
+            priority_changes: components["schemas"]["PriorityChange"][];
+            /** Format: uuid */
+            priority_id: string;
+            priority_name: string;
+            /**
+             * Format: int32
+             * @description Version of the latest staff resolution proposal (0 = none). Requester
+             *     decisions send it back.
+             */
+            proposal_version: number;
+            /**
+             * Format: int64
+             * @description Stable human-facing number.
+             */
+            reference: number;
+            requester: null | components["schemas"]["TicketRequester"];
+            resolution_source: null | components["schemas"]["ResolutionSource"];
+            staff_access: null | components["schemas"]["StaffAccess"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** @description Status transitions, oldest first. */
+            transitions: components["schemas"]["TicketTransition"][];
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description `requester` when the caller submitted it (public data only, whatever their
+             *     role); `staff` for authorized staff.
+             */
+            view: components["schemas"]["TicketView"];
+        };
+        /**
+         * @description Full replacement of editable draft input. Missing fields have empty defaults;
+         *     category/priority and required answers are checked against the catalog at submission.
+         */
+        TicketIntake: {
+            /** @description Up to 100 conditional answers, keyed by field ID. */
+            answers?: {
+                [key: string]: components["schemas"]["IntakeAnswer"];
+            };
+            /** Format: uuid */
+            category_id?: string | null;
+            /** @description Up to 20,000 characters; required on submission. */
+            description?: string;
+            /** Format: uuid */
+            priority_id?: string | null;
+            /** @description Up to 10 distinct pending uploads of this account (`POST /api/screenshots`). */
+            screenshot_ids?: string[];
+            /** @description Up to 200 characters; required on submission. */
+            subject?: string;
+        };
+        TicketRequester: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+            username: string;
+        };
         /** @enum {string} */
         TicketStatus: "draft" | "ai_processing" | "awaiting_ai_decision" | "queued" | "in_progress" | "waiting_for_requester" | "awaiting_confirmation" | "closed" | "cancelled" | "ai_solved";
+        /** @description Minimal requester history. No staff-only metadata; all roles see only their own. */
+        TicketSummary: {
+            assignment: components["schemas"]["TicketAssignmentView"];
+            category_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            priority_name: string;
+            /** Format: int64 */
+            reference: number;
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description One immutable status transition (`ticket_events` row with a `to_status`). */
+        TicketTransition: {
+            /**
+             * Format: uuid
+             * @description Staff view only; `null` for background jobs and in the requester view.
+             */
+            actor_account_id: string | null;
+            /** @description Current display name of the actor; staff view only. */
+            actor_display_name: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** @description The transition, e.g. `submit`, `propose_resolution`, `confirmation_timeout`. */
+            event_type: string;
+            from_status: components["schemas"]["TicketStatus"];
+            /** Format: int64 */
+            id: number;
+            /**
+             * @description Public details: `route` (queue entry reason), `resolution_source`,
+             *     `closure_reason`, `proposal_version`, `summary`, `timeout_hours`,
+             *     `deadline`, or the cancellation `reason`.
+             */
+            payload: Record<string, never>;
+            to_status: components["schemas"]["TicketStatus"];
+        };
+        /**
+         * @description Which representation of a ticket the actor may read.
+         * @enum {string}
+         */
+        TicketView: "requester" | "staff";
         TokenRequest: {
             token: string;
+        };
+        UnreadCount: {
+            /** Format: int64 */
+            count: number;
+        };
+        UpdateAccountRequest: {
+            /** @description Descriptive only; only Specialist accounts may have expertise. Maximum 120 characters. */
+            expertise?: string | null;
+            role: components["schemas"]["Role"];
+            /**
+             * Format: uuid
+             * @description One current team; null removes membership. Users/Admins must use null.
+             */
+            team_id?: string | null;
         };
         UpdateProfileRequest: {
             /** @description Contact address; omitted keeps the current one. */
             email?: string | null;
             language?: null | components["schemas"]["Language"];
+        };
+        UpdateTeamRequest: {
+            /** @description Archiving clears leadership, memberships and assignments, retaining all history. */
+            archived: boolean;
+            /**
+             * Format: uuid
+             * @description Required for active teams; null when archiving. A lead must be active with team_lead role.
+             */
+            lead_account_id?: string | null;
+            name: string;
         };
     };
     responses: never;
@@ -569,6 +2492,71 @@ export interface operations {
             };
             /** @description `forbidden` (not an Admin) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated atomically */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description last_active_admin, active_team_lead, conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -672,6 +2660,162 @@ export interface operations {
             };
             /** @description `not_found` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delivery_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryStats"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    retry_failed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -939,6 +3083,231 @@ export interface operations {
             };
         };
     };
+    active_catalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Catalog"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    full_catalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Catalog"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_category: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCategory"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reorder_categories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Order"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: the IDs are not exactly the current categories (reload) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_category: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     health: {
         parameters: {
             query?: never;
@@ -959,13 +3328,173 @@ export interface operations {
             };
         };
     };
+    create_intake_field: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewIntakeField"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeField"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reorder_intake_fields: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Order"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: the IDs are not exactly the current fields (reload) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_intake_field: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntakeFieldUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeField"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     list_invitations: {
         parameters: {
             query?: {
-                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
                 limit?: number;
-                /** @description `next_cursor` from the previous page. */
                 cursor?: string;
+                /** @description Include accepted/expired/revoked invitations. Default false preserves the pending-only view. */
+                include_history?: boolean;
             };
             header?: never;
             path?: never;
@@ -1143,6 +3672,51 @@ export interface operations {
             };
         };
     };
+    reissue_invitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedInvitation"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     revoke_invitation: {
         parameters: {
             query?: never;
@@ -1190,6 +3764,164 @@ export interface operations {
             };
         };
     };
+    notification_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_notification_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferences"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_notifications: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Notification"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unread_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnreadCount"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    mark_notification_read: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     openapi_json: {
         parameters: {
             query?: never;
@@ -1206,6 +3938,352 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    organization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_priority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewPriority"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Priority"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reorder_priorities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Order"];
+            };
+        };
+        responses: {
+            /** @description Reordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: the IDs are not exactly the current priorities (reload) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_priority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriorityUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Priority"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`name`: `required`, `too_long`, `taken`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_queue: {
+        parameters: {
+            query?: {
+                /** @description Default `general`. */
+                view?: components["schemas"]["QueueView"];
+                /** @description `team` view, Admin only: restrict to one team. */
+                team_id?: string;
+                /** @description One of the open statuses, `closed`, or `cancelled`; default: all open statuses. */
+                status?: components["schemas"]["TicketStatus"];
+                category_id?: string;
+                priority_id?: string;
+                /** @description Only tickets without an individual assignee. */
+                unassigned?: boolean;
+                sort?: components["schemas"]["QueueSort"];
+                /**
+                 * @description Search text, up to 200 characters: a ticket reference (`123` or `#123`), or
+                 *     at least 3 characters matched anywhere in the subject, description, category,
+                 *     requester username or display name, or message text the caller may read.
+                 */
+                q?: string;
+                /** @description Page size, 1-100 (default 25). */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_QueueTicket"];
+                };
+            };
+            /** @description `invalid_query` (unknown or non-queue filter value) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff, or `view=all` without Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (another team's `team_id`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed`: `q` is `too_short` or `too_long`, or the cursor is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    bulk_options: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkOptions"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    queue_counts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueCounts"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -1235,6 +4313,573 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Readiness"];
+                };
+            };
+        };
+    };
+    list_views: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_view: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSavedView"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `name` is `required`, `too_long`, or `taken`; `saved_views: too_many`; or a filter is `invalid` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_view: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    upload: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Original file name; only a safe base name is kept. Its extension, if
+                 *     any, must match the image format.
+                 */
+                filename?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Raw image bytes, at most 10 MiB */
+        requestBody?: {
+            content: {
+                "image/jpeg": unknown;
+                "image/png": unknown;
+                "image/webp": unknown;
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Screenshot"];
+                };
+            };
+            /** @description `bad_request` (incomplete upload or body read exceeded 30 seconds) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `payload_too_large` (over 10 MiB) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed`: `file` is `required`, `unsupported_type`, `type_mismatch`, `corrupt`, `animated`, `dimensions_too_large`, or `too_many`; `filename` is `type_mismatch` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `internal` (storage or database failure; a commit acknowledgement may be lost) */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Screenshot"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or another account's upload) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (attached to a ticket or referenced by a draft) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated image bytes (`Content-Disposition: attachment`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/webp": unknown;
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/webp": unknown;
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_smtp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_smtp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmtpSettingsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_smtp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    test_smtp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmtpTestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpTestResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `smtp_not_configured` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`to`: `invalid` or `not_allowed`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `smtp_auth_failed`, `smtp_tls_failed`, `smtp_network_failed`, `smtp_delivery_failed`, or `smtp_credential_unreadable` */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -1300,6 +4945,1088 @@ export interface operations {
             };
             /** @description `rate_limited` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_teams: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Team"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_team: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTeamRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_team: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTeamRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_drafts: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TicketIntake"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (input bounds; `screenshot_ids` not own pending uploads) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_draft: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (stale version or already submitted) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftUpdate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (stale version or already submitted) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submit_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitDraft"];
+            };
+        };
+        responses: {
+            /** @description Original receipt (idempotent replay) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description Committed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (AI skip policy) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (stale/submitted draft or key reuse) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (intake/catalog) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_own_tickets: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["TicketStatus"];
+                /** @description Inclusive creation timestamp. */
+                created_from?: string;
+                /** @description Exclusive creation timestamp. */
+                created_before?: string;
+                /** @description Page size, 1–100 (default 25). */
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_TicketSummary"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submit_ticket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitTicket"];
+            };
+        };
+        responses: {
+            /** @description Original receipt (idempotent replay) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description Committed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionReceipt"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (AI skip policy) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict` (key already used for different input) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (intake/catalog) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    bulk_change: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not staff) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `tickets` is empty (`required`), over 50 (`too_many`), or repeats a ticket (`duplicate`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ticket_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible to the caller) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    requester_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequesterAction"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Current policy or actor denies the action */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale state or proposal version */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ticket_activity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketActivity"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing or not visible to the caller) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    change_assignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignmentAction"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentReceipt"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not allowed on this ticket (role, team, claim, self-handling, status) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale `expected_updated_at`, or nothing to return/unassign */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `team_id` or `assignee_account_id` is not an eligible target */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1-100 (default 25). Out-of-range values are clamped. */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Message"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invisible ticket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid cursor */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    note: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            /** @description Committed private note (same receipt on identical retry) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Staff writer denied (including self-handling) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invisible ticket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Key reused with different input */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid body or screenshots */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            /** @description Committed message (same receipt on identical retry) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Staff writer denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing or invisible ticket */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Requester ticket not open, or key reused with different input */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid body or screenshots */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    staff_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StaffAction"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not in charge of the ticket, self-handling, or policy denies */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Stale `expected_updated_at` or status */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

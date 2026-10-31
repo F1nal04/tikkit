@@ -72,6 +72,90 @@
         }
       }
     },
+    "/api/accounts/{id}": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "operationId": "update_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Updated atomically"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "last_active_admin, active_team_lead, conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/accounts/{id}/deactivate": {
       "post": {
         "tags": [
@@ -181,6 +265,185 @@
           },
           "404": {
             "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/notifications": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "operationId": "delivery_stats",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/notifications/retry": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Re-queues every `failed` row. Rows keep their idempotency key, so a message\nthe relay already accepted is never sent twice.",
+        "operationId": "retry_failed",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "operationId": "settings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "organization"
+        ],
+        "operationId": "update_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -479,6 +742,275 @@
         }
       }
     },
+    "/api/catalog": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "The active catalog for the shared ticket form: unarchived categories,\npriorities, fields, and choices in display order. Any signed-in account.",
+        "operationId": "active_catalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalog"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/catalog/all": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "The whole catalog including archived entries (Admin only).",
+        "operationId": "full_catalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Catalog"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Adds a category at the end of the order (Admin only).",
+        "operationId": "create_category",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewCategory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories/order": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Sets the display order of all categories (Admin only).",
+        "operationId": "reorder_categories",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reordered"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the IDs are not exactly the current categories (reload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/categories/{id}": {
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Renames, sets \"Skip AI automatically\", archives, or restores a category\n(Admin only). Submitted tickets keep their snapshot of the category.",
+        "operationId": "update_category",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "tags": [
@@ -500,18 +1032,214 @@
         }
       }
     },
+    "/api/intake-fields": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Adds a conditional field at the end of the order (Admin only). A `select`\nfield needs at least one choice or `allow_other`.",
+        "operationId": "create_intake_field",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewIntakeField"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeField"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/intake-fields/order": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Sets the display order of all conditional fields (Admin only).",
+        "operationId": "reorder_intake_fields",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reordered"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the IDs are not exactly the current fields (reload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/intake-fields/{id}": {
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Edits, archives, or restores a conditional field, its choices, and the\ncategories that reveal it (Admin only). The kind cannot change.",
+        "operationId": "update_intake_field",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakeFieldUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeField"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`label`, `guidance`, `allow_other`, `category_ids`, `choices`, `choices.N.label`, `choices.N.id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/invitations": {
       "get": {
         "tags": [
           "accounts"
         ],
-        "summary": "Pending (usable) invitations, newest first (Admin only).",
+        "summary": "Invitations newest first, optionally including all historical statuses (Admin only).",
         "operationId": "list_invitations",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -521,10 +1249,18 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "`next_cursor` from the previous page.",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "description": "Include accepted/expired/revoked invitations. Default false preserves the pending-only view.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -733,6 +1469,68 @@
         }
       }
     },
+    "/api/invitations/{id}/reissue": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Reissue replaces an unused invitation atomically; concurrent/replayed requests fail.",
+        "operationId": "reissue_invitation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedInvitation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/invitations/{id}/revoke": {
       "post": {
         "tags": [
@@ -788,6 +1586,200 @@
         }
       }
     },
+    "/api/notification-preferences": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "operationId": "notification_preferences",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferences"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "notifications"
+        ],
+        "operationId": "update_notification_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferences"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "operationId": "list_notifications",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Notification"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/unread": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "operationId": "unread_count",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCount"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/{id}/read": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Marks one of the caller's visible notifications read. Idempotent; anything\nelse (another account's, or one whose ticket is no longer visible) is `404`.",
+        "operationId": "mark_notification_read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/openapi.json": {
       "get": {
         "tags": [
@@ -800,6 +1792,478 @@
             "description": "OpenAPI 3.1 document",
             "content": {
               "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/organization": {
+      "get": {
+        "tags": [
+          "organization"
+        ],
+        "operationId": "organization",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/priorities": {
+      "post": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Adds a priority level at the end of the order (Admin only).",
+        "operationId": "create_priority",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPriority"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Priority"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/priorities/order": {
+      "put": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Sets the display order of all priority levels (Admin only).",
+        "operationId": "reorder_priorities",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Reordered"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: the IDs are not exactly the current priorities (reload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/priorities/{id}": {
+      "patch": {
+        "tags": [
+          "catalog"
+        ],
+        "summary": "Renames, archives, or restores a priority level (Admin only).",
+        "operationId": "update_priority",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriorityUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Priority"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`name`: `required`, `too_long`, `taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Staff queue page, filtered and ordered as requested. `view=team` for a\nnon-Admin is always their own team (another `team_id` is `404`).",
+        "operationId": "list_queue",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "description": "Default `general`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/QueueView"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "`team` view, Admin only: restrict to one team.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "One of the open statuses, `closed`, or `cancelled`; default: all open statuses.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TicketStatus"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "priority_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "unassigned",
+            "in": "query",
+            "description": "Only tickets without an individual assignee.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/QueueSort"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text, up to 200 characters: a ticket reference (`123` or `#123`), or\nat least 3 characters matched anywhere in the subject, description, category,\nrequester username or display name, or message text the caller may read.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_QueueTicket"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` (unknown or non-queue filter value)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff, or `view=all` without Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (another team's `team_id`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`: `q` is `too_short` or `too_long`, or the cursor is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/bulk-options": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "operationId": "bulk_options",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/queue/counts": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Open work counts for the caller's queue tabs.",
+        "operationId": "queue_counts",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueCounts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
             }
           }
         }
@@ -829,6 +2293,672 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Readiness"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/saved-views": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "The caller's saved views, by name (at most 50, not paged).",
+        "operationId": "list_views",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Saves the caller's current filters under a name. Every filter must apply now\n(`422`, `filters.<name>: invalid`).",
+        "operationId": "create_view",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSavedView"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`name` is `required`, `too_long`, or `taken`; `saved_views: too_many`; or a filter is `invalid`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/saved-views/{id}": {
+      "delete": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Deletes one of the caller's views; anyone else's is `404`.",
+        "operationId": "delete_view",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots": {
+      "post": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Upload one screenshot as the raw request body (`Content-Type: image/png`,\n`image/jpeg`, or `image/webp`). It stays private to the uploader until\nattached by submission; unreferenced uploads expire after 24 hours.",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "query",
+            "description": "Original file name; only a safe base name is kept. Its extension, if\nany, must match the image format.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Raw image bytes, at most 10 MiB",
+          "content": {
+            "image/jpeg": {},
+            "image/png": {},
+            "image/webp": {}
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Screenshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request` (incomplete upload or body read exceeded 30 seconds)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`payload_too_large` (over 10 MiB)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`: `file` is `required`, `unsupported_type`, `type_mismatch`, `corrupt`, `animated`, `dimensions_too_large`, or `too_many`; `filename` is `type_mismatch`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`internal` (storage or database failure; a commit acknowledgement may be lost)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots/{id}": {
+      "get": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Metadata of a screenshot the caller may currently read.",
+        "operationId": "metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Screenshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Delete an own pending upload immediately. Attached screenshots are frozen\n(`409`); so are uploads still referenced by an editable draft: save the draft\nwithout it first (or just save it; unreferenced uploads expire on their own).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or another account's upload)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (attached to a ticket or referenced by a draft)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots/{id}/download": {
+      "get": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "The same bytes as an attachment download.",
+        "operationId": "download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validated image bytes (`Content-Disposition: attachment`)",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/webp": {}
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/screenshots/{id}/preview": {
+      "get": {
+        "tags": [
+          "screenshots"
+        ],
+        "summary": "Inline image for `<img>` previews. Access is rechecked on every request and\nnever cached, so revoked access applies to old URLs immediately.",
+        "operationId": "preview",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validated image bytes",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/webp": {}
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/smtp": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "The saved outbound connection, or `connection: null` (Admin only).",
+        "operationId": "get_smtp",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Creates or replaces the outbound connection (Admin only).\nA missing `password` keeps the stored one. The response never contains it.",
+        "operationId": "put_smtp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpSettingsWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Removes the outbound connection (Admin only). Later mail is not sent.",
+        "operationId": "delete_smtp",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/smtp/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Sends a test message through the saved connection (Admin only).\nThe recipient must be this Admin's email or the configured sender address.\nTransport security is the saved STARTTLS or implicit TLS setting; it is not\ntaken from the request. Failures use stable codes and do not echo credentials.",
+        "operationId": "test_smtp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpTestResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`smtp_not_configured`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`to`: `invalid` or `not_allowed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`smtp_auth_failed`, `smtp_tls_failed`, `smtp_network_failed`, `smtp_delivery_failed`, or `smtp_credential_unreadable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -915,6 +3045,1475 @@
           }
         }
       }
+    },
+    "/api/teams": {
+      "get": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "list_teams",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "create_team",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{id}": {
+      "put": {
+        "tags": [
+          "teams"
+        ],
+        "operationId": "update_team",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTeamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ticket-drafts": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Active drafts of this account only (including for staff/Admin accounts).",
+        "operationId": "list_drafts",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Save incomplete input privately. Retained until the owner deletes or submits it.",
+        "operationId": "create_draft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketIntake"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ticket-drafts/{id}": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Resume one owned draft. Other accounts, including Admins, get `404`.",
+        "operationId": "get_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Delete an owned, unsubmitted draft at the last read version.",
+        "operationId": "delete_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (stale version or already submitted)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Replace editable draft input using the last read version. Never edits a submitted ticket.",
+        "operationId": "update_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (stale version or already submitted)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ticket-drafts/{id}/submit": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Submit exactly the owned draft version last read. On failure the draft stays\neditable with the same version and input; success leaves an immutable tombstone.",
+        "operationId": "submit_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Original receipt (idempotent replay)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Committed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (AI skip policy)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (stale/submitted draft or key reuse)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (intake/catalog)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Own submitted tickets, newest first, including final AI-solved history.\nThis is a requester list for every role, never a staff queue or Admin report.",
+        "operationId": "list_own_tickets",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TicketStatus"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive creation timestamp.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive creation timestamp.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–100 (default 25).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TicketSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Validate and submit new input. Owner is always the signed-in account. A\nkey reused with different input is `409`; identical retries replay the receipt.",
+        "operationId": "submit_ticket",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitTicket"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Original receipt (idempotent replay)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Committed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (AI skip policy)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict` (key already used for different input)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (intake/catalog)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/bulk": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Applies one change to up to 50 tickets, each independently authorized, locked,\nand checked for staleness. A retry never applies twice: an applied item moved\nits `updated_at`, so repeating it reports `conflict` and writes nothing.",
+        "operationId": "bulk_change",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not staff)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`tickets` is empty (`required`), over 50 (`too_many`), or repeats a ticket (`duplicate`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "A ticket the caller may see: their own (requester view, any status, any\nrole), or as staff under the ticket policy. Drafts, AI-stage and AI-solved\nrecords are hidden from operators; dispatched tickets from other teams.",
+        "operationId": "ticket_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible to the caller)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/actions": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Apply one lifecycle decision atomically. Stale/duplicate proposal decisions\nreturn 409; policy is read again by the lifecycle inside the transaction.",
+        "operationId": "requester_action",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequesterAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current policy or actor denies the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale state or proposal version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/activity": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Poll target for open ticket pages: reload the ticket when `version` differs\nfrom the one loaded with it. Same visibility as `GET /api/tickets/{id}`, checked\non every call, so a transfer, team removal, or revoked session stops it (`404`/`401`).\nInternal notes count only in the staff view.",
+        "operationId": "ticket_activity",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketActivity"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing or not visible to the caller)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/assignment": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Dispatch, transfer, return to general intake, claim, assign, or unassign.\nChecks: visibility (`404`), self-handling (`403`), stale `expected_updated_at`\n(`409`), the rest of the ticket policy (`403`), then the target (`422`).\nConcurrent changes serialize on the ticket row; the later one is stale (`409`).",
+        "operationId": "change_assignment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed on this ticket (role, team, claim, self-handling, status)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale `expected_updated_at`, or nothing to return/unassign",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`team_id` or `assignee_account_id` is not an eligible target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/messages": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Conversation oldest first, with private rows excluded in SQL before pagination.\nOrdered by commit sequence (never exposed: its gaps would count hidden notes);\nthe cursor names the last message, and one the caller cannot see ends the list.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25). Out-of-range values are clamped.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing or invisible ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/notes": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Add a private internal note. Author, staff role, and visibility come from\nthe server's current ticket policy, never client-supplied fields.",
+        "operationId": "note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Committed private note (same receipt on identical retry)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff writer denied (including self-handling)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing or invisible ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key reused with different input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid body or screenshots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/replies": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Send a public reply. Ownership takes precedence over staff role: the ticket's\nsubmitting account always speaks as requester. No AI work is scheduled.",
+        "operationId": "reply",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Committed message (same receipt on identical retry)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff writer denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing or invisible ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Requester ticket not open, or key reused with different input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid body or screenshots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{id}/staff-actions": {
+      "post": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "Staff status work and priority changes. Thin over [`lifecycle::transition`]\n(visibility, self-handling, claimed-ticket and policy rules live there and in\n[`authz::authorize_ticket`]); stale clients get `409` and nothing is written.",
+        "operationId": "staff_action",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not in charge of the ticket, self-handling, or policy denies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale `expected_updated_at` or status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -986,6 +4585,9 @@
       "AccountSummary": {
         "type": "object",
         "required": [
+          "expertise",
+          "team_id",
+          "is_team_lead",
           "id",
           "username",
           "display_name",
@@ -1006,11 +4608,20 @@
           "email": {
             "type": "string"
           },
+          "expertise": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
           },
           "is_active": {
+            "type": "boolean"
+          },
+          "is_team_lead": {
             "type": "boolean"
           },
           "language": {
@@ -1019,10 +4630,624 @@
           "role": {
             "$ref": "#/components/schemas/Role"
           },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "username": {
             "type": "string"
           }
         }
+      },
+      "ActionResult": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "AnswerSnapshot": {
+        "type": "object",
+        "required": [
+          "field_id",
+          "label",
+          "value"
+        ],
+        "properties": {
+          "choice_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set when a listed choice was picked; `None` for typed text."
+          },
+          "field_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "The choice label or the typed text."
+          }
+        }
+      },
+      "AssignmentAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Send the ticket to an active team (from the general queue or another team).\nLeaves the individual assignee empty.",
+            "required": [
+              "expected_updated_at",
+              "team_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "dispatch"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "team_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Put a team ticket back into shared intake: no team, no assignee.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "return_to_general"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Take an unclaimed ticket of the caller's team.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "claim"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Team Lead (own team) or Admin: (re)assign to an active member of the ticket's team.",
+            "required": [
+              "expected_updated_at",
+              "assignee_account_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "assign"
+                ]
+              },
+              "assignee_account_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Team Lead (own team) or Admin: clear the individual assignee.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "unassign"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "description": "One explicit team or assignee change, with the `updated_at` the client last\nloaded (`TicketDetail.updated_at`); a newer change is `409 conflict`."
+      },
+      "AssignmentChange": {
+        "type": "object",
+        "description": "One immutable team/assignee change (`assignment_changed` event). Names are current.",
+        "required": [
+          "id",
+          "action",
+          "reason",
+          "previous_team_name",
+          "team_name",
+          "previous_assignee_display_name",
+          "assignee_display_name",
+          "actor_display_name",
+          "created_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`dispatch`, `return_to_general`, `claim`, `assign`, or `unassign` (also\nwhen an account lost eligibility; then `reason` says why)."
+          },
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "previous_assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "previous_team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AssignmentReceipt": {
+        "type": "object",
+        "description": "What changed, safe to show even when the caller lost access by the change.",
+        "required": [
+          "reference",
+          "team_name",
+          "assignee_display_name",
+          "visible"
+        ],
+        "properties": {
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "The caller can still open the ticket as staff. False after a transfer to a\nteam the caller is not in: further reads are `404`."
+          }
+        }
+      },
+      "AuthorKind": {
+        "type": "string",
+        "enum": [
+          "requester",
+          "staff"
+        ]
+      },
+      "BulkAssignee": {
+        "type": "object",
+        "description": "An eligible assignee for bulk assignment.",
+        "required": [
+          "id",
+          "display_name",
+          "team_id",
+          "team_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "team_name": {
+            "type": "string"
+          }
+        }
+      },
+      "BulkChange": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "team_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "dispatch"
+                ]
+              },
+              "team_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "return_to_general"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "claim"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "assignee_account_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "assign"
+                ]
+              },
+              "assignee_account_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "unassign"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "start_work"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "request_information"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "priority_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "set_priority"
+                ]
+              },
+              "priority_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "The change applied to every listed ticket; the same rules as the single-ticket\n`assignment` and `staff-actions` endpoints."
+      },
+      "BulkItemResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorCode",
+                "description": "`null` when applied. Otherwise what the single-ticket endpoint would answer:\n`not_found` (not visible), `forbidden` (visible, not allowed), `conflict`\n(changed since listed, or nothing to change), `validation_failed` (not an\neligible target for this ticket), or `internal`."
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "BulkOptions": {
+        "type": "object",
+        "description": "Targets the bulk bar offers. Affordances only: each item is rechecked.",
+        "required": [
+          "teams",
+          "assignees"
+        ],
+        "properties": {
+          "assignees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkAssignee"
+            },
+            "description": "Active staff members a caller may assign: a Team Lead's own team, every\nactive team for an Admin, nobody otherwise."
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "description": "Active teams (dispatch targets)."
+          }
+        }
+      },
+      "BulkRequest": {
+        "type": "object",
+        "required": [
+          "change",
+          "tickets"
+        ],
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/BulkChange"
+          },
+          "tickets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkTicket"
+            },
+            "description": "1-50 distinct tickets."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkResponse": {
+        "type": "object",
+        "description": "One result per requested ticket, in request order.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkItemResult"
+            }
+          }
+        }
+      },
+      "BulkTicket": {
+        "type": "object",
+        "description": "A ticket and the `updated_at` the client listed it with (`QueueTicket.updated_at`).",
+        "required": [
+          "id",
+          "expected_updated_at"
+        ],
+        "properties": {
+          "expected_updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CancellationPolicy": {
+        "type": "string",
+        "description": "When the owning requester may cancel a submitted open ticket.",
+        "enum": [
+          "anytime_while_open",
+          "before_work_starts",
+          "disabled"
+        ]
+      },
+      "Catalog": {
+        "type": "object",
+        "description": "Everything in display order.",
+        "required": [
+          "categories",
+          "priorities",
+          "fields"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            }
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeField"
+            }
+          },
+          "priorities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Priority"
+            }
+          }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "skip_ai",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "skip_ai": {
+            "type": "boolean",
+            "description": "\"Skip AI automatically\": submissions go straight to the operator queue\nwith no AI provider call, whatever the requester-skip setting says."
+          }
+        }
+      },
+      "CategoryUpdate": {
+        "type": "object",
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` hides it from new tickets; `false` restores it. Existing tickets are unaffected."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skip_ai": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "ChangePasswordRequest": {
         "type": "object",
@@ -1057,6 +5282,62 @@
             "description": "`ok`, `pending`, `incompatible`, or `unknown`."
           }
         }
+      },
+      "Choice": {
+        "type": "object",
+        "description": "A select option. Its ID is stable: renaming keeps it, and it is archived, never deleted.",
+        "required": [
+          "id",
+          "label",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "ChoiceInput": {
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "An existing choice of this field to update; omit to add a new choice."
+          },
+          "label": {
+            "type": "string",
+            "description": "1-100 characters, unique among the field's active choices."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClosureReason": {
+        "type": "string",
+        "description": "How a resolved ticket was closed (`tickets.closure_reason`). A timeout is never an acceptance.",
+        "enum": [
+          "requester_confirmed",
+          "confirmation_timeout"
+        ]
       },
       "CreateInvitationRequest": {
         "type": "object",
@@ -1102,6 +5383,40 @@
         },
         "additionalProperties": false
       },
+      "CreateSavedView": {
+        "type": "object",
+        "required": [
+          "name",
+          "filters"
+        ],
+        "properties": {
+          "filters": {
+            "$ref": "#/components/schemas/QueueFilters"
+          },
+          "name": {
+            "type": "string",
+            "description": "1-80 characters after trimming, unique per account."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateTeamRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "lead_account_id"
+        ],
+        "properties": {
+          "lead_account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreatedInvitation": {
         "type": "object",
         "required": [
@@ -1122,6 +5437,106 @@
             "description": "Single-use acceptance link. Shown only now; only its hash is stored."
           }
         }
+      },
+      "DeliveryFailure": {
+        "type": "object",
+        "required": [
+          "error",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": "string",
+            "description": "Stable code, e.g. `smtp_auth_failed`."
+          }
+        }
+      },
+      "DeliveryStats": {
+        "type": "object",
+        "required": [
+          "pending",
+          "sent",
+          "suppressed",
+          "failed",
+          "failures"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveryFailure"
+            }
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "suppressed": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "Draft": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "intake",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "intake": {
+            "$ref": "#/components/schemas/TicketIntake"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DraftUpdate": {
+        "type": "object",
+        "required": [
+          "version",
+          "intake"
+        ],
+        "properties": {
+          "intake": {
+            "$ref": "#/components/schemas/TicketIntake"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version last read; stale writes return `409 conflict`."
+          }
+        },
+        "additionalProperties": false
       },
       "ErrorBody": {
         "type": "object",
@@ -1174,6 +5589,12 @@
           "method_not_allowed",
           "conflict",
           "payload_too_large",
+          "smtp_not_configured",
+          "smtp_auth_failed",
+          "smtp_tls_failed",
+          "smtp_network_failed",
+          "smtp_delivery_failed",
+          "smtp_credential_unreadable",
           "internal"
         ]
       },
@@ -1214,6 +5635,13 @@
           }
         }
       },
+      "FieldKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "select"
+        ]
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -1225,9 +5653,183 @@
           }
         }
       },
+      "IntakeAnswer": {
+        "type": "object",
+        "description": "One conditional answer on the shared form: the `choice_id` of a `select`\nfield, or `text` (a `text` field, or a `select` field's free-text alternative).",
+        "properties": {
+          "choice_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "IntakeField": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "guidance",
+          "kind",
+          "required",
+          "allow_other",
+          "category_ids",
+          "choices",
+          "archived"
+        ],
+        "properties": {
+          "allow_other": {
+            "type": "boolean",
+            "description": "`select` only: a free-text answer may be given instead of a choice."
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "category_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The categories whose selection reveals this field."
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Choice"
+            },
+            "description": "`select` only, in display order."
+          },
+          "guidance": {
+            "type": "string",
+            "description": "Help text shown with the field; may be empty."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FieldKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Required while visible. Hidden fields are never required."
+          }
+        }
+      },
+      "IntakeFieldUpdate": {
+        "type": "object",
+        "properties": {
+          "allow_other": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "category_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Replaces the revealing categories."
+          },
+          "choices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ChoiceInput"
+            },
+            "description": "The complete choice list in display order. Existing choices left out are\narchived, never deleted, so their IDs stay valid for existing tickets."
+          },
+          "guidance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "IntakeSnapshot": {
+        "type": "object",
+        "description": "What a submitted ticket stores: names, labels, and answers as they were at\nsubmission, so later edits and archival never rewrite history, and the AI\nroute (`skip_ai`) is fixed for the whole attempt.",
+        "required": [
+          "category_id",
+          "category_name",
+          "skip_ai",
+          "priority_id",
+          "priority_name",
+          "answers"
+        ],
+        "properties": {
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnswerSnapshot"
+            },
+            "description": "Answers to fields visible for the category, in display order."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "priority_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "skip_ai": {
+            "type": "boolean"
+          }
+        }
+      },
       "Invitation": {
         "type": "object",
         "required": [
+          "status",
+          "account_id",
+          "username",
           "id",
           "role",
           "email",
@@ -1236,6 +5838,13 @@
           "expires_at"
         ],
         "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -1259,6 +5868,15 @@
           },
           "role": {
             "$ref": "#/components/schemas/Role"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InvitationStatus"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1290,6 +5908,15 @@
           }
         }
       },
+      "InvitationStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "accepted",
+          "expired",
+          "revoked"
+        ]
+      },
       "Language": {
         "type": "string",
         "description": "Machine identifiers published in the contract; display text is localized by clients.",
@@ -1314,6 +5941,289 @@
         },
         "additionalProperties": false
       },
+      "Message": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "author_kind",
+          "author_account_id",
+          "author_display_name",
+          "body",
+          "screenshot_ids",
+          "created_at"
+        ],
+        "properties": {
+          "author_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Immutable account identity for staff consumers; null in requester responses."
+          },
+          "author_display_name": {
+            "type": "string",
+            "description": "User-authored plain text; render as text, never HTML."
+          },
+          "author_kind": {
+            "$ref": "#/components/schemas/AuthorKind"
+          },
+          "body": {
+            "type": "string",
+            "description": "Original plain text; render as text, never HTML or Markdown."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MessageKind"
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "MessageKind": {
+        "type": "string",
+        "enum": [
+          "public_reply",
+          "internal_note"
+        ]
+      },
+      "NamedId": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "NewCategory": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-100 characters, unique among active categories."
+          },
+          "skip_ai": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Default `false`: follow the organization AI policy."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewIntakeField": {
+        "type": "object",
+        "required": [
+          "label",
+          "kind",
+          "category_ids"
+        ],
+        "properties": {
+          "allow_other": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`select` only."
+          },
+          "category_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The categories that reveal this field."
+          },
+          "choices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ChoiceInput"
+            },
+            "description": "`select` only, in display order (new choices, so without `id`)."
+          },
+          "guidance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Up to 1000 characters."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FieldKind",
+            "description": "Fixed after creation."
+          },
+          "label": {
+            "type": "string",
+            "description": "1-100 characters."
+          },
+          "required": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NewPriority": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-100 characters, unique among active priorities."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Notification": {
+        "type": "object",
+        "required": [
+          "id",
+          "ticket_id",
+          "title",
+          "body",
+          "href",
+          "created_at",
+          "read_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "href": {
+            "type": "string",
+            "description": "Portal path of the ticket; opening it still requires current access."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "read_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "ticket_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "description": "System text in the caller's language."
+          }
+        }
+      },
+      "NotificationPreferences": {
+        "type": "object",
+        "required": [
+          "email",
+          "in_app"
+        ],
+        "properties": {
+          "email": {
+            "type": "boolean"
+          },
+          "in_app": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Order": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Every ID of this kind, archived ones included, in the new display order."
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationSettings": {
+        "type": "object",
+        "required": [
+          "name",
+          "timezone",
+          "default_language",
+          "allow_reopening",
+          "requester_cancellation_policy",
+          "resolution_confirmation_hours",
+          "allow_requester_ai_skip"
+        ],
+        "properties": {
+          "allow_reopening": {
+            "type": "boolean",
+            "description": "Human-closed tickets only. AI-solved records remain permanently non-reopenable."
+          },
+          "allow_requester_ai_skip": {
+            "type": "boolean"
+          },
+          "default_language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requester_cancellation_policy": {
+            "$ref": "#/components/schemas/CancellationPolicy",
+            "description": "Before work starts uses the first human work-start event, never current assignment. Every cancellation requires a reason."
+          },
+          "resolution_confirmation_hours": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Positive elapsed hours, default 168. Future proposals snapshot this policy; timeout closure is not requester acceptance."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "UTC or an IANA area/timezone name supported by PostgreSQL; timestamps remain UTC."
+          }
+        },
+        "additionalProperties": false
+      },
       "Page_AccountSummary": {
         "type": "object",
         "description": "One page of a list. `next_cursor` is null on the last page.",
@@ -1327,6 +6237,9 @@
             "items": {
               "type": "object",
               "required": [
+                "expertise",
+                "team_id",
+                "is_team_lead",
                 "id",
                 "username",
                 "display_name",
@@ -1347,11 +6260,20 @@
                 "email": {
                   "type": "string"
                 },
+                "expertise": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "id": {
                   "type": "string",
                   "format": "uuid"
                 },
                 "is_active": {
+                  "type": "boolean"
+                },
+                "is_team_lead": {
                   "type": "boolean"
                 },
                 "language": {
@@ -1360,8 +6282,65 @@
                 "role": {
                   "$ref": "#/components/schemas/Role"
                 },
+                "team_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
                 "username": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Draft": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "version",
+                "intake",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "intake": {
+                  "$ref": "#/components/schemas/TicketIntake"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "version": {
+                  "type": "integer",
+                  "format": "int64"
                 }
               }
             }
@@ -1387,6 +6366,9 @@
             "items": {
               "type": "object",
               "required": [
+                "status",
+                "account_id",
+                "username",
                 "id",
                 "role",
                 "email",
@@ -1395,6 +6377,13 @@
                 "expires_at"
               ],
               "properties": {
+                "account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -1418,6 +6407,280 @@
                 },
                 "role": {
                   "$ref": "#/components/schemas/Role"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/InvitationStatus"
+                },
+                "username": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Message": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "author_kind",
+                "author_account_id",
+                "author_display_name",
+                "body",
+                "screenshot_ids",
+                "created_at"
+              ],
+              "properties": {
+                "author_account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "Immutable account identity for staff consumers; null in requester responses."
+                },
+                "author_display_name": {
+                  "type": "string",
+                  "description": "User-authored plain text; render as text, never HTML."
+                },
+                "author_kind": {
+                  "$ref": "#/components/schemas/AuthorKind"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Original plain text; render as text, never HTML or Markdown."
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/MessageKind"
+                },
+                "screenshot_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Notification": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "ticket_id",
+                "title",
+                "body",
+                "href",
+                "created_at",
+                "read_at"
+              ],
+              "properties": {
+                "body": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "href": {
+                  "type": "string",
+                  "description": "Portal path of the ticket; opening it still requires current access."
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "read_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "ticket_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "System text in the caller's language."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_QueueTicket": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One queue row.",
+              "required": [
+                "id",
+                "reference",
+                "status",
+                "subject",
+                "category_name",
+                "priority_id",
+                "priority_name",
+                "requester",
+                "assignment",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "assignment": {
+                  "$ref": "#/components/schemas/TicketAssignmentView"
+                },
+                "category_name": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Age is derived from this."
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "priority_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "The current effective priority; the requester's original choice stays in\nthe ticket's intake snapshot."
+                },
+                "priority_name": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Stable human-facing number."
+                },
+                "requester": {
+                  "$ref": "#/components/schemas/TicketRequester"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Team": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "lead_account_id",
+                "archived",
+                "created_at"
+              ],
+              "properties": {
+                "archived": {
+                  "type": "boolean"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "lead_account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
                 }
               }
             }
@@ -1471,6 +6734,341 @@
           }
         }
       },
+      "Page_TicketSummary": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Minimal requester history. No staff-only metadata; all roles see only their own.",
+              "required": [
+                "id",
+                "reference",
+                "status",
+                "subject",
+                "category_name",
+                "priority_name",
+                "assignment",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "assignment": {
+                  "$ref": "#/components/schemas/TicketAssignmentView"
+                },
+                "category_name": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "priority_name": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Priority": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PriorityChange": {
+        "type": "object",
+        "description": "One immutable change of the effective priority (`priority_changed` event).",
+        "required": [
+          "id",
+          "previous_priority_name",
+          "priority_name",
+          "actor_account_id",
+          "actor_display_name",
+          "created_at"
+        ],
+        "properties": {
+          "actor_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Staff view only; `null` in the requester view."
+          },
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "previous_priority_name": {
+            "type": "string"
+          },
+          "priority_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PriorityUpdate": {
+        "type": "object",
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` hides it from new tickets; `false` restores it. Existing tickets are unaffected."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueueCounts": {
+        "type": "object",
+        "description": "Open work counts per view, under the same visibility as the lists.",
+        "required": [
+          "general",
+          "team",
+          "mine",
+          "all",
+          "version"
+        ],
+        "properties": {
+          "all": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Admin only."
+          },
+          "general": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mine": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The caller's team; for an Admin, every dispatched ticket."
+          },
+          "version": {
+            "type": "string",
+            "description": "Opaque change marker, compare for equality only: changes whenever an open\nticket the caller may see enters, leaves, or changes, or the caller's role or\nteam changes. Queue pages poll this endpoint and reload when it differs."
+          }
+        }
+      },
+      "QueueFilters": {
+        "type": "object",
+        "description": "The `GET /api/queue` filters a view applies (no cursor or page size).",
+        "properties": {
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "priority_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueueSort"
+              }
+            ]
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus"
+              }
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "unassigned": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "view": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueueView"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueueSort": {
+        "type": "string",
+        "description": "Fixed orders; ties break on `(created_at, id)`.",
+        "enum": [
+          "newest",
+          "oldest",
+          "priority"
+        ]
+      },
+      "QueueTicket": {
+        "type": "object",
+        "description": "One queue row.",
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "subject",
+          "category_name",
+          "priority_id",
+          "priority_name",
+          "requester",
+          "assignment",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Age is derived from this."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The current effective priority; the requester's original choice stays in\nthe ticket's intake snapshot."
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable human-facing number."
+          },
+          "requester": {
+            "$ref": "#/components/schemas/TicketRequester"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QueueView": {
+        "type": "string",
+        "description": "Which slice of the visible tickets a queue shows.",
+        "enum": [
+          "general",
+          "team",
+          "mine",
+          "all"
+        ]
+      },
       "Readiness": {
         "type": "object",
         "required": [
@@ -1499,6 +7097,81 @@
         },
         "additionalProperties": false
       },
+      "RequesterAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "proposal_version",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "accept_resolution"
+                ]
+              },
+              "proposal_version": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "proposal_version",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reject_resolution"
+                ]
+              },
+              "proposal_version": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "cancel"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reopen"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Explicit decisions only: replies and views never implicitly accept a proposal."
+      },
       "ResetPasswordRequest": {
         "type": "object",
         "required": [
@@ -1516,6 +7189,27 @@
         },
         "additionalProperties": false
       },
+      "ResolutionSource": {
+        "type": "string",
+        "description": "Who resolved a finished ticket (`tickets.resolution_source`).",
+        "enum": [
+          "ai",
+          "operator"
+        ]
+      },
+      "RetryResult": {
+        "type": "object",
+        "required": [
+          "retried"
+        ],
+        "properties": {
+          "retried": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "Role": {
         "type": "string",
         "enum": [
@@ -1525,6 +7219,110 @@
           "team_lead",
           "admin"
         ]
+      },
+      "SavedView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "filters",
+          "stale",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/QueueFilters"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stale": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaleFilter"
+            },
+            "description": "Filters to drop when applying: the rest still work as saved."
+          }
+        }
+      },
+      "Screenshot": {
+        "type": "object",
+        "description": "Metadata of a validated screenshot. The bytes are only served by the\npreview/download endpoints.",
+        "required": [
+          "id",
+          "filename",
+          "content_type",
+          "byte_size",
+          "width",
+          "height",
+          "created_at"
+        ],
+        "properties": {
+          "byte_size": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Size of the stored, re-encoded file."
+          },
+          "content_type": {
+            "type": "string",
+            "description": "`image/png`, `image/jpeg`, or `image/webp`, from the decoded content."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Normalized server-side; the extension matches `content_type`."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SendMessage": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Plain text, 1–10,000 characters, nonblank. HTML and Markdown are not interpreted."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "New UUID per send. Reuse the UUID and exact input to retry safely."
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Own pending screenshot uploads (at most 10, distinct)."
+          }
+        },
+        "additionalProperties": false
       },
       "SetupRequest": {
         "type": "object",
@@ -1563,6 +7361,490 @@
           }
         }
       },
+      "SmtpConnection": {
+        "type": "object",
+        "description": "Masked connection. The username and password are never included.",
+        "required": [
+          "host",
+          "port",
+          "security",
+          "sender_name",
+          "sender_address",
+          "password_set",
+          "enabled",
+          "updated_at",
+          "last_delivery_error",
+          "last_delivery_error_at",
+          "last_test_at",
+          "last_test_error"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "last_delivery_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code from the last background delivery failure, if any."
+          },
+          "last_delivery_error_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_test_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_test_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password_set": {
+            "type": "boolean",
+            "description": "Always true when a connection exists: a username and password are stored.\nNeither value is returned."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SmtpSecurity"
+          },
+          "sender_address": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SmtpSecurity": {
+        "type": "string",
+        "description": "How the relay expects the connection to be encrypted. There is no plaintext\nor opportunistic mode: certificate verification stays on.",
+        "enum": [
+          "starttls",
+          "implicit_tls"
+        ]
+      },
+      "SmtpSettings": {
+        "type": "object",
+        "required": [
+          "connection"
+        ],
+        "properties": {
+          "connection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpConnection"
+              }
+            ]
+          }
+        }
+      },
+      "SmtpSettingsWrite": {
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "security",
+          "sender_name",
+          "sender_address",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Same rule as `username`."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SmtpSecurity"
+          },
+          "sender_address": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required when creating the connection or changing the host, so stored\ncredentials are never sent to a new server. Omit to keep the stored value."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SmtpTestRequest": {
+        "type": "object",
+        "required": [
+          "to"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Recipient. Must be the acting Admin's email or the configured sender address."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SmtpTestResult": {
+        "type": "object",
+        "required": [
+          "delivered"
+        ],
+        "properties": {
+          "delivered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StaffAccess": {
+        "type": "object",
+        "description": "Affordances for the staff view, from the same rules the write endpoints\nenforce. Clients hide controls with them; the server rechecks every write.",
+        "required": [
+          "can_handle",
+          "can_reopen",
+          "can_dispatch",
+          "can_claim",
+          "can_assign",
+          "dispatch_teams",
+          "assignees"
+        ],
+        "properties": {
+          "assignees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "description": "Eligible assignees: active staff members of the ticket's team other than\nthe requester and the current assignee (empty unless `can_assign`)."
+          },
+          "can_assign": {
+            "type": "boolean",
+            "description": "(Re)assign or unassign within the ticket's team (its Team Lead or an Admin)."
+          },
+          "can_claim": {
+            "type": "boolean",
+            "description": "Take this unclaimed team ticket."
+          },
+          "can_dispatch": {
+            "type": "boolean",
+            "description": "Send to another team or return to the general queue."
+          },
+          "can_handle": {
+            "type": "boolean",
+            "description": "Staff reply, internal note, status work, resolution proposal, and priority\nchanges: the ticket is open, in a team, and the caller is in charge of it."
+          },
+          "can_reopen": {
+            "type": "boolean",
+            "description": "The ticket is closed with operator resolution, the Admin toggle is on, and\nthe caller is in charge of it."
+          },
+          "dispatch_teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedId"
+            },
+            "description": "Active teams the ticket can be sent to (empty unless `can_dispatch`)."
+          }
+        }
+      },
+      "StaffAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "start_work"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "request_information"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "`summary` is requester-visible, 1–5000 characters. Supersedes a pending proposal.",
+            "required": [
+              "expected_updated_at",
+              "summary",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "propose_resolution"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Only while the Admin reopening toggle is on.",
+            "required": [
+              "expected_updated_at",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "reopen"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_updated_at",
+              "priority_id",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "set_priority"
+                ]
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "priority_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ],
+        "description": "Staff work on a ticket. Every action carries the `updated_at` the client last\nloaded; a newer change (reply, status, priority) is `409 conflict`."
+      },
+      "StaleFilter": {
+        "type": "string",
+        "description": "A filter that no longer applies to the caller.",
+        "enum": [
+          "view",
+          "team_id",
+          "status",
+          "category_id",
+          "priority_id",
+          "q"
+        ]
+      },
+      "SubmissionReceipt": {
+        "type": "object",
+        "description": "Immutable submission receipt. A replay returns the original submitted status;\nread `/api/tickets/{id}` for the current status.",
+        "required": [
+          "id",
+          "reference",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "SubmitDraft": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "version"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requester_skip": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmitTicket": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "intake"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Generate once per logical submission; retain across network retries."
+          },
+          "intake": {
+            "$ref": "#/components/schemas/TicketIntake"
+          },
+          "requester_skip": {
+            "type": "boolean",
+            "description": "A request, never a bypass authority. The lifecycle checks current policy."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmittedIntake": {
+        "type": "object",
+        "description": "Original intake, frozen when submission commits; current effective priority\nstays on the ticket independently of the initial catalog selection here.",
+        "required": [
+          "subject",
+          "description",
+          "catalog",
+          "screenshot_ids"
+        ],
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/IntakeSnapshot"
+          },
+          "description": {
+            "type": "string"
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "subject": {
+            "type": "string"
+          }
+        }
+      },
+      "Team": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "lead_account_id",
+          "archived",
+          "created_at"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lead_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TicketActivity": {
+        "type": "object",
+        "description": "A cheap change marker for an open ticket page (docs/lifecycle.md \"Refreshing\").",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Opaque digest; compare for equality only. Changes with every status, team,\nassignee, or priority change, every message the caller may read, and the\ncaller's own role or team (so open pages refresh their capabilities). It is\nnot a counter, so it does not reveal how many staff-only events exist."
+          }
+        }
+      },
       "TicketAssignmentView": {
         "type": "object",
         "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
@@ -1585,6 +7867,241 @@
           }
         }
       },
+      "TicketDetail": {
+        "type": "object",
+        "description": "One ticket as the caller may see it.",
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "view",
+          "subject",
+          "description",
+          "category_id",
+          "category_name",
+          "priority_id",
+          "priority_name",
+          "assignment",
+          "intake_snapshot",
+          "resolution_source",
+          "closure_reason",
+          "proposal_version",
+          "confirmation_deadline",
+          "requester",
+          "created_at",
+          "updated_at",
+          "transitions",
+          "priority_changes",
+          "assignment_changes",
+          "staff_access"
+        ],
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "assignment_changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssignmentChange"
+            },
+            "description": "Dispatch and assignment history, oldest first; staff view only (empty for the requester)."
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "closure_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClosureReason",
+                "description": "Set on `closed` and `ai_solved` tickets."
+              }
+            ]
+          },
+          "confirmation_deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Auto-close time of the pending proposal; set only while `awaiting_confirmation`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "intake_snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmittedIntake",
+                "description": "Frozen original intake; null only for legacy records predating submission."
+              }
+            ]
+          },
+          "priority_changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriorityChange"
+            },
+            "description": "Staff-only effective-priority history, oldest first; empty in requester responses."
+          },
+          "priority_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "proposal_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Version of the latest staff resolution proposal (0 = none). Requester\ndecisions send it back."
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable human-facing number."
+          },
+          "requester": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketRequester",
+                "description": "Staff view only; `null` in the requester view."
+              }
+            ]
+          },
+          "resolution_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResolutionSource",
+                "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              }
+            ]
+          },
+          "staff_access": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StaffAccess",
+                "description": "What the caller may do as staff; `null` in the requester view."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TicketTransition"
+            },
+            "description": "Status transitions, oldest first."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "view": {
+            "$ref": "#/components/schemas/TicketView",
+            "description": "`requester` when the caller submitted it (public data only, whatever their\nrole); `staff` for authorized staff."
+          }
+        }
+      },
+      "TicketIntake": {
+        "type": "object",
+        "description": "Full replacement of editable draft input. Missing fields have empty defaults;\ncategory/priority and required answers are checked against the catalog at submission.",
+        "properties": {
+          "answers": {
+            "type": "object",
+            "description": "Up to 100 conditional answers, keyed by field ID.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/IntakeAnswer"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "category_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "description": {
+            "type": "string",
+            "description": "Up to 20,000 characters; required on submission."
+          },
+          "priority_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "screenshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Up to 10 distinct pending uploads of this account (`POST /api/screenshots`)."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Up to 200 characters; required on submission."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TicketRequester": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "TicketStatus": {
         "type": "string",
         "enum": [
@@ -1600,6 +8117,115 @@
           "ai_solved"
         ]
       },
+      "TicketSummary": {
+        "type": "object",
+        "description": "Minimal requester history. No staff-only metadata; all roles see only their own.",
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "subject",
+          "category_name",
+          "priority_name",
+          "assignment",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/TicketAssignmentView"
+          },
+          "category_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TicketTransition": {
+        "type": "object",
+        "description": "One immutable status transition (`ticket_events` row with a `to_status`).",
+        "required": [
+          "id",
+          "event_type",
+          "from_status",
+          "to_status",
+          "actor_account_id",
+          "actor_display_name",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "actor_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Staff view only; `null` for background jobs and in the requester view."
+          },
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current display name of the actor; staff view only."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "The transition, e.g. `submit`, `propose_resolution`, `confirmation_timeout`."
+          },
+          "from_status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Public details: `route` (queue entry reason), `resolution_source`,\n`closure_reason`, `proposal_version`, `summary`, `timeout_hours`,\n`deadline`, or the cancellation `reason`."
+          },
+          "to_status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "TicketView": {
+        "type": "string",
+        "description": "Which representation of a ticket the actor may read.",
+        "enum": [
+          "requester",
+          "staff"
+        ]
+      },
       "TokenRequest": {
         "type": "object",
         "required": [
@@ -1608,6 +8234,45 @@
         "properties": {
           "token": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnreadCount": {
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "UpdateAccountRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "expertise": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Descriptive only; only Specialist accounts may have expertise. Maximum 120 characters."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "One current team; null removes membership. Users/Admins must use null."
           }
         },
         "additionalProperties": false
@@ -1632,6 +8297,31 @@
                 "description": "Interface and email language; omitted keeps the current one."
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateTeamRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "archived"
+        ],
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "description": "Archiving clears leadership, memberships and assignments, retaining all history."
+          },
+          "lead_account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for active teams; null when archiving. A lead must be active with team_lead role."
+          },
+          "name": {
+            "type": "string"
           }
         },
         "additionalProperties": false

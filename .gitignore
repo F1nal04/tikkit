@@ -13,4 +13,6 @@ coverage/
 *-debug.log*
 .vercel/
 test-results/
+# Development screenshot storage (SCREENSHOT_DIR default).
+data/
 playwright-report/

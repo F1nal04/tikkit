@@ -37,7 +37,8 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `TestDb::new().await -> Option<TestDb>` (`.pool`, `.name`)
 - `test_app(&pool) -> Router`: the real app; send requests with `tower::ServiceExt::oneshot`
   (state-changing requests need `x-requested-with: tikkit`); `test_app_with(&pool, Settings)`
-  for other auth settings, e.g. `Secure` cookies
+  for other auth settings, e.g. `Secure` cookies. Screenshots go to
+  `screenshot_dir(&pool)`, a temp directory removed with the `TestDb`
 - `test_config() -> Config`: a valid configuration with fixed test secrets
 - `fixtures::account(&pool, Role::Operator, "name") -> Uuid` for any of the
   five roles (`User`, `Operator`, `Specialist`, `TeamLead`, `Admin`); all share
@@ -49,6 +50,9 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `call(&app, method, path, body, cookie) -> Reply` (`status`, `cookie`, `body`,
   `.code()`, `.session()`), `call_from(..., ip)` for another client IP, and
   `login(&app, username, password)`
+- `support::smtp::listen(Listen::StartTls, Fault::None)`: an in-process TLS SMTP server
+  (`.port`, `.ca_pem` for `Settings::smtp_trust_root_pem`, `.messages`); used by the SMTP and
+  notification tests, never an external relay
 - `fixtures::team(&pool, "Name", lead) -> Result<Uuid>`: team plus lead
   membership in one transaction; `fixtures::member(&pool, team, account)`
 
@@ -59,9 +63,12 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 bun run test:e2e                                              # builds, then runs Playwright
 ```
 
-`apps/web/playwright.config.ts` starts the production server
+`apps/web/playwright.config.ts` runs `e2e/*.spec.ts` in desktop Chromium and
+`e2e/shell.spec.ts` again at phone size (Pixel 7); it starts the production server
 (`node build/index.js`) twice: on :4173 with `API_ORIGIN` pointing at a stub
-API (`e2e/stub-api.mjs`, :4175), and on :4174 pointing at a closed port for the
+API (`e2e/stub-api.mjs`, :4175; sign in as `requester`, `operator`, `specialist`,
+`lead`, or `admin` with `correct horse battery`; it also serves `/api/queue`, `/api/queue/counts`, and `/api/catalog` from fixed queue data; `e2e/support.ts` routes browser
+`/api` calls to it), and on :4174 pointing at a closed port for the
 API-unavailable state. No Rust build, database, or AI key is needed. Locally,
 already-running servers on those ports are reused. Failures keep a trace and
 screenshot in `apps/web/test-results/`; open a trace with
@@ -73,3 +80,14 @@ The `checks` job runs `bun run test` against a PostgreSQL service, then
 `bun run test:e2e`. Any failing test exits non-zero and fails the job; on
 failure, Playwright output is uploaded as the `playwright` artifact. See
 [ci.md](ci.md).
+
+Admin management coverage: `apps/api/tests/management.rs` exercises persisted
+policy defaults/validation/audit, every non-Admin role, concurrent last-Admin
+role edits, atomic leadership/archival/restoration, competing lead appointments,
+assignment clearing and immediate membership-scope revocation with requester
+access retained, and token-free invitation history/reissue. Existing account,
+invitation and authorization tests remain in place. Web tests cover localized
+validation with retained input, Admin promotion without membership, lead
+eligibility and complete paginated selector options. `e2e/admin.spec.ts` covers
+both languages at mobile width, account identity/role controls and denied deep
+links against the browser stub; Rust tests use real PostgreSQL.

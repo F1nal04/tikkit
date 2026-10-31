@@ -19,17 +19,22 @@ name the variable and the fix but never echo values.
 | `SESSION_ROTATE_HOURS` | no | `24` | Session age after which its token is replaced on the next request (1-8760). |
 | `TRUST_PROXY_HEADERS` | no | `false` | `true` only behind a reverse proxy that overwrites `X-Forwarded-For` (the production compose sets it for Caddy); the last hop is used as client IP for rate limits. Otherwise every client shares the proxy's IP. |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
-| `SMTP_URL` | no | | Outbound mail for invitation and recovery links, e.g. `smtps://user:pass@mail.example.com` or `smtp://user:pass@mail.example.com:587?tls=required` (STARTTLS). Production requires one of those two TLS forms. Treated as a secret: never logged or echoed. Set together with `SMTP_FROM`. |
-| `SMTP_FROM` | with `SMTP_URL` | | Sender, e.g. `Tikkit <help@example.com>`. |
+| `SCREENSHOT_DIR` | in production | `data/screenshots` | Private directory for validated screenshot files, created at startup. Production requires an absolute path on a persistent volume (the production compose uses `/var/lib/tikkit/screenshots`). Only the API reads it; never serve it. Back it up with the database ([screenshots.md](screenshots.md#storage-backup-and-restore)). |
 | `RUST_LOG` | no | `info,sqlx=warn` | Log filter, e.g. `info,tower_http=debug`. Request logs include the request ID and path, never query strings or bodies. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 
 AI providers are not environment configuration: they are optional, disabled by
-default, and configured by an Admin at runtime. SMTP is optional too; until
-Admin-managed SMTP settings arrive with notifications it is read from
-`SMTP_URL`/`SMTP_FROM`. Without it, Admins copy invitation links and recovery
-emails are not sent (see [auth.md](auth.md#email-delivery)). The API starts and
-serves the full service desk without either.
+default, and configured by an Admin at runtime. Outbound SMTP is optional too
+and is **not** an environment variable. An Admin saves the host, port, sender,
+username, and password in the app (`/admin/email`). Username and password are
+encrypted with `ENCRYPTION_KEY` (AES-256-GCM) and are write-only: never returned,
+logged, or written into audit events. Losing `ENCRYPTION_KEY` makes them
+unreadable; enter them again. Transport security is either required
+STARTTLS or implicit TLS, and the server certificate is always verified. Without
+a saved, enabled connection, Admins copy invitation links and recovery emails
+are not sent (see [auth.md](auth.md#email-delivery)). The API starts and serves
+the full service desk either way. Each delivery attempt is limited to 15 seconds.
+Background sends try transient failures at most 3 times; the Admin test sends once.
 
 ## Probes and shutdown
 
@@ -56,3 +61,33 @@ PUBLIC_HOST=help.example.com
 ```
 
 Packaged images and full production documentation are tracked separately.
+
+## Organization settings
+
+Admins configure these at `/admin/settings`; they are persisted in the singleton
+organization row and read with `GET /api/organization` by signed-in clients.
+No new environment variables are required. The Admin-only PUT endpoint is
+`/api/admin/settings`; every successful change is audited.
+
+- `name`: trimmed, nonblank, at most 120 characters; default `Tikkit`.
+- `timezone`: standard IANA area/timezone name such as `Europe/Berlin`; default `UTC`.
+  Invitation history uses it for display. All persisted timestamps remain UTC.
+- `default_language`: `en` (default) or `de`; used for invitations without an
+  explicit language. Existing account preferences are unchanged.
+- `allow_reopening`: false by default, for human-closed tickets only. AI-solved
+  records remain permanently final regardless of this value.
+- `requester_cancellation_policy`: `anytime_while_open` (default),
+  `before_work_starts`, or `disabled`. Every cancellation requires a reason;
+  work starts with the first recorded human In Progress/work-start event and
+  is not reset by unassignment or transfer.
+- `resolution_confirmation_hours`: positive integer elapsed hours, default 168
+  (7 days). Resolution proposals must snapshot the policy and deadline; changes
+  affect subsequent proposals. Timeout closure is separate from requester
+  confirmation and never implies acceptance. This is not an SLA setting.
+- `allow_requester_ai_skip`: false by default; does not enable AI or change
+  category exemptions.
+
+This issue stores lifecycle policies for the ticket workflows that follow.
+Enforcement, snapshotted proposals and timeout processing belong to their
+respective ticket/lifecycle issues. Admin-managed SMTP is tracked in #28;
+category/priority configuration is tracked in #15.

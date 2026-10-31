@@ -1,0 +1,253 @@
+# Ticket lifecycle
+
+Every ticket status change goes through one function: `lifecycle::transition`
+(`apps/api/src/lifecycle.rs`). Submission, AI jobs, staff work, requester
+decisions, the auto-close worker, replies, and stale clients have no other way
+to change `tickets.status`. The rule itself is the pure `lifecycle::decide`;
+`Transition::rule` is its table of who may attempt what from which statuses.
+
+```rust
+let mut tx = state.pool.begin().await?;
+let status = lifecycle::transition(&mut tx, ticket_id, By::Account(user.account_id()),
+    &Transition::AcceptResolution { proposal_version }).await?;
+// ... messages, outbox rows, etc. in the same transaction ...
+tx.commit().await?;
+```
+
+## Statuses and transitions
+
+`draft`, `ai_processing`, `awaiting_ai_decision`, `queued`, `in_progress`,
+`waiting_for_requester`, `awaiting_confirmation`, `closed`, `cancelled`,
+`ai_solved`. Event types are the `ticket_events.event_type` values.
+
+| Event type | From | Who | To |
+| --- | --- | --- | --- |
+| `submit` | `draft` | requester | `ai_processing` or `queued` (see routing) |
+| `ai_suggestion_ready` | `ai_processing` | system | `awaiting_ai_decision` |
+| `ai_failed` | `ai_processing` | system | `queued` |
+| `skip_ai` | `ai_processing` | requester, only if "Allow requester to skip AI" | `queued` |
+| `ai_solved` | `awaiting_ai_decision` | requester | `ai_solved` (final) |
+| `ai_not_solved` | `awaiting_ai_decision` | requester | `queued` |
+| `start_work` | `queued`, `waiting_for_requester` | staff writer (`reply_as_staff`) | `in_progress` |
+| `request_information` | `in_progress` | staff writer (`reply_as_staff`) | `waiting_for_requester` |
+| `requester_responded` | `waiting_for_requester` | requester | `in_progress` |
+| `propose_resolution` | `in_progress`, `waiting_for_requester`, `awaiting_confirmation` | staff writer (`propose_resolution`) | `awaiting_confirmation` |
+| `accept_resolution` | `awaiting_confirmation` | requester, current proposal version | `closed` |
+| `reject_resolution` | `awaiting_confirmation` | requester, current proposal version | `in_progress` |
+| `confirmation_timeout` | `awaiting_confirmation` | system, current version, deadline passed | `closed` |
+| `reopen` | `closed` | requester or staff writer, only if reopening is enabled | `in_progress` |
+| `cancel` | `ai_processing` … `awaiting_confirmation` (submitted, open) | requester, under the cancellation policy | `cancelled` (final) |
+
+Nothing leaves `ai_solved` or `cancelled`. "Staff writer" is the ticket policy
+in [authorization.md](authorization.md): the actor sees the ticket as staff, it
+belongs to a team, and it is unclaimed or the actor is its assignee, the team's
+Lead, or an Admin. The requester never acts as staff on their own ticket, in any
+role; requester transitions compare account IDs only.
+
+Checks run in this order: input bounds (`422 validation_failed`: `summary`
+up to 5000 characters, cancellation `reason` up to 1000, both required after
+trimming), visibility (`404 not_found`), who may attempt it (`403 forbidden`),
+the current status (`409 conflict`), then policy (`403 forbidden`) and the
+proposal version / deadline (`409 conflict`).
+
+## Routing into human support
+
+`submit` evaluates, in order: AI unavailable (disabled or unconfigured) →
+`queued` with route `ai_disabled`; category "Skip AI automatically" → route
+`category_exempt`; requester skip requested → `requester_skip` if the
+organization toggle allows it, otherwise `403`; else `ai_processing` (route
+`ai`). The route is the event's `payload.route`; later entries record
+`ai_failed`, `requester_skip`, or `not_solved`. Rust decides the route from the
+current policy and the category; nothing the client sends can force it.
+
+Tickets before human support and AI-solved records never have a team
+(`tickets_pre_triage_unrouted`), so every entry into `queued` lands in the
+shared general queue with no team or assignee. Dispatch and assignment are
+separate team/assignee changes, not status transitions
+([queues.md](queues.md#dispatch-and-assignment)).
+
+## Resolution and closure
+
+A staff proposal bumps `tickets.proposal_version` and snapshots
+`confirmation_deadline = now + confirmation_timeout_hours` (default 168). Its
+event payload holds `proposal_version`, `summary`, `timeout_hours`, and
+`deadline`; later settings changes never rewrite it. A new proposal supersedes
+the old one, and its deadline replaces the old timer. Requester decisions and
+the timeout carry the proposal version they apply to, so stale or duplicate
+decisions get `409`.
+
+Closures record `resolution_source` (`operator`, or `ai` for `ai_solved`) and
+`closure_reason` (`requester_confirmed` or `confirmation_timeout`) on the
+ticket and in the event. A timeout is never an acceptance; replies, views, and
+silence never close anything. Rejection keeps the team and assignee and is
+allowed with reopening disabled. Reopening clears both columns; the events keep
+the history.
+
+## Auto-close worker
+
+`autoclose::worker_loop` (spawned in `main.rs` next to the notification worker,
+sharing `notifications::poll_loop`) drains due tickets and then sleeps two
+seconds. On shutdown `notifications::stop_workers` ends it after its current
+step, and `main.rs` waits for it (with the notification worker, up to 5 s)
+before closing the pool. Each step selects one `awaiting_confirmation` ticket whose snapshotted
+`confirmation_deadline` has passed (`FOR UPDATE SKIP LOCKED`, oldest first,
+excluding tickets already failed in this cycle) and applies
+`ConfirmationTimeout` with the proposal version read under that lock, as the
+system actor, in one transaction with the event and its outbox rows. The
+deadline comparison uses `clock_timestamp()`, the same database clock
+`transition` reads after locking. All state is the ticket row, so a restart or
+outage just finds overdue proposals again (catch-up), and concurrent workers or
+replicas skip each other's rows. A transition that fails is rolled back, logged
+with its stable error code (not the database message), and that ticket is
+skipped until this cycle finds nothing else due; the sleep then backs off
+before the next cycle retries it. One failing ticket cannot block the ones
+behind it, and an idle queue does not spin. A requester decision or staff
+replacement that holds the row wins and the worker leaves the ticket alone; one
+that commits first changes status, version, or
+deadline so the worker no longer selects it. A proposal is the only thing that
+gets a deadline: drafts, information waits, queued/in-progress work, and AI
+stages never do, and `ai_solved`/`cancelled` are unreachable. The timeout event
+has no actor, `resolution_source: operator`, `closure_reason:
+confirmation_timeout`, and no `accept_resolution` event exists for the ticket.
+
+## Cancellation
+
+The requester cancels a submitted open ticket with a reason. Policy
+`anytime_while_open` (default), `before_work_starts` (no `in_progress` event
+was ever recorded; unassignment or transfer does not reset that), or
+`disabled`. The ticket keeps its team, history, and reference; the confirmation
+deadline is cleared, and late AI results or timeouts get `409`.
+
+## Policy
+
+`lifecycle::policy` reads the Admin's organization settings (`organization`
+row: `allow_reopening`, `requester_cancellation_policy`,
+`resolution_confirmation_hours`, `allow_requester_ai_skip`) `FOR SHARE` in the
+transition's transaction, so a concurrent settings change waits until the
+transition that relied on the old values commits. AI stays unavailable until AI
+configuration is persisted.
+
+## Concurrency
+
+`transition` re-reads the actor's role, activation, and team under share locks,
+then locks the ticket row `FOR UPDATE`. Two opposite decisions (accept vs
+reject, timeout vs accept, AI solved vs escalation, cancel vs a late AI result)
+serialize on the row lock; the second sees the new status and gets `409`, so
+exactly one event commits. A concurrent role, membership, or leadership change
+waits for the transition to commit, so a revoked staff writer can never commit
+afterwards. Deadlocks surface as `409 conflict`.
+
+The API requires a `sqlx::Transaction`, so an autocommit connection cannot
+release locks before the state and its event are written. After acquiring the
+ticket lock, a fresh statement reads work-start history so cancellation sees
+events committed by the previous lock holder. The current database clock,
+read after locking, supplies proposal deadlines, timeout checks, and transition
+timestamps; transaction-start time does not shorten the confirmation period.
+
+## Database backstops
+
+Migration `0008_ticket_lifecycle.sql`: `confirmation_deadline` is set exactly
+while `awaiting_confirmation`; `resolution_source`/`closure_reason` match
+`closed`/`ai_solved` and are NULL otherwise; pre-triage and AI-solved tickets
+have no team. A trigger (`restrict_violation`, `23001`) rejects changing the
+requester, editing subject/description/category or returning to `draft` after
+submission, and any status/team/assignee change of an `ai_solved` or
+`cancelled` ticket. The one exception is clearing the assignee when that
+account is deactivated or leaves the team: the assignee is a foreign key to
+the team membership, and the attributed `assignment_changed` event keeps the
+history.
+
+## Reading tickets
+
+`GET /api/tickets/{id}` returns `TicketDetail` under `authz::ticket_view`: the
+requester view (public data, no staff identities except the
+`TicketAssignmentView`, `requester: null`, transition actors `null`) for the
+ticket's own requester in every status, or the staff view. Drafts, AI-stage, and
+AI-solved records are `404` for operators; Admins see everything but drafts.
+`transitions` lists the status events oldest first with their public payloads.
+
+## Requester HTTP decisions
+
+`POST /api/tickets/{id}/actions` accepts one explicit tagged decision:
+`{action: "accept_resolution" | "reject_resolution", proposal_version}`,
+`{action: "cancel", reason}`, or `{action: "reopen"}`. It calls the same
+transactional lifecycle and returns `{status}` only after commit. A duplicate,
+stale proposal, or finished state returns `409`; a policy denial returns `403`;
+invisible tickets return `404`. Reopen retains the lifecycle's requester-or-
+authorized-staff rule. No AI escalation, general state setter, or intake edit
+is exposed by this endpoint.
+
+The persisted AI suggestion belongs to the AI attempt records (#35) and is not
+exposed yet; AI-solved history shows an explicit unavailable-suggestion message.
+
+## Staff HTTP actions
+
+`POST /api/tickets/{id}/staff-actions` takes one tagged action plus the
+`expected_updated_at` the client loaded (`TicketDetail.updated_at`):
+`start_work`, `request_information`, `propose_resolution {summary}`, `reopen`,
+or `set_priority {priority_id}`. Status actions call `lifecycle::transition`
+(so authorization precedes the source-status check, as in #16); there is no staff
+action that accepts, rejects, or closes. A newer reply, status, or priority change
+makes `expected_updated_at` stale: `409 conflict`, nothing written. Private
+notes do not move `updated_at`. Checks run in the same order as assignment:
+invisible tickets are `404` before anything else; the ticket's requester (any
+role) is `403` before the stale check, so a wrong timestamp never says the
+ticket moved; then `expected_updated_at` under the ticket lock; then the policy,
+status, and input checks. Concurrent staff writes serialize, and a visible
+member who lost the race gets that `409` rather than a `403` caused by the
+winner or a partial write.
+
+`set_priority` needs `change_priority` on the ticket (open, in a team, caller in
+charge; self-handling `403`). The level must be active and different from the
+current one (`422 priority_id: invalid`). It updates `tickets.priority_id` and
+appends a `priority_changed` event (no status columns) with the actor and
+`previous_priority_id/name`, `priority_id/name`. `TicketDetail.priority_changes`
+lists them with actor identity in the staff view; requester responses contain an
+empty history and the current effective priority only.
+
+`TicketDetail.staff_access` (staff view only) reports `can_handle` and
+`can_reopen` from the same rules, so clients can show read-only state. They are
+affordances; every write is rechecked. Transition and priority entries also carry
+`actor_display_name` (staff view), so cancellations and proposals show who and when.
+
+The staff endpoint first requires a staff capability, then applies the order
+above, including for `reopen`. Requesters of any role use `/actions`. Ordinary
+staff work on finished tickets returns `403`, because `authorize_ticket`
+requires open human work before the lifecycle checks the transition's source
+status. This preserves #16 and the conversation API's authorization order. An
+authorized writer attempting an invalid transition between open states (or
+reopening a non-closed team ticket) gets `409`. Stale authorized writes return
+`409` and roll back both state and events.
+
+## Concurrent edits and refreshing
+
+Every staff write on a ticket (status actions, priority, dispatch and
+assignment) carries the `expected_updated_at` the client loaded and is checked
+under the ticket row lock in the write's transaction. The loser of a race, or a
+tab that missed a change, gets `409` with the standard envelope
+(`error.code = "conflict"`) and nothing is written. The response deliberately
+carries no new version: the client reloads `GET /api/tickets/{id}` (current
+state, capabilities, and `updated_at`), keeps unsent text, and lets the person
+decide again. Messages are append-only and idempotency-keyed instead
+([conversations.md](conversations.md)); every send rechecks write authority under
+the same locks. Authority changes (role, membership, leadership, claim) are
+re-read on every write, so a former assignee's open tab is refused.
+
+Open staff pages poll instead of holding a stream. `GET /api/tickets/{id}/activity`
+returns an opaque `version` (a digest, compare for equality only); the page loads
+it before the ticket and reloads when a poll returns another value. It changes
+with every event the caller may read, `updated_at`, and the caller's role, team,
+and leadership, so capabilities refresh too. Internal notes move the staff
+digest only. The digest is not a counter: a requester cannot read how many
+priority or assignment changes exist behind the empty histories. Each poll runs
+the normal visibility check: a transfer or team removal makes it `404` (the page
+reloads into "not found"), a revoked session `401`. Responses are
+`Cache-Control: private, no-store`. Queue pages poll `GET /api/queue/counts`,
+whose `version` is a digest of the caller's visible open tickets plus their own
+role and team ([queues.md](queues.md#counts)); work they cannot see never moves it.
+
+Polling carries no cursor or delivered-event state: a reconnect or a second tab
+just compares versions and reloads through the normal endpoints, so nothing is
+delivered twice or out of authorization, and any number of API instances behind
+the proxy serve it from the database alone. The web client polls every
+15 seconds while the tab is visible and once when it becomes visible again.
