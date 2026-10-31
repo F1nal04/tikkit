@@ -7,6 +7,12 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Keep Node types in line with the supported runtime (engines: node >=22.17).
+      # Bump by hand when the Node floor is raised.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    # Groups take minor/patch only; majors arrive as individual PRs.
     groups:
       svelte:
         patterns:
@@ -16,8 +22,10 @@ updates:
           - "vite"
           - "vitest"
           - "@testing-library/svelte"
+        update-types: ["minor", "patch"]
       all:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: cargo
     directory: /
@@ -26,6 +34,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    # One PR for minor/patch so Cargo.lock bumps don't keep rebasing each other.
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: github-actions
     directory: /
