@@ -53,3 +53,9 @@ Current exceptions:
   never compiled for the Postgres-only API (`cargo tree -e all -i rsa --target all`
   is empty). Remove the exception when sqlx drops it from the lockfile or `rsa`
   publishes a fix. No tracking issue filed yet.
+- `RUSTSEC-2026-0459` (`libsqlite3-sys` 0.30, bundled SQLite CVE-2026-119375,
+  fixed in 0.39 which sqlx 0.8 does not accept): locked only as an optional
+  dependency of `sqlx-sqlite` through `sqlx-macros-core`. It is never compiled
+  for the Postgres-only API (`cargo tree -e all -i libsqlite3-sys --target all`
+  is empty). Remove the exception when sqlx drops it from the lockfile or
+  accepts a fixed release. No tracking issue filed yet.

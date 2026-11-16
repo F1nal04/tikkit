@@ -44,6 +44,7 @@ Notes:
 - API conventions (error envelope, extractors, pagination, OpenAPI): `docs/api-conventions.md`. Use `api::{Json, Path, Query, ApiError}`, not raw axum extractors. After changing routes/schemas run `cargo run --locked -p tikkit-api --bin openapi > apps/api/openapi.json` and `bun run --cwd packages/api-client generate`; tests/checks fail on drift.
 - Ticket status changes go only through `lifecycle::transition` (`apps/api/src/lifecycle.rs`, `docs/lifecycle.md`); never `UPDATE tickets SET status` directly.
 - Screenshots are uploaded only through `POST /api/screenshots` and bound to tickets only through `screenshots::attach` (`docs/screenshots.md`); reads go through the ticket visibility policy, never a public URL.
+- AI provider calls go only through `ai::AiClient` (`apps/api/src/ai/`, `docs/ai-providers.md`): it owns the outbound destination policy, limits, and error mapping. It takes provider/model/key as arguments and never touches the database or ticket state. Tests use the local mock server, never a real provider.
 - Testing layers, commands, and fixtures: `docs/testing.md`. DB integration tests live in `apps/api/tests/`; use `mod support;` for `TestDb` (own database per test, skipped without `TEST_DATABASE_URL`/`DATABASE_URL`), `test_app`, and the five-role `fixtures`. First-time browser setup: `cd apps/web && bunx playwright install --with-deps chromium`.
 - The dev server does not hot-reload Rust. Restart `bun run dev` (or just the api filter) after backend changes.
 

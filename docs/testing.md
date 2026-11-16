@@ -56,6 +56,13 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `fixtures::team(&pool, "Name", lead) -> Result<Uuid>`: team plus lead
   membership in one transaction; `fixtures::member(&pool, team, account)`
 
+## AI provider tests
+
+`apps/api/tests/ai_providers.rs` drives the three adapters against an in-process
+mock HTTP server on loopback (`Endpoint::Override` with
+`allow_private_network: true`). It needs no database, credential, or network
+access. See [ai-providers.md](ai-providers.md).
+
 ## Browser tests
 
 ```sh
