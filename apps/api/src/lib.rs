@@ -17,6 +17,7 @@ use tower_http::{
 use utoipa::{OpenApi, ToSchema};
 
 pub mod accounts;
+pub mod ai;
 pub mod api;
 pub mod assignment;
 pub mod auth;
