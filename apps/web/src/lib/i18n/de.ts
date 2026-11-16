@@ -500,7 +500,6 @@ export default {
         'Die KI-Unterstützung ist aktiviert, aber diese Version unterstützt das gewählte Modell nicht mehr. Wählen Sie ein anderes Modell. Neue Tickets gehen direkt an den Helpdesk.',
       ready: 'Die KI-Unterstützung ist aktiviert und eingerichtet.',
     },
-    notActive: 'Diese Version erstellt noch keine KI-Vorschläge. Neue Tickets gehen daher weiterhin direkt an den Helpdesk.',
     provider: 'Anbieter',
     providerHint: 'Jeder Anbieter verwendet nur seinen eigenen API-Schlüssel. Ein Anbieterwechsel sendet nie einen gespeicherten Schlüssel an einen anderen Anbieter.',
     providers: { openai: 'OpenAI', gemini: 'Google Gemini', anthropic: 'Anthropic' },

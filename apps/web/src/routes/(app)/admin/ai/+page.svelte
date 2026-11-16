@@ -159,7 +159,7 @@
 <p>{t.ai.intro}</p>
 {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
 {#if notice}<Alert kind="success">{notice}</Alert>{/if}
-<Alert kind="info">{t.ai.status[ai.status]}{#if ai.status === 'ready' && !ai.active} {t.ai.notActive}{/if}</Alert>
+<Alert kind="info">{t.ai.status[ai.status]}</Alert>
 
 <form onsubmit={save} novalidate aria-busy={busy}>
   <Field

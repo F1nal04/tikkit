@@ -15,7 +15,6 @@ const settings = (over: object = {}) => ({
   provider: 'openai' as const,
   model: 'openai-b',
   status: 'disabled' as const,
-  active: false,
   allow_requester_skip: false,
   providers: [
     { provider: 'openai' as const, models: models.openai, credential: stored },
