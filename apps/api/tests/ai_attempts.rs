@@ -1517,25 +1517,41 @@ async fn a_saturated_attempt_retries_and_hands_off_only_at_its_deadline() {
     // Slots held elsewhere for a moment: the attempt asks again and gets its
     // suggestion under the same claim.
     let ticket = w.submit("ai_processing").await;
-    w.occupy_slots(0.8).await;
-    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    w.occupy_slots(3600.0).await;
+    let refusals = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM ai_usage WHERE outcome = 'concurrency_saturated'",
+        )
+        .fetch_one(w.pool())
+        .await
+        .unwrap()
+    };
+    let worker = w.worker();
+    // The slots are freed only after the guard refused once, so the retry is
+    // observed however slow the machine is.
+    let (processed, ()) = tokio::join!(ai_attempts::process_one(&worker), async {
+        for _ in 0..3000 {
+            if refusals().await >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        w.sql("UPDATE ai_usage SET lease_expires_at = clock_timestamp() WHERE status = 'reserved'")
+            .await;
+    });
+    assert!(processed.unwrap());
     assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
     assert_eq!(w.claims(ticket).await.0, 1);
     assert_eq!(w.mock.count(), 1);
-    let refused: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM ai_usage WHERE outcome = 'concurrency_saturated'")
-            .fetch_one(w.pool())
-            .await
-            .unwrap();
-    assert!(refused >= 1, "{refused}");
+    assert!(refusals().await >= 1);
 
     // Slots held past the attempt's deadline: only then it hands off as saturated.
     let ticket = w.submit("ai_processing").await;
     w.occupy_slots(3600.0).await;
-    w.deadline_in(ticket, 0.8).await;
+    w.deadline_in(ticket, 2.0).await;
     let started = std::time::Instant::now();
     assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
-    assert!(started.elapsed() >= Duration::from_millis(700));
+    assert!(started.elapsed() >= Duration::from_millis(1500));
     w.assert_handed_off(ticket, "concurrency_saturated").await;
     assert_eq!(w.ai(ticket).await["reason"], "ai_failed");
     assert_eq!(w.mock.count(), 1, "no provider call for the second ticket");
