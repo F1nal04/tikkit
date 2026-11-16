@@ -232,6 +232,10 @@ impl AiGuard {
                 usage_id: None,
             }
         };
+        // Enforced here, not left to callers: nothing reaches a provider
+        // unredacted or unbounded. Minimizing an already minimized request
+        // changes nothing.
+        let request = &crate::ai_privacy::minimize(request.clone()).request;
         let wait: i32 = sqlx::query_scalar("SELECT concurrency_wait_seconds FROM ai_limits")
             .fetch_one(&self.pool)
             .await
@@ -469,7 +473,7 @@ impl AiGuard {
         probe: bool,
         result: &Result<Suggestion, AiError>,
     ) -> Result<(), sqlx::Error> {
-        let tokens = |value: Option<u64>| value.map(|v| i64::try_from(v).unwrap_or(i64::MAX));
+        let tokens = |value: Option<u64>| value.map(stored_tokens);
         let mut tx = self.pool.begin().await?;
         // Also matches a row another process already swept as abandoned.
         let update = "UPDATE ai_usage SET status = $2, outcome = $3, http_status = $4,
@@ -514,7 +518,13 @@ impl AiGuard {
                     .bind(usage_id)
                     .bind("failed")
                     .bind(error.kind.as_str())
-                    .bind(error.status.map(i32::from))
+                    // The column accepts real HTTP statuses only.
+                    .bind(
+                        error
+                            .status
+                            .filter(|status| (100..600).contains(status))
+                            .map(i32::from),
+                    )
                     .bind(error.provider_code.as_deref())
                     .bind(None::<i64>)
                     .bind(None::<i64>)
@@ -696,6 +706,13 @@ pub async fn purge_expired(pool: &PgPool) -> Result<u64, ApiError> {
 /// the next admission. Returns how many it ended.
 pub async fn release_abandoned(pool: &PgPool) -> Result<u64, ApiError> {
     Ok(expire_leases(&mut *pool.acquire().await?).await?)
+}
+
+/// A provider-reported token count as stored. Capped so that one absurd value
+/// can neither overflow the window sums nor be taken at face value.
+fn stored_tokens(reported: u64) -> i64 {
+    const CAP: u64 = 1_000_000_000_000;
+    reported.min(CAP) as i64
 }
 
 /// Background retention: abandoned reservations are released on every poll,

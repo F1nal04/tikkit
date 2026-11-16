@@ -1319,6 +1319,11 @@ async fn admins_set_bounded_limits_and_every_change_is_audited() {
     missing.as_object_mut().unwrap().remove("retention_days");
     let reply = call(&app, "PUT", path, Some(missing), Some(&cookie)).await;
     assert!(reply.status.is_client_error());
+    // A limit left out is an error, not "unlimited".
+    let mut missing = limits_body();
+    missing.as_object_mut().unwrap().remove("org_request_limit");
+    let reply = call(&app, "PUT", path, Some(missing), Some(&cookie)).await;
+    assert!(reply.status.is_client_error(), "{}", reply.status);
 
     let reply = call(&app, "GET", path, None, Some(&cookie)).await;
     assert_eq!(without_time(reply.body), body);

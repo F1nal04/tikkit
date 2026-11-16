@@ -240,7 +240,7 @@ fn names_secret(name: &str) -> bool {
         "credentials",
         "authorization",
     ];
-    name == "pin"
+    matches!(name, "pin" | "pw" | "pass" | "tan" | "zugangscode")
         || SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
         || KEY_WORDS.iter().any(|key| {
             name.strip_suffix(key)
@@ -453,7 +453,18 @@ fn is_token(word: &str) -> bool {
     {
         return true;
     }
-    length >= 32 && token_chars("_-=") && has_digit && has_letter && !is_uuid(core)
+    if length >= 32 && token_chars("_-=") && has_digit && has_letter && !is_uuid(core) {
+        return true;
+    }
+    // Base64 secrets (cloud access keys) also use `/` and `+`. Paths and URLs
+    // do too, so require mixed case and no path-like start.
+    length >= 32
+        && token_chars("_-=/+")
+        && has_digit
+        && core.chars().any(|c| c.is_ascii_lowercase())
+        && core.chars().any(|c| c.is_ascii_uppercase())
+        && !core.starts_with('/')
+        && !core.contains("//")
 }
 
 /// Device and record identifiers are commonly UUIDs and are not secrets.
@@ -488,6 +499,9 @@ mod tests {
             ),
             ("my password is Winter#2025.", "my password is [redacted]"),
             ("Kennwort: geheim", "Kennwort: [redacted]"),
+            ("PW: Sommer2024!", "PW: [redacted]"),
+            ("pass=hunter2", "pass=[redacted]"),
+            ("TAN: 482193", "TAN: [redacted]"),
             ("WLAN-Passwort: abc", "WLAN-Passwort: [redacted]"),
             ("pwd=abc123", "pwd=[redacted]"),
             ("DB_PASSWORD=p@ss word", "DB_PASSWORD=[redacted] word"),

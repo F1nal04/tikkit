@@ -52,18 +52,28 @@ pub struct AiLimits {
     pub updated_at: OffsetDateTime,
 }
 
+/// A limit must be sent: `null` removes it, leaving it out is an error. Without
+/// this, serde reads a missing `Option` as `None` and would drop the budget.
+fn required_nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    Option::deserialize(d)
+}
+
 /// Every field is required; `null` on a `*_limit` removes that limit.
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AiLimitsWrite {
     pub window_hours: i64,
     #[schema(required = true)]
+    #[serde(deserialize_with = "required_nullable")]
     pub org_request_limit: Option<i64>,
     #[schema(required = true)]
+    #[serde(deserialize_with = "required_nullable")]
     pub user_request_limit: Option<i64>,
     #[schema(required = true)]
+    #[serde(deserialize_with = "required_nullable")]
     pub org_token_limit: Option<i64>,
     #[schema(required = true)]
+    #[serde(deserialize_with = "required_nullable")]
     pub user_token_limit: Option<i64>,
     pub max_concurrency: i64,
     pub concurrency_wait_seconds: i64,

@@ -171,9 +171,14 @@ result through `ai_privacy::minimize` before the guarded call.
 - tokens in well-known formats (`sk-...`, `ghp_...`, `AKIA...`, `xoxb-...`,
   JWTs) and other random-looking strings of 32 or more characters. UUIDs stay.
 
-Redaction is pattern matching. It catches secrets that look like secrets. It
-does not catch a password written as an ordinary word in a sentence without a
-separator, and it does not look inside screenshots: a screenshot that shows a
+`AiGuard::suggest` minimizes every request itself, so no caller can send
+unredacted or unbounded text to a provider.
+
+Redaction is pattern matching. It catches secrets that look like secrets. Known
+limits: a password written as an ordinary word in a sentence without a
+separator, a multi-word passphrase (only its first word is replaced), secrets
+passed as command-line arguments (`curl -u user:secret`), and one-time codes
+without a label. It does not look inside screenshots: a screenshot that shows a
 password is sent as it is. Requesters are told before submission that their
 description, details, and screenshots go to the configured provider (#36).
 
