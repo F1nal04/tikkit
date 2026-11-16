@@ -46,7 +46,8 @@ language; translations map them to display text.
   `recovery_requested`, `recovery_completed`, `profile_updated`,
   `account_deactivated`, `account_reactivated`, `smtp_configured`,
   `smtp_updated`, `smtp_removed`, `smtp_tested`, `ai_settings_updated`,
-  `ai_credential_set`, `ai_credential_removed`, `ai_connection_tested`, `notifications_retried`, `catalog_item_created`,
+  `ai_credential_set`, `ai_credential_removed`, `ai_connection_tested`,
+  `ai_limits_updated`, `ai_usage_purged` (system actor), `notifications_retried`, `catalog_item_created`,
   `catalog_item_updated`, `catalog_reordered` (metadata `kind`: `category`,
   `priority`, `intake_field`)
 - `intake_fields.kind`: `text`, `select`
@@ -287,3 +288,29 @@ Migration `0019_ai_configuration.sql`. Behavior: [ai-configuration.md](ai-config
   plaintext key. `key_hint` is the last four characters of a long key or empty;
   `set_at` and `set_by` record who stored it.
 - "Allow requester to skip AI" stays `organization.allow_requester_ai_skip`.
+
+## AI usage safeguards
+
+Migration `0021_ai_usage_safeguards.sql` (0020 is intentionally unused).
+Behavior: [ai-usage.md](ai-usage.md).
+
+- `ai_limits` has exactly one row (inserted by the migration): `window_hours`,
+  the four budgets `org_request_limit`, `user_request_limit`, `org_token_limit`,
+  `user_token_limit` (NULL means unlimited), `max_concurrency`,
+  `concurrency_wait_seconds`, `breaker_failure_threshold`,
+  `breaker_cooldown_seconds`, and `retention_days`. Every column has a range
+  check, and `retention_days * 24 >= window_hours`. Admission locks this row
+  `FOR UPDATE`, which serializes all admissions.
+- `ai_usage` has one row per guarded provider call or refusal: `account_id`
+  (the requester), `provider`, `model`, `image_count`, `status` (`reserved`,
+  `succeeded`, `failed`, `refused`), `outcome` (stable code, set exactly for
+  `failed` and `refused`), `http_status`, `provider_code`, the token counts
+  `input_tokens` / `output_tokens` / `total_tokens` exactly as reported by the
+  provider (NULL: not reported), `budget_tokens` with `budget_basis`
+  (`estimated`, `reported`, `none`), `breaker_probe`, `started_at`,
+  `finished_at`, and `lease_expires_at` (set exactly while `reserved`). It
+  holds no ticket reference and no content. Indexes: `started_at`,
+  `(account_id, started_at)`, and a partial index on reserved rows.
+- `ai_circuit` has at most one row per provider: `consecutive_failures`,
+  `open_until` / `opened_at` (set while open), and `probe_expires_at` (the
+  half-open probe in flight). No row means closed.

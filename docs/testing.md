@@ -69,6 +69,15 @@ its AI endpoint is a closed loopback port. To exercise a route that calls a
 provider (the Admin connection test in `tests/ai_config.rs`), start a mock and
 build the app with `test_app_with_provider(&pool, &mock.url)`.
 
+`apps/api/tests/ai_guard.rs` covers the usage safeguards
+([ai-usage.md](ai-usage.md)) against PostgreSQL and the same mock: budget
+races and bursts (`Mock::max_in_flight()` is the most requests the mock ever
+answered at once), the circuit breaker, failure outcomes, retention, and what
+reaches storage and logs. `TestDb::pool_for(&db)` opens a second pool on the
+test database to stand in for a second process. Tests move time by editing
+rows (`ai_usage.started_at`, `ai_circuit.open_until`), never by sleeping
+through a window.
+
 ## Browser tests
 
 ```sh

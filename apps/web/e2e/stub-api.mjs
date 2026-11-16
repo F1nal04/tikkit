@@ -275,6 +275,39 @@ createServer(async (req, res) => {
       updated_at: '2026-01-01T00:00:00Z',
     })
   }
+  if (route === 'GET /api/settings/ai/limits' || route === 'GET /api/settings/ai/usage') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    if (route.endsWith('limits'))
+      return reply(res, 200, {
+        window_hours: 24,
+        org_request_limit: 500,
+        user_request_limit: 10,
+        org_token_limit: null,
+        user_token_limit: null,
+        max_concurrency: 2,
+        concurrency_wait_seconds: 30,
+        breaker_failure_threshold: 5,
+        breaker_cooldown_seconds: 60,
+        retention_days: 90,
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+    const none = { requests: 0, succeeded: 0, failed: 0, refused: 0, images: 0, input_tokens: null, output_tokens: null, total_tokens: null, usage_unreported: 0 }
+    const closed = { state: 'closed', consecutive_failures: 0, open_until: null }
+    return reply(res, 200, {
+      days: 30,
+      window: { window_hours: 24, requests: 3, request_limit: 500, budget_tokens: 495, estimated_tokens: 0, token_limit: null, in_flight: 0, max_concurrency: 2 },
+      totals: { ...none, requests: 3, succeeded: 2, failed: 1, refused: 1, images: 2, input_tokens: 240, output_tokens: 90 },
+      providers: [
+        { provider: 'openai', usage: none, circuit: closed },
+        { provider: 'gemini', usage: none, circuit: closed },
+        { provider: 'anthropic', usage: { ...none, requests: 3, succeeded: 2, failed: 1, refused: 1, images: 2, input_tokens: 240, output_tokens: 90 }, circuit: closed },
+      ],
+      outcomes: [
+        { status: 'failed', outcome: 'rate_limited', count: 1 },
+        { status: 'refused', outcome: 'budget_user_requests', count: 1 },
+      ],
+    })
+  }
   if (route === 'GET /api/settings/smtp') return ROLES[user] === 'admin' ? reply(res, 200, { connection: null }) : fail(res, 403, 'forbidden')
   if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')

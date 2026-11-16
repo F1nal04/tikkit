@@ -90,7 +90,9 @@ No new environment variables are required. The Admin-only PUT endpoint is
   confirmation and never implies acceptance. This is not an SLA setting.
 - `allow_requester_ai_skip`: false by default; does not enable AI or change
   category exemptions. AI itself is configured separately
-  ([ai-configuration.md](ai-configuration.md)).
+  ([ai-configuration.md](ai-configuration.md)). AI budgets, the concurrency
+  limit, the circuit breaker, and usage retention are Admin settings stored in
+  the database, not environment variables ([ai-usage.md](ai-usage.md)).
 
 This issue stores lifecycle policies for the ticket workflows that follow.
 Enforcement, snapshotted proposals and timeout processing belong to their

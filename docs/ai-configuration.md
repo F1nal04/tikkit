@@ -41,6 +41,11 @@ environment. Requests go only to the supported providers' fixed hosts
 
 ## Admin API
 
+Budgets, limits, retention, and the usage report have their own endpoints under
+`/api/settings/ai/limits` and `/api/settings/ai/usage`: [ai-usage.md](ai-usage.md).
+Storing a key or changing the selection also closes that provider's circuit
+breaker.
+
 All of these require the Admin role (`ManageSettings`); every other role gets
 `403 forbidden`. Every change writes an audit event without secrets.
 

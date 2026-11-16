@@ -915,6 +915,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/ai/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** AI budgets and limits (Admin only). */
+        get: operations["get_limits"];
+        /**
+         * Replaces the AI budgets and limits (Admin only). They apply to the next
+         *     provider call. They never affect whether tickets can be submitted: a call
+         *     that is refused sends its ticket to human support.
+         */
+        put: operations["put_limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/ai/test": {
         parameters: {
             query?: never;
@@ -930,6 +952,27 @@ export interface paths {
          *     outcome is stored as a stable code; provider responses are never echoed.
          */
         post: operations["test_ai"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI usage and failure counts (Admin only): provider calls, refusals, failures
+         *     by stable code, tokens as reported by each provider, the circuit breaker
+         *     state, and the current budget window. No ticket content and no cost figures.
+         */
+        get: operations["usage"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1342,6 +1385,47 @@ export interface components {
         ActionResult: {
             status: components["schemas"]["TicketStatus"];
         };
+        /** @description The organization budgets in the current rolling window. */
+        AiBudgetWindow: {
+            /**
+             * Format: int64
+             * @description Tokens counted against the token budget: provider-reported where the
+             *     provider reported them, Tikkit's admission estimate otherwise.
+             */
+            budget_tokens: number;
+            /**
+             * Format: int64
+             * @description The part of `budget_tokens` that is an estimate, not a provider figure.
+             */
+            estimated_tokens: number;
+            /**
+             * Format: int64
+             * @description Provider calls in flight right now.
+             */
+            in_flight: number;
+            /** Format: int32 */
+            max_concurrency: number;
+            /** Format: int32 */
+            request_limit: number | null;
+            /**
+             * Format: int64
+             * @description Provider calls counted against the request budget.
+             */
+            requests: number;
+            /** Format: int64 */
+            token_limit: number | null;
+            /** Format: int32 */
+            window_hours: number;
+        };
+        AiCircuit: {
+            /** Format: int32 */
+            consecutive_failures: number;
+            /** Format: date-time */
+            open_until: string | null;
+            state: components["schemas"]["AiCircuitState"];
+        };
+        /** @enum {string} */
+        AiCircuitState: "closed" | "open" | "half_open";
         /** @description The last connection test of the selected provider and model. */
         AiConnection: {
             /** @description Stable code of the failure (`ai_provider_auth_failed`, ...), if it failed. */
@@ -1368,12 +1452,102 @@ export interface components {
             /** @description 8 to 512 printable ASCII characters without spaces. Write-only. */
             api_key: string;
         };
+        /** @description Budgets and operational limits for AI provider calls. */
+        AiLimits: {
+            /**
+             * Format: int32
+             * @description Seconds the circuit stays open before one probe call is allowed (1 to 86400).
+             */
+            breaker_cooldown_seconds: number;
+            /**
+             * Format: int32
+             * @description Consecutive provider failures that open the circuit breaker (1 to 100).
+             */
+            breaker_failure_threshold: number;
+            /**
+             * Format: int32
+             * @description Seconds a call may wait for a free slot before it is refused (0 to 300).
+             */
+            concurrency_wait_seconds: number;
+            /**
+             * Format: int32
+             * @description Provider calls in flight at once (1 to 64).
+             */
+            max_concurrency: number;
+            /**
+             * Format: int32
+             * @description Provider calls per window for the whole organization. `null`: unlimited. 0: none.
+             */
+            org_request_limit: number | null;
+            /**
+             * Format: int64
+             * @description Tokens per window for the whole organization. `null`: unlimited.
+             */
+            org_token_limit: number | null;
+            /**
+             * Format: int32
+             * @description Days usage records are kept (1 to 3650, and never shorter than the window).
+             */
+            retention_days: number;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * Format: int32
+             * @description Provider calls per window for one requester. `null`: unlimited.
+             */
+            user_request_limit: number | null;
+            /**
+             * Format: int64
+             * @description Tokens per window for one requester. `null`: unlimited.
+             */
+            user_token_limit: number | null;
+            /**
+             * Format: int32
+             * @description Budgets count over a rolling window of this many hours (1 to 744).
+             */
+            window_hours: number;
+        };
+        /** @description Every field is required; `null` on a `*_limit` removes that limit. */
+        AiLimitsWrite: {
+            /** Format: int64 */
+            breaker_cooldown_seconds: number;
+            /** Format: int64 */
+            breaker_failure_threshold: number;
+            /** Format: int64 */
+            concurrency_wait_seconds: number;
+            /** Format: int64 */
+            max_concurrency: number;
+            /** Format: int64 */
+            org_request_limit: number | null;
+            /** Format: int64 */
+            org_token_limit: number | null;
+            /** Format: int64 */
+            retention_days: number;
+            /** Format: int64 */
+            user_request_limit: number | null;
+            /** Format: int64 */
+            user_token_limit: number | null;
+            /** Format: int64 */
+            window_hours: number;
+        };
         /** @description A model the adapters are known to work with. */
         AiModelInfo: {
             id: string;
             /** @description Whether screenshots can be sent to this model as image inputs. */
             image_input: boolean;
         };
+        AiOutcomeCount: {
+            /** Format: int64 */
+            count: number;
+            /**
+             * @description Stable code: an adapter failure kind (`timeout`, `rate_limited`, ...),
+             *     `abandoned`, or a refusal (`budget_org_requests`, `circuit_open`, ...).
+             */
+            outcome: string;
+            status: components["schemas"]["AiOutcomeStatus"];
+        };
+        /** @enum {string} */
+        AiOutcomeStatus: "failed" | "refused";
         /** @description What any signed-in account may know: the effective AI policy for new tickets. */
         AiPolicy: {
             /** @description New tickets in non-exempt categories get an AI suggestion before human support. */
@@ -1394,6 +1568,11 @@ export interface components {
             /** @description The models that can be selected for this provider. Nothing else is accepted. */
             models: components["schemas"]["AiModelInfo"][];
             provider: components["schemas"]["AiProvider"];
+        };
+        AiProviderUsage: {
+            circuit: components["schemas"]["AiCircuit"];
+            provider: components["schemas"]["AiProvider"];
+            usage: components["schemas"]["AiUsageCounts"];
         };
         /** @description Masked configuration. No key, ciphertext, or key length is ever included. */
         AiSettings: {
@@ -1430,6 +1609,57 @@ export interface components {
         AiTestResult: {
             /** @description The key authenticated and the model accepts image input. */
             ok: boolean;
+        };
+        /**
+         * @description Counts over the report period. Token sums are exactly what the provider
+         *     reported; `null` means no call in the period reported that value.
+         */
+        AiUsageCounts: {
+            /** Format: int64 */
+            failed: number;
+            /**
+             * Format: int64
+             * @description Screenshots sent with admitted calls.
+             */
+            images: number;
+            /** Format: int64 */
+            input_tokens: number | null;
+            /** Format: int64 */
+            output_tokens: number | null;
+            /**
+             * Format: int64
+             * @description Stopped by a budget, the circuit breaker, or the concurrency limit
+             *     before any provider call.
+             */
+            refused: number;
+            /**
+             * Format: int64
+             * @description Admitted provider calls (succeeded, failed, or in flight).
+             */
+            requests: number;
+            /** Format: int64 */
+            succeeded: number;
+            /**
+             * Format: int64
+             * @description Sum of provider-reported totals. Not every provider reports a total.
+             */
+            total_tokens: number | null;
+            /**
+             * Format: int64
+             * @description Successful calls for which the provider reported no token count at all.
+             */
+            usage_unreported: number;
+        };
+        /** @description AI usage over the report period, and where the budgets stand right now. */
+        AiUsageReport: {
+            /** Format: int32 */
+            days: number;
+            /** @description Failed and refused calls by stable outcome code, most frequent first. */
+            outcomes: components["schemas"]["AiOutcomeCount"][];
+            /** @description Every supported provider, in a fixed order. */
+            providers: components["schemas"]["AiProviderUsage"][];
+            totals: components["schemas"]["AiUsageCounts"];
+            window: components["schemas"]["AiBudgetWindow"];
         };
         AnswerSnapshot: {
             /**
@@ -5077,6 +5307,93 @@ export interface operations {
             };
         };
     };
+    get_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiLimits"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiLimitsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiLimits"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (any field: `out_of_range`; `retention_days`: `shorter_than_window`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     test_ai: {
         parameters: {
             query?: never;
@@ -5123,6 +5440,58 @@ export interface operations {
             };
             /** @description `ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed` */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    usage: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Report period in days, 1 to 3650 (default 30). Records older than the
+                 *     retention are gone whatever the period.
+                 */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiUsageReport"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`days`: `out_of_range`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

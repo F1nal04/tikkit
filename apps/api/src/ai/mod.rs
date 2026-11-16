@@ -549,6 +549,11 @@ impl AiClient {
         }
     }
 
+    /// Upper bound for one [`AiClient::suggest`] call, retries included.
+    pub fn total_timeout(&self) -> Duration {
+        self.options.total_timeout
+    }
+
     /// Ask the configured model for one solution proposal.
     ///
     /// Transport retries stay inside this call and can never yield more than
