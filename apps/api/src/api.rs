@@ -56,6 +56,9 @@ pub enum ApiError {
     NotFound,
     MethodNotAllowed,
     Conflict,
+    /// A conflict whose winner is already committed: `details.status` carries
+    /// the ticket's committed status, so the losing caller knows the outcome.
+    ConflictWith(TicketStatus),
     PayloadTooLarge,
     /// No outbound SMTP connection has been saved.
     SmtpNotConfigured,
@@ -147,6 +150,9 @@ pub struct ErrorBody {
 pub struct ErrorDetails {
     /// Invalid input fields (dotted paths) and their stable error codes.
     pub fields: BTreeMap<String, Vec<String>>,
+    /// On a `conflict` about an AI decision: the ticket's committed status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TicketStatus>,
 }
 
 impl ApiError {
@@ -253,7 +259,7 @@ impl ApiError {
                 ErrorCode::MethodNotAllowed,
                 "This method is not allowed here.",
             ),
-            Conflict => (
+            Conflict | ConflictWith(_) => (
                 StatusCode::CONFLICT,
                 ErrorCode::Conflict,
                 "The resource changed; reload and try again.",
@@ -359,12 +365,21 @@ impl ApiError {
             }
             _ => None,
         };
-        let details = fields.map(|f| ErrorDetails {
-            fields: f
-                .into_iter()
-                .map(|(k, v)| (k, v.into_iter().map(Into::into).collect()))
-                .collect(),
-        });
+        let committed = match self {
+            Self::ConflictWith(status) => Some(*status),
+            _ => None,
+        };
+        let details = match (fields, committed) {
+            (None, None) => None,
+            (fields, status) => Some(ErrorDetails {
+                fields: fields
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_iter().map(Into::into).collect()))
+                    .collect(),
+                status,
+            }),
+        };
         let error = ErrorBody {
             code,
             message: message.into(),

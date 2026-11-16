@@ -73,8 +73,10 @@ pub struct TicketDetail {
     /// What the caller may do as staff; `null` in the requester view.
     #[schema(required = true)]
     pub staff_access: Option<StaffAccess>,
-    /// The ticket's single AI attempt, in the requester view only: `null` for
-    /// staff, and for tickets that never went through AI.
+    /// The ticket's single AI attempt with its stored suggestion and the
+    /// requester's decision; `null` for tickets that never went through AI.
+    /// Staff see it on the tickets they may see (escalated tickets; Admins also
+    /// AI-stage and AI-solved records).
     #[schema(required = true)]
     pub ai: Option<TicketAi>,
 }
@@ -368,11 +370,9 @@ pub async fn ticket_detail(
             created_at: r.created_at,
         })
         .collect();
-    let ai = if staff {
-        None
-    } else {
-        ai_attempts::view(&mut tx, id).await?
-    };
+    // The requester's own attempt, and for staff who may see the ticket the same
+    // stored suggestion as context (docs/ai-decisions.md).
+    let ai = ai_attempts::view(&mut tx, id).await?;
     let staff_access = if staff {
         let allow_reopen: bool =
             sqlx::query_scalar("SELECT allow_reopening FROM organization WHERE id")
@@ -577,14 +577,33 @@ pub struct OwnTicketsQuery {
     pub cursor: Option<String>,
 }
 
-/// Explicit decisions only: replies and views never implicitly accept a proposal.
+/// Explicit decisions only: replies and views never implicitly accept a proposal
+/// or an AI suggestion.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RequesterAction {
-    AcceptResolution { proposal_version: i32 },
-    RejectResolution { proposal_version: i32 },
-    Cancel { reason: String },
-    Reopen,
+    AcceptResolution {
+        proposal_version: i32,
+    },
+    RejectResolution {
+        proposal_version: i32,
+    },
+    Cancel {
+        reason: String,
+    },
+    // Empty struct variants, not unit variants: serde only rejects unknown
+    // fields (a chat message, a "regenerate" flag) on struct variants.
+    Reopen {},
+    /// The stored AI suggestion solved it: `awaiting_ai_decision` → `ai_solved`
+    /// (final, never operator work). Repeating it returns the committed state.
+    AiSolved {},
+    /// Still need help after the stored suggestion: `awaiting_ai_decision` →
+    /// `queued` in the shared general queue, once. Repeating it returns the
+    /// committed state.
+    AiNotSolved {},
+    /// Skip AI while the suggestion is being prepared: `ai_processing` →
+    /// `queued`. Only while the Admin allows requesters to skip AI.
+    SkipAi {},
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -594,13 +613,19 @@ pub struct ActionResult {
 
 /// Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
 /// return 409; policy is read again by the lifecycle inside the transaction.
+///
+/// The AI decisions (`ai_solved`, `ai_not_solved`, `skip_ai`) are idempotent:
+/// repeating the decision that was committed for the ticket returns `200` with
+/// the ticket's current status and writes nothing. Any other AI decision on a
+/// ticket that already left that stage is `409 conflict` with the committed
+/// status in `error.details.status`. See docs/ai-decisions.md.
 #[utoipa::path(post, path = "/api/tickets/{id}/actions", tag = "tickets",
     params(("id" = Uuid, Path)), request_body = RequesterAction,
     responses((status = 200, body = ActionResult),
         (status = 401, body = crate::api::ErrorEnvelope),
-        (status = 403, description = "Current policy or actor denies the action", body = crate::api::ErrorEnvelope),
+        (status = 403, description = "Current policy or actor denies the action (including `skip_ai`, or `ai_not_solved` before a suggestion exists, while requesters may not skip AI)", body = crate::api::ErrorEnvelope),
         (status = 404, body = crate::api::ErrorEnvelope),
-        (status = 409, description = "Stale state or proposal version", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "Stale state or proposal version. For AI decisions `error.details.status` is the committed ticket status", body = crate::api::ErrorEnvelope),
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn requester_action(
     State(state): State<AppState>,
@@ -616,13 +641,71 @@ pub async fn requester_action(
             Transition::RejectResolution { proposal_version }
         }
         RequesterAction::Cancel { reason } => Transition::Cancel { reason },
-        RequesterAction::Reopen => Transition::Reopen,
+        RequesterAction::Reopen {} => Transition::Reopen,
+        RequesterAction::AiSolved {} => Transition::AiSolved,
+        RequesterAction::AiNotSolved {} => Transition::AiNotSolved,
+        RequesterAction::SkipAi {} => Transition::SkipAi,
     };
     let mut tx = state.pool.begin().await?;
-    let status =
-        lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await?;
-    tx.commit().await?;
+    let result =
+        lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await;
+    let status = match result {
+        Ok(status) => {
+            tx.commit().await?;
+            status
+        }
+        Err(ApiError::Conflict)
+            if matches!(
+                transition,
+                Transition::AiSolved | Transition::AiNotSolved | Transition::SkipAi
+            ) =>
+        {
+            // Releases the ticket lock; whoever held it before us has committed.
+            drop(tx);
+            ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await?
+        }
+        Err(error) => return Err(error),
+    };
     Ok(Json(ActionResult { status }))
+}
+
+/// An AI decision that could not be applied because the ticket is no longer (or
+/// not yet) at that stage. The lifecycle has already established that the
+/// caller is the ticket's requester. If the same decision is the one committed
+/// for this ticket, this is a retry: return the current status. Otherwise the
+/// caller lost to another outcome and gets `409` with the committed status.
+async fn ai_decision_after_conflict(
+    pool: &PgPool,
+    id: Uuid,
+    requester: Uuid,
+    transition: &Transition,
+) -> Result<TicketStatus, ApiError> {
+    let (status, committed, skip_allowed): (String, Option<String>, bool) = sqlx::query_as(
+        "SELECT t.status::text,
+                (SELECT e.event_type FROM ticket_events e
+                 WHERE e.ticket_id = t.id AND e.actor_account_id = t.requester_account_id
+                   AND e.event_type IN ('ai_solved', 'ai_not_solved', 'skip_ai')
+                 ORDER BY e.id LIMIT 1),
+                (SELECT allow_requester_ai_skip FROM organization WHERE id)
+         FROM tickets t WHERE t.id = $1 AND t.requester_account_id = $2",
+    )
+    .bind(id)
+    .bind(requester)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let status: TicketStatus = ident(status)?;
+    if committed.as_deref() == Some(transition.event_type()) {
+        return Ok(status);
+    }
+    // "Still need help" before a suggestion exists would bypass mandatory AI.
+    if *transition == Transition::AiNotSolved
+        && status == TicketStatus::AiProcessing
+        && !skip_allowed
+    {
+        return Err(ApiError::Forbidden);
+    }
+    Err(ApiError::ConflictWith(status))
 }
 
 /// Staff work on a ticket. Every action carries the `updated_at` the client last

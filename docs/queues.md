@@ -49,7 +49,14 @@ their team and Admins, like any other team ticket.
 
 A ticket is in exactly one of `general` or `team`; dispatch moves it from one to
 the other without creating another ticket, and an unresolved or bypassed AI
-submission enters `general` once, on its `queued` transition.
+submission enters `general` once, on its `queued` transition: the requester's
+"still need help" (`ai_not_solved`), an allowed skip (`skip_ai`), a failed or
+stopped attempt (`ai_failed`), or a submission that bypassed AI. Repeating the
+request that queued it returns the committed state and adds nothing
+([ai-decisions.md](ai-decisions.md#repeats-and-races)). It arrives with no team
+and no assignee, its frozen intake, and the stored AI suggestion, if there is
+one, in `TicketDetail.ai`. A ticket the requester confirmed as solved by AI
+never enters any queue, count, search result, or bulk action.
 
 ## Filters, order, pages
 

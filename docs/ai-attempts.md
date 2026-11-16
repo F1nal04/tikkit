@@ -32,7 +32,8 @@ nothing.
 and attempts are never deleted (database trigger). An attempt whose suggestion
 the requester never answered stays `suggestion_ready` on a ticket that is not
 `ai_solved`: abandoned attempts remain visible as such and are never counted as
-solved. Only the explicit requester decision (#37) makes a ticket `ai_solved`.
+solved. Only the explicit requester decision makes a ticket `ai_solved`
+([ai-decisions.md](ai-decisions.md)).
 
 ## The input snapshot
 
@@ -260,7 +261,8 @@ transaction, under the ticket lock.
   ticket is queued once (route `requester_skip`) and the attempt becomes
   `handed_off` with outcome `requester_skip`. A skip at submission
   (`requester_skip: true`) under the same toggle creates no attempt at all.
-  The HTTP action for a skip during processing belongs to #37.
+  The HTTP action is `{action: "skip_ai"}` on `POST /api/tickets/{id}/actions`
+  ([ai-decisions.md](ai-decisions.md)).
 
 ### Outcome codes
 
@@ -280,9 +282,11 @@ transaction, under the ticket lock.
 
 ## What the requester sees
 
-`GET /api/tickets/{id}` returns `ai` in the requester view (the ticket's own
-requester, any role). It is `null` in every staff view and for tickets that
-never had an attempt.
+`GET /api/tickets/{id}` returns `ai` to the ticket's requester (any role) and,
+as context, to staff who may see the ticket
+([ai-decisions.md](ai-decisions.md#ai-context-in-ticketdetailai)). It is `null`
+for tickets that never had an attempt. The object also carries `decision` and
+`decided_at`, described there.
 
 ```json
 {
@@ -333,13 +337,9 @@ a locked ticket in the sweep, a result that cannot be stored, and image
 preparation. Unit tests in `ai_attempts.rs` cover
 `prepare_images`.
 
-## What #37 and #36 build on
+## Decisions
 
-- The suggestion of a ticket: `ai_attempts` row with `state =
-  'suggestion_ready'` (`explanation`, `steps`, `language`), or
-  `ai_attempts::view(conn, ticket_id)`.
-- Decisions are the existing transitions `AiSolved` / `AiNotSolved` from
-  `awaiting_ai_decision`; they do not touch the attempt row.
-- A skip during processing is `lifecycle::transition(tx, id,
-  By::Account(requester), &Transition::SkipAi)`; the attempt is ended by the
-  lifecycle.
+What the requester does with the suggestion (solved, still need help, skip),
+the finality of AI-solved records, and the Admin list and statistics are in
+[ai-decisions.md](ai-decisions.md). A decision records the attempt it answered
+in its ticket event (`payload.attempt_id`) and never changes the attempt row.

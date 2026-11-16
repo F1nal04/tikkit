@@ -75,6 +75,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ai/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI outcome statistics (Admin only): solved, escalated after a suggestion,
+         *     skipped, and failed. No ticket content.
+         */
+        get: operations["outcomes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI attempts and their outcomes, newest first (Admin only). This is the only
+         *     list that contains AI-solved records and tickets still in an AI stage.
+         */
+        get: operations["records"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/notifications": {
         parameters: {
             query?: never;
@@ -1208,6 +1248,11 @@ export interface paths {
         /**
          * Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
          *     return 409; policy is read again by the lifecycle inside the transaction.
+         * @description The AI decisions (`ai_solved`, `ai_not_solved`, `skip_ai`) are idempotent:
+         *     repeating the decision that was committed for the ticket returns `200` with
+         *     the ticket's current status and writes nothing. Any other AI decision on a
+         *     ticket that already left that stage is `409 conflict` with the committed
+         *     status in `error.details.status`. See docs/ai-decisions.md.
          */
         post: operations["requester_action"];
         delete?: never;
@@ -1458,6 +1503,17 @@ export interface components {
             api_key: string;
         };
         /**
+         * @description The requester's explicit decision on the stored suggestion.
+         * @enum {string}
+         */
+        AiDecision: "solved" | "not_solved";
+        AiFailureCount: {
+            /** Format: int64 */
+            count: number;
+            /** @description Stable attempt outcome code (docs/ai-attempts.md). */
+            outcome: string;
+        };
+        /**
          * @description Why a ticket went to the help desk without a suggestion.
          * @enum {string}
          */
@@ -1556,6 +1612,56 @@ export interface components {
             outcome: string;
             status: components["schemas"]["AiOutcomeStatus"];
         };
+        /**
+         * @description AI outcome counts. Period counts come from the immutable ticket events, so a
+         *     denied or repeated request never moves them.
+         */
+        AiOutcomeStats: {
+            /**
+             * Format: int64
+             * @description Tickets with an undecided suggestion right now (not bound to the period).
+             */
+            awaiting_decision: number;
+            /**
+             * Format: int64
+             * @description Cancelled by the requester during an AI stage.
+             */
+            cancelled: number;
+            /**
+             * Format: int64
+             * @description Submissions that bypassed AI because their category is exempt.
+             */
+            category_exempt: number;
+            /** Format: int64 */
+            days: number;
+            /**
+             * Format: int64
+             * @description Handed off without a suggestion (`ai_failed` events).
+             */
+            failed: number;
+            /** @description `failed` by attempt outcome code, most frequent first. */
+            failures: components["schemas"]["AiFailureCount"][];
+            /**
+             * Format: int64
+             * @description Escalated after a suggestion (`ai_not_solved` events).
+             */
+            not_solved: number;
+            /**
+             * Format: int64
+             * @description Tickets waiting for a suggestion right now (not bound to the period).
+             */
+            processing: number;
+            /**
+             * Format: int64
+             * @description Requester skips: while processing (`skip_ai`) or at submission.
+             */
+            skipped: number;
+            /**
+             * Format: int64
+             * @description Requester-confirmed AI resolutions (`ai_solved` events).
+             */
+            solved: number;
+        };
         /** @enum {string} */
         AiOutcomeStatus: "failed" | "refused";
         /** @description What any signed-in account may know: the effective AI policy for new tickets. */
@@ -1584,6 +1690,45 @@ export interface components {
             provider: components["schemas"]["AiProvider"];
             usage: components["schemas"]["AiUsageCounts"];
         };
+        /** @description One ticket that went through AI, for Admins. */
+        AiRecord: {
+            attempt_state: components["schemas"]["AiAttemptState"];
+            /**
+             * Format: date-time
+             * @description When the attempt was created (submission).
+             */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When the requester decided (`solved`: the confirmation time).
+             */
+            decided_at: string | null;
+            /**
+             * Format: uuid
+             * @description The attempt.
+             */
+            id: string;
+            model: string;
+            outcome: components["schemas"]["AiRecordOutcome"];
+            /** @description Internal stable code of why there is no suggestion (docs/ai-attempts.md). */
+            outcome_code: string | null;
+            provider: string;
+            /** Format: int64 */
+            reference: number;
+            requester: components["schemas"]["TicketRequester"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /**
+             * Format: uuid
+             * @description Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion.
+             */
+            ticket_id: string;
+        };
+        /**
+         * @description What became of a ticket's AI attempt.
+         * @enum {string}
+         */
+        AiRecordOutcome: "processing" | "awaiting_decision" | "solved" | "not_solved" | "skipped" | "failed" | "cancelled";
         /** @description Masked configuration. No key, ciphertext, or key length is ever included. */
         AiSettings: {
             /** @description The organization toggle "Allow requester to skip AI" (`PUT /api/admin/settings`). */
@@ -1969,6 +2114,7 @@ export interface components {
             fields: {
                 [key: string]: string[];
             };
+            status?: null | components["schemas"]["TicketStatus"];
         };
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
@@ -2176,6 +2322,43 @@ export interface components {
                 /** Format: uuid */
                 team_id: string | null;
                 username: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_AiRecord: {
+            items: {
+                attempt_state: components["schemas"]["AiAttemptState"];
+                /**
+                 * Format: date-time
+                 * @description When the attempt was created (submission).
+                 */
+                created_at: string;
+                /**
+                 * Format: date-time
+                 * @description When the requester decided (`solved`: the confirmation time).
+                 */
+                decided_at: string | null;
+                /**
+                 * Format: uuid
+                 * @description The attempt.
+                 */
+                id: string;
+                model: string;
+                outcome: components["schemas"]["AiRecordOutcome"];
+                /** @description Internal stable code of why there is no suggestion (docs/ai-attempts.md). */
+                outcome_code: string | null;
+                provider: string;
+                /** Format: int64 */
+                reference: number;
+                requester: components["schemas"]["TicketRequester"];
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /**
+                 * Format: uuid
+                 * @description Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion.
+                 */
+                ticket_id: string;
             }[];
             next_cursor: string | null;
         };
@@ -2437,7 +2620,10 @@ export interface components {
         RecoveryRequest: {
             username: string;
         };
-        /** @description Explicit decisions only: replies and views never implicitly accept a proposal. */
+        /**
+         * @description Explicit decisions only: replies and views never implicitly accept a proposal
+         *     or an AI suggestion.
+         */
         RequesterAction: {
             /** @enum {string} */
             action: "accept_resolution";
@@ -2455,6 +2641,15 @@ export interface components {
         } | {
             /** @enum {string} */
             action: "reopen";
+        } | {
+            /** @enum {string} */
+            action: "ai_solved";
+        } | {
+            /** @enum {string} */
+            action: "ai_not_solved";
+        } | {
+            /** @enum {string} */
+            action: "skip_ai";
         };
         ResetPasswordRequest: {
             /** @description 12-256 characters. */
@@ -2708,10 +2903,19 @@ export interface components {
              */
             version: string;
         };
-        /** @description The AI attempt of a ticket, as its requester sees it. */
+        /**
+         * @description The AI attempt of a ticket, as its requester sees it. Staff who may see the
+         *     ticket get the same data as context.
+         */
         TicketAi: {
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description When the decision was committed: the confirmation time of `solved`.
+             */
+            decided_at: string | null;
+            decision: null | components["schemas"]["AiDecision"];
             /** Format: date-time */
             finished_at: string | null;
             /**
@@ -3098,6 +3302,108 @@ export interface operations {
             };
             /** @description `not_found` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    outcomes: {
+        parameters: {
+            query?: {
+                /** @description Reporting period in days, 1-3650 (default 30). */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiOutcomeStats"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`days`: `out_of_range`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    records: {
+        parameters: {
+            query?: {
+                /** @description Only records with this outcome. */
+                outcome?: components["schemas"]["AiRecordOutcome"];
+                /** @description Page size, 1-100 (default 25). */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AiRecord"];
+                };
+            };
+            /** @description `invalid_query` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6481,7 +6787,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Current policy or actor denies the action */
+            /** @description Current policy or actor denies the action (including `skip_ai`, or `ai_not_solved` before a suggestion exists, while requesters may not skip AI) */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -6498,7 +6804,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Stale state or proposal version */
+            /** @description Stale state or proposal version. For AI decisions `error.details.status` is the committed ticket status */
             409: {
                 headers: {
                     [name: string]: unknown;

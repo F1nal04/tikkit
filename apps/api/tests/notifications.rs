@@ -671,9 +671,16 @@ async fn access_is_rechecked_when_delivered() {
 #[tokio::test]
 async fn ai_solved_records_only_notify_the_requesters_own_confirmation() {
     let Some(w) = world().await else { return };
-    let ticket = w.ticket("ai_solved", None, None).await;
+    // Events are appended in the real order: nothing but the confirmation
+    // itself can be added once the record is AI-solved.
+    let ticket = w.ticket("awaiting_ai_decision", None, None).await;
     w.event(ticket, Some(w.requester), "submit", json!({}))
         .await;
+    sqlx::query("UPDATE tickets SET status = 'ai_solved', resolution_source = 'ai', closure_reason = 'requester_confirmed' WHERE id = $1")
+        .bind(ticket)
+        .execute(&w.db.pool)
+        .await
+        .unwrap();
     w.event(ticket, Some(w.requester), "ai_solved", json!({}))
         .await;
     for who in [w.op, w.peer, w.lead, w.other, w.admin] {

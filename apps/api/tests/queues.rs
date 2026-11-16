@@ -818,6 +818,7 @@ async fn escalated_ai_submissions_appear_once_in_general_intake() {
     let requester = w.ids["requester"];
     let failed = seed(&w, requester, S::AiProcessing, None, None).await;
     let not_solved = seed(&w, requester, S::AwaitingAiDecision, None, None).await;
+    fixtures::ai_attempt(w.pool(), not_solved, "suggestion_ready").await;
     let before = ids_of(&app, &cookie, "view=general").await;
     assert!(!before.contains(&failed) && !before.contains(&not_solved));
 

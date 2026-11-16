@@ -325,6 +325,29 @@ pub mod fixtures {
         Ok(id)
     }
 
+    /// The ticket's one AI attempt, inserted directly in `state` (`processing`,
+    /// `suggestion_ready`, `handed_off`, or `cancelled`): what submission and
+    /// the attempt worker would have stored. Returns the attempt ID.
+    #[allow(dead_code)]
+    pub async fn ai_attempt(db: impl PgExecutor<'_>, ticket: Uuid, state: &str) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO ai_attempts (ticket_id, state, outcome, language, input, provider, model,
+                 credential_set_at, deadline_at, explanation, steps, finished_at)
+             VALUES ($1, $2,
+                 CASE $2 WHEN 'handed_off' THEN 'timeout' WHEN 'cancelled' THEN 'requester_cancelled' END,
+                 'en', '{}', 'openai', 'test-model', now(), now() + interval '5 minutes',
+                 CASE WHEN $2 = 'suggestion_ready' THEN 'Restart the application.' END,
+                 CASE WHEN $2 = 'suggestion_ready' THEN '[\"Close it\", \"Open it again\"]'::jsonb END,
+                 CASE WHEN $2 <> 'processing' THEN now() END)
+             RETURNING id",
+        )
+        .bind(ticket)
+        .bind(state)
+        .fetch_one(db)
+        .await
+        .unwrap()
+    }
+
     /// Adds `account` to `team`. Accepts a pool, connection, or transaction.
     pub async fn member(
         db: impl PgExecutor<'_>,
