@@ -144,7 +144,15 @@ const CATALOG = {
 }
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 const sessionState = {}
-const stateOf = (req) => (sessionState[tokenOf(req)] ??= { drafts: new Map(), tickets: [], receipts: new Map(), shots: new Map(), submitted: [], reference: 1000 })
+// `ai` is the Admin's AI configuration for this session (POST /api/test/ai): off by default, like the
+// product. `providerCalls` counts attempts that would reach a provider; `aiActions` logs decision requests.
+const stateOf = (req) => (sessionState[tokenOf(req)] ??= { drafts: new Map(), tickets: [], receipts: new Map(), shots: new Map(), submitted: [], reference: 1000, ai: { ai_assistance: false, requester_skip_allowed: false }, providerCalls: 0, aiActions: [] })
+const aiPolicy = (st) => ({ ai_assistance: st.ai.ai_assistance, requester_skip_allowed: st.ai.ai_assistance && st.ai.requester_skip_allowed })
+// Model output is untrusted text: the page must show markup, markdown, and links literally.
+const SUGGESTION = {
+  explanation: 'Word keeps a damaged profile. <img src=x onerror="window.aiXss = true"> **Reset** it: [click here](javascript:window.aiXss=true) or https://evil.example/reset\nYour screenshot seems to show error 0x80070005.',
+  steps: ['Close Word. <script>window.aiXss = true</script>', 'Rename the folder "Normal.dotm".', 'Start Word again.'],
+}
 const validation = (res, fields) => reply(res, 422, { error: { code: 'validation_failed', message: 'validation_failed', details: { fields } }, request_id: 'stub' })
 
 // Mirrors the server rules the form relies on (docs/submission.md); hidden answers are dropped.
@@ -167,15 +175,29 @@ function checkIntake(intake) {
   return { fields, category, answers }
 }
 
-function submit(res, st, intake, key, sameRequest, draftId) {
+// Routing as in docs/submission.md: AI off, then category exemption, then the requester's skip
+// (403 unless the Admin allows it), otherwise the one AI attempt.
+function submit(res, st, intake, key, sameRequest, draftId, skip, language) {
   // What the client actually sent, before hidden answers are dropped the way the server does.
   st.submitted.push(JSON.parse(JSON.stringify(intake ?? {})))
   const prior = st.receipts.get(key)
   if (prior) return prior.same === sameRequest ? reply(res, 200, prior.receipt) : fail(res, 409, 'conflict')
-  const { fields, answers } = checkIntake(intake)
+  const { fields, answers, category } = checkIntake(intake)
   if (Object.keys(fields).length) return validation(res, fields)
-  const ticket = { id: randomUUID(), reference: ++st.reference, status: 'queued' }
-  st.tickets.push({ ...ticket, intake: { ...intake, answers } })
+  const policy = aiPolicy(st), now = new Date().toISOString()
+  let status = 'queued', route = 'ai_disabled', ai = null
+  if (policy.ai_assistance) {
+    if (category.skip_ai) route = 'category_exempt'
+    else if (skip) {
+      if (!policy.requester_skip_allowed) return fail(res, 403, 'forbidden')
+      route = 'requester_skip'
+    } else {
+      status = 'ai_processing'; route = 'ai'; st.providerCalls++
+      ai = { state: 'processing', language, suggestion: null, reason: null, created_at: now, finished_at: null, decision: null, decided_at: null }
+    }
+  }
+  const ticket = { id: randomUUID(), reference: ++st.reference, status }
+  st.tickets.push({ ...ticket, intake: { ...intake, answers }, ai, created_at: now, updated_at: now, transitions: [{ id: 1, event_type: 'submit', from_status: 'draft', to_status: status, actor_account_id: null, payload: { route }, created_at: now }] })
   st.receipts.set(key, { same: sameRequest, receipt: ticket })
   st.drafts.delete(draftId)
   // Slow enough that a second click or Enter lands while the first request is still running.
@@ -191,7 +213,7 @@ function detailOf(t) {
     view: 'requester', category_id: c.id, category_name: c.name, priority_id: p.id, priority_name: p.name,
     assignment: { team_name: null, assignee_display_name: null },
     intake_snapshot: { subject: t.subject ?? t.intake?.subject ?? 'Printer', description: t.description ?? t.intake?.description ?? 'Jammed', catalog: { category_id: c.id, category_name: c.name, skip_ai: c.skip_ai, priority_id: p.id, priority_name: p.name, answers: [] }, screenshot_ids: t.intake?.screenshot_ids ?? [] },
-    resolution_source: null, closure_reason: null, requester: null,
+    resolution_source: null, closure_reason: null, requester: null, ai: null,
     proposal_version: 0, confirmation_deadline: null, transitions: [],
     created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z', ...t,
   }
@@ -222,6 +244,7 @@ function seedHistory(st, user) {
   changeTicket(timeout, 'confirmation_timeout', 'closed')
   const ai = add('AI solved final', 'awaiting_ai_decision', { resolution_source: 'ai', closure_reason: 'requester_confirmed' })
   changeTicket(ai, 'ai_solved', 'ai_solved')
+  ai.ai = { state: 'suggestion_ready', language: 'en', suggestion: SUGGESTION, reason: null, created_at: ai.created_at, finished_at: ai.created_at, decision: 'solved', decided_at: '2026-10-01T10:05:00Z' }
   const privateShot = randomUUID()
   st.shots.set(privateShot, { ...screenshot, id: privateShot, private: true })
   const publicMessage = (i) => ({ id: randomUUID(), kind: 'public_reply', author_kind: 'staff', author_account_id: null, author_display_name: 'Olga Support', created_at: pending.created_at, body: `Public update ${i}: <script>window.messageXss = true</script>`, screenshot_ids: i === 0 ? [screenshot.id] : [] })
@@ -256,6 +279,7 @@ createServer(async (req, res) => {
     return reply(res, 200, account(user, tokenOf(req)))
   }
   if (route === 'GET /api/organization') return reply(res, 200, { ...settings, ...stateOf(req).policy })
+  if (route === 'GET /api/ai/policy') return reply(res, 200, aiPolicy(stateOf(req)))
   if (route === 'GET /api/settings/ai') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
     const credential = { hint: 'WXYZ', set_at: '2026-01-01T00:00:00Z', set_by: null, set_by_username: 'admin', readable: true }
@@ -407,6 +431,27 @@ createServer(async (req, res) => {
   if (route === 'POST /api/test/policy') { Object.assign(st.policy, await readBody(req)); return reply(res, 204) }
   if (route === 'POST /api/test/assignment') { const input = await readBody(req); const t = st.tickets.find((t) => t.id === input.id); if (!t) return fail(res, 404, 'not_found'); t.assignment = input.assignment; return reply(res, 204) }
   if (route === 'POST /api/test/history') return reply(res, 200, seedHistory(st, user))
+  // --- AI step test hooks: the Admin's configuration, the worker's result, and what was requested.
+  if (route === 'POST /api/test/ai') { Object.assign(st.ai, await readBody(req)); return reply(res, 204) }
+  if (route === 'GET /api/test/ai-log') return reply(res, 200, { provider_calls: st.providerCalls, actions: st.aiActions })
+  if (route === 'POST /api/test/ai-result') {
+    const { id, outcome = 'suggestion', suggestion = SUGGESTION, force = false } = await readBody(req)
+    const t = st.tickets.find((t) => t.id === id)
+    if (!t) return fail(res, 404, 'not_found')
+    // `force` is a result that reached the attempt after the handoff: the status does not move.
+    if (force) { t.ai = { ...t.ai, suggestion }; t.updated_at = new Date().toISOString(); return reply(res, 200, { applied: false }) }
+    // Like the worker, a result only counts while the attempt is processing; a late one is dropped.
+    if (t.status !== 'ai_processing') return reply(res, 200, { applied: false })
+    const finished_at = new Date().toISOString()
+    if (outcome === 'suggestion') {
+      changeTicket(t, 'ai_suggestion_ready', 'awaiting_ai_decision')
+      t.ai = { ...t.ai, state: 'suggestion_ready', suggestion, finished_at }
+    } else {
+      changeTicket(t, 'ai_failed', 'queued', { route: outcome })
+      t.ai = { ...t.ai, state: 'handed_off', reason: outcome, finished_at }
+    }
+    return reply(res, 200, { applied: true })
+  }
   if (route === 'GET /api/tickets') {
     const q = new URL(req.url, 'http://stub').searchParams
     let items = st.tickets.map(detailOf).reverse()
@@ -514,13 +559,14 @@ createServer(async (req, res) => {
     t.updated_at = new Date().toISOString()
     return reply(res, 204)
   }
-  const ownTicket = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|actions))?$/.exec(pathname)
+  const ownTicket = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|actions|activity))?$/.exec(pathname)
   if (ownTicket) {
     const source = st.tickets.find((t) => t.id === ownTicket[1])
     if (!source) return fail(res, 404, 'not_found')
     const t = detailOf(source), endpoint = ownTicket[2]
     const all = st.messages.get(t.id) ?? []
     if (!endpoint && req.method === 'GET') return reply(res, 200, t)
+    if (endpoint === 'activity') return reply(res, 200, { version: `${t.updated_at}.${t.status}.${all.length}` })
     if (endpoint === 'messages') {
       const q = new URL(req.url, 'http://stub').searchParams, start = Number(q.get('cursor') ?? 0), limit = Number(q.get('limit') ?? 25)
       const visible = all.filter((m) => m.kind === 'public_reply')
@@ -540,6 +586,33 @@ createServer(async (req, res) => {
     }
     if (endpoint === 'actions') {
       const policy = { ...settings, ...st.policy }, a = input.action
+      // AI decisions (docs/ai-decisions.md): a repeat of the committed decision is 200, another
+      // decision after the stage ended is 409 with the committed status, a forbidden skip is 403.
+      if (['ai_solved', 'ai_not_solved', 'skip_ai'].includes(a)) {
+        st.aiActions.push(a)
+        const conflict = () => reply(res, 409, { error: { code: 'conflict', message: 'conflict', details: { fields: {}, status: source.status } }, request_id: 'stub' })
+        const decide = () => {
+          const now = new Date().toISOString(), skipAllowed = aiPolicy(st).requester_skip_allowed
+          if ((source.transitions ?? []).some((e) => e.event_type === a)) return reply(res, 200, { status: source.status })
+          if (a === 'skip_ai') {
+            if (source.status !== 'ai_processing') return conflict()
+            if (!skipAllowed) return fail(res, 403, 'forbidden')
+            changeTicket(source, 'skip_ai', 'queued', { route: 'requester_skip' })
+            source.ai = { ...source.ai, state: 'handed_off', reason: 'requester_skip', finished_at: now }
+          } else {
+            if (source.status === 'ai_processing' && a === 'ai_not_solved' && !skipAllowed) return fail(res, 403, 'forbidden')
+            if (source.status !== 'awaiting_ai_decision') return conflict()
+            if (a === 'ai_solved') {
+              changeTicket(source, 'ai_solved', 'ai_solved')
+              Object.assign(source, { resolution_source: 'ai', closure_reason: 'requester_confirmed' })
+            } else changeTicket(source, 'ai_not_solved', 'queued', { route: 'not_solved' })
+            source.ai = { ...source.ai, decision: a === 'ai_solved' ? 'solved' : 'not_solved', decided_at: now }
+          }
+          reply(res, 200, { status: source.status })
+        }
+        // Slow enough that a second click lands while the first request is still running.
+        return void setTimeout(decide, 300)
+      }
       if (!['accept_resolution', 'reject_resolution', 'cancel', 'reopen'].includes(a)) return validation(res, { action: ['invalid'] })
       if (['ai_solved', 'cancelled'].includes(t.status)) return fail(res, 409, 'conflict')
       if (a === 'reopen') {
@@ -551,6 +624,7 @@ createServer(async (req, res) => {
         if (input.reason.length > 1000) return validation(res, { reason: ['too_long'] })
         if (!['ai_processing', 'awaiting_ai_decision', ...OPEN].includes(t.status)) return fail(res, 409, 'conflict')
         if (policy.requester_cancellation_policy === 'disabled' || (policy.requester_cancellation_policy === 'before_work_starts' && t.transitions.some((e) => e.to_status === 'in_progress'))) return fail(res, 403, 'forbidden')
+        if (source.ai?.state === 'processing') source.ai = { ...source.ai, state: 'cancelled', finished_at: new Date().toISOString() }
         changeTicket(source, 'cancel', 'cancelled', { reason: input.reason.trim() })
       } else {
         if (t.status !== 'awaiting_confirmation' || t.proposal_version !== input.proposal_version) return fail(res, 409, 'conflict')
@@ -597,12 +671,12 @@ createServer(async (req, res) => {
       return reply(res, 200, draft)
     }
     if (draftId[2]) {
-      return submit(res, st, draft.intake, body.idempotency_key, `${draft.id}:${body.version}`, draft.id)
+      return submit(res, st, draft.intake, body.idempotency_key, `${draft.id}:${body.version}:${!!body.requester_skip}`, draft.id, !!body.requester_skip, languages[tokenOf(req)] ?? 'en')
     }
   }
   if (route === 'POST /api/tickets') {
     const body = await readBody(req)
-    return submit(res, st, body.intake, body.idempotency_key, JSON.stringify(body.intake))
+    return submit(res, st, body.intake, body.idempotency_key, JSON.stringify([body.intake, !!body.requester_skip]), undefined, !!body.requester_skip, languages[tokenOf(req)] ?? 'en')
   }
   if (route === 'POST /api/screenshots') {
     const chunks = []

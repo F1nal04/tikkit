@@ -8,7 +8,8 @@ is final, who sees what, and what Admins can inspect and count.
 Code: `apps/api/src/tickets.rs` (`requester_action`), `apps/api/src/lifecycle.rs`,
 `apps/api/src/ai_records.rs`. Migration `0023_ai_decisions.sql`
 ([schema.md](schema.md#ai-decisions)). The attempt and its suggestion:
-[ai-attempts.md](ai-attempts.md). The web requester flow is #36.
+[ai-attempts.md](ai-attempts.md). The web requester flow:
+[ai-requester-step.md](ai-requester-step.md).
 
 ## The three actions
 

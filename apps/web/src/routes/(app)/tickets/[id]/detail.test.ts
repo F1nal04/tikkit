@@ -58,9 +58,14 @@ test('an uncertain reply send retries with the same key and keeps input', async 
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(JSON.parse(fetch.mock.calls[1][1].body))
 })
 
-test('AI-solved history marks the suggestion unavailable and offers no mutation controls in German', () => {
-  show({ status: 'ai_solved', closure_reason: 'requester_confirmed', assignment: { team_name: null, assignee_display_name: null } }, 'de')
-  expect(screen.getByText(/KI-Lösungsvorschlags ist für diesen Eintrag nicht verfügbar/)).toBeTruthy()
+test('AI-solved history shows the confirmed suggestion and time and offers no mutation controls in German', () => {
+  const ai = { state: 'suggestion_ready', language: 'de', suggestion: { explanation: 'Treiber <b>neu</b> installieren.', steps: ['Drucker entfernen', 'Drucker hinzufügen'] }, reason: null, created_at: '2026-10-01T10:00:00Z', finished_at: '2026-10-01T10:00:09Z', decision: 'solved', decided_at: '2026-10-01T10:05:00Z' }
+  show({ status: 'ai_solved', closure_reason: 'requester_confirmed', ai, assignment: { team_name: null, assignee_display_name: null } }, 'de')
+  expect(screen.getByRole('heading', { name: 'Mit dem KI-Vorschlag gelöst' })).toBeTruthy()
+  expect(screen.getByTestId('ai-suggestion').textContent).toContain('Treiber <b>neu</b> installieren.')
+  expect(screen.getByTestId('ai-suggestion').querySelectorAll('li')).toHaveLength(2)
+  expect(document.querySelector('.ai-step time')?.getAttribute('datetime')).toBe('2026-10-01T10:05:00Z')
+  expect(screen.getByText(/endgültig und schreibgeschützt/)).toBeTruthy()
   expect(document.querySelector('script, img')).toBeNull()
   expect(screen.queryByRole('textbox')).toBeNull()
   expect(screen.queryByRole('button', { name: /Antwort|wiedereröffnen|stornieren|bestätigen/i })).toBeNull()

@@ -99,8 +99,13 @@ controls.
   visible form differs from it (answers resume could not restore) the visible intake is written
   first. `attemptFor` keeps one idempotency key per identical request and issues a new one when the
   input changed; the submit button and handler ignore clicks while a request runs.
-- The receipt shows the reference, status, category, and the priority the requester chose; the
-  full ticket view is `/tickets/{id}`.
+- **AI:** with `GET /api/ai/policy` reporting AI on, the form discloses what is sent to the
+  external AI provider (or that the category bypasses AI) and offers a skip checkbox only when
+  the policy allows it; with AI off it says nothing about AI
+  ([ai-requester-step.md](ai-requester-step.md)).
+- A submission routed to AI goes to `/tickets/{id}`, where the AI step continues. Otherwise the
+  receipt shows the reference, status, category, and the priority the requester chose, and why
+  no AI suggestion was created when AI is on; the full ticket view is `/tickets/{id}`.
 
 ## Requester history and detail
 
@@ -117,12 +122,20 @@ separate workflow. All authored text is escaped plain
 text with preserved line breaks. Images use only authorized screenshot ID URLs;
 there are no edit/delete controls. AI-solved history is permanently read-only.
 
+The AI step is the first section of this page (`AiStep.svelte`, state logic in
+`src/lib/aiStep.ts`): the wait, the one stored suggestion with "Solved" and
+"Still need help", the support receipts, and the final AI-solved receipt.
+While that step is undecided the page polls the ticket's change marker every 3
+seconds and stops once it is settled. Details:
+[ai-requester-step.md](ai-requester-step.md).
+
 Actions are affordances from current policy/state; Rust's lifecycle remains the
 authority. Resolution decisions send the displayed proposal version, rejection
 is independent of the reopen toggle, deadlines and timeout closure are explicit,
 and cancellation requires a reason. After `403`/`409`, refresh the detail/policy
 and announce the conflict without a success claim or clearing unsent input.
-Use Refresh to discover reassignment, transfers, messages, or policy changes.
+Use Refresh to discover reassignment, transfers, messages, or policy changes
+(outside the AI step, this page does not poll).
 Reply retries reuse the idempotency key for identical content and screenshots;
 changed input gets a new key. Uploads finish before sending. Language changes
 keep mounted input. A reply that becomes unavailable is retained, disabled,
