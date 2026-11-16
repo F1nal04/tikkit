@@ -174,11 +174,14 @@ test('reopening defaults off, honors current policy changes, then reopens only a
   await expect(page.getByRole('form', { name: 'Public reply' })).toBeVisible()
 })
 
-test('AI-solved history is read-only, marks the suggestion unavailable, and rejects direct reopen/escalation', async ({ page }) => {
+test('AI-solved history is read-only, shows the confirmed suggestion, and rejects direct reopen/escalation', async ({ page }) => {
   const ids = await setup(page)
   await request(page, '/api/test/policy', { allow_reopening: true })
   await detail(page, ids.ai)
-  await expect(page.getByText('The AI suggestion text is unavailable for this record.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Solved with the AI suggestion' })).toBeVisible()
+  await expect(page.getByTestId('ai-suggestion')).toContainText('Word keeps a damaged profile.')
+  await expect(page.locator('section.ai-step time')).toHaveAttribute('datetime', '2026-10-01T10:05:00Z')
+  await expect(page.getByText('You confirmed this AI suggestion solved the problem. This record is final and read-only.')).toBeVisible()
   await expect(page.getByText('AI solution confirmed', { exact: true })).toBeVisible()
   await expect(page.getByRole('main').getByRole('textbox')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Send reply|Reopen|Cancel ticket|Still not solved|Confirm resolved/ })).toHaveCount(0)

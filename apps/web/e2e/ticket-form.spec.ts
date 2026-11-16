@@ -82,7 +82,8 @@ test('a full no-AI submission shows the receipt with the chosen priority and sen
   // Change the category: the program answer is hidden, remembered, and not sent.
   await page.getByLabel('Category').selectOption({ label: 'Network' })
   await expect(page.getByText(/will not be sent: Program/)).toBeVisible()
-  await expect(page.getByText('goes straight to the support team without AI assistance')).toBeVisible()
+  // AI is off here: the form says nothing about AI (the AI flow is covered in ai-step.spec.ts).
+  await expect(page.getByRole('heading', { name: 'AI assistance' })).toHaveCount(0)
   // The draft save itself omits the hidden answer; the stub must not be what strips it.
   await expect.poll(async () => (await drafts(page)).items[0]?.intake.answers).toEqual({})
   await page.getByLabel('Category').selectOption({ label: 'Software' })

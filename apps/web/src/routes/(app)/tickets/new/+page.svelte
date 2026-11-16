@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invalidate } from '$app/navigation'
+  import { goto, invalidate } from '$app/navigation'
   import { tick, untrack } from 'svelte'
   import { ApiError, type Schemas } from '@tikkit/api-client'
   import Alert from '#lib/components/Alert.svelte'
@@ -8,6 +8,7 @@
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
+  import { intakeAi } from '#lib/aiStep.ts'
   import { api as apiClient } from '#lib/api.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import {
@@ -41,7 +42,10 @@
   let formError = $state<unknown>(null)
   let notices = $state<Pick<Restored, 'categoryGone' | 'priorityGone' | 'dropped'>>({ categoryGone: false, priorityGone: false, dropped: [] })
   let submitting = $state(false)
-  let receipt = $state<(Schemas['SubmissionReceipt'] & { category: string; priority: string }) | null>(null)
+  let receipt = $state<(Schemas['SubmissionReceipt'] & { category: string; priority: string; noAi: 'exempt' | 'skipped' | null }) | null>(null)
+  // The requester's wish to skip AI. It is offered and sent only while the policy allows it.
+  let skipAi = $state(false)
+  let skipDenied = $state(false)
   let receiptHeading = $state<HTMLElement>()
 
   // Draft autosave. `draft` is the saved copy's identity and version; `stale` means another tab or
@@ -74,6 +78,7 @@
   let json = $derived(JSON.stringify(intake))
   // svelte-ignore state_referenced_locally
   let lastSaved = JSON.stringify(intake)
+  let ai = $derived(intakeAi(data.aiPolicy, category, skipAi))
   let available = $derived(catalog.categories.length > 0 && catalog.priorities.length > 0)
 
   // Every field has an answer slot to bind to, including after the catalog is refreshed.
@@ -234,6 +239,8 @@
     forceSync = false
     attempt = null
     receipt = null
+    skipAi = false
+    skipDenied = false
     saveState = 'idle'
     lastSaved = JSON.stringify(toIntake(form, catalog))
   }
@@ -251,6 +258,7 @@
     // Nothing else runs while a submission is in flight, so a double click or Enter cannot repeat it.
     if (submitting) return
     formError = null
+    skipDenied = false
     errors = validate(form, catalog)
     if (Object.keys(errors).length) return focusFirstError()
     submitting = true
@@ -270,24 +278,33 @@
       } else if (alive) {
         const body = untrack(() => intake)
         const current = savedDraft
-        const fingerprint = `${current?.id}:${current?.version}:${JSON.stringify(body)}`
+        // Sent only as a request under the loaded policy; the lifecycle rechecks it and answers 403.
+        const skip = untrack(() => ai.skip)
+        const requester_skip = skip ? { requester_skip: true } : {}
+        const fingerprint = `${current?.id}:${current?.version}:${skip}:${JSON.stringify(body)}`
         attempt = attemptFor(attempt, fingerprint)
         const sent = current
           ? await api().request('post', '/api/ticket-drafts/{id}/submit', {
               path: { id: current.id },
-              body: { version: current.version, idempotency_key: attempt.key },
+              body: { version: current.version, idempotency_key: attempt.key, ...requester_skip },
             })
-          : await api().request('post', '/api/tickets', { body: { intake: body, idempotency_key: attempt.key } })
+          : await api().request('post', '/api/tickets', { body: { intake: body, idempotency_key: attempt.key, ...requester_skip } })
         if (!alive) return
-        receipt = {
-          ...sent,
-          category: category?.name ?? '',
-          priority: catalog.priorities.find((p) => p.id === form.priority_id)?.name ?? '',
-        }
         if (current) drafts = drafts.filter((d) => d.id !== current.id)
         setDraft(null)
         serverDiffers = false
         clearTimeout(timer)
+        if (sent.status === 'ai_processing' || sent.status === 'awaiting_ai_decision') {
+          // The AI step lives on the ticket page, where a refresh or a later visit resumes it.
+          await goto(`/tickets/${sent.id}`)
+          return
+        }
+        receipt = {
+          ...sent,
+          category: category?.name ?? '',
+          priority: catalog.priorities.find((p) => p.id === form.priority_id)?.name ?? '',
+          noAi: untrack(() => (ai.exempt ? 'exempt' : skip ? 'skipped' : null)),
+        }
         await tick()
         receiptHeading?.focus()
       }
@@ -300,6 +317,11 @@
           await invalidate('tikkit:catalog')
         }
         focusErrors = true
+      } else if (e instanceof ApiError && e.status === 403 && untrack(() => ai.skip)) {
+        // The Admin switched skipping off after this page loaded. Nothing was submitted.
+        skipDenied = true
+        skipAi = false
+        await invalidate('tikkit:catalog')
       } else if (e instanceof ApiError && savedDraft && (e.code === 'conflict' || e.code === 'not_found')) {
         stale = e.code === 'conflict' ? 'changed' : 'gone'
       } else {
@@ -326,6 +348,7 @@
     <h2 tabindex="-1" bind:this={receiptHeading}>{f.sentTitle}</h2>
     <p>{f.sentText.replace('{reference}', `#${receipt.reference}`)}</p>
     <p>{f.received[receipt.status as keyof typeof f.received] ?? f.received.queued}</p>
+    {#if receipt.noAi}<p>{receipt.noAi === 'exempt' ? f.receiptExempt : f.receiptSkipped}</p>{/if}
     <p><StatusBadge status={receipt.status} label={t.statuses[receipt.status]} /></p>
     <dl>
       <dt>{f.receiptCategory}</dt>
@@ -379,6 +402,7 @@
     </Alert>
   {/if}
   {#if formError}<Alert kind="error">{errorText(t, formError)}</Alert>{/if}
+  {#if skipDenied}<Alert kind="error">{f.skipDenied}</Alert>{/if}
   {#if Object.keys(errors).length}<Alert kind="error">{t.errors.validation_failed}</Alert>{/if}
 
   <form novalidate onsubmit={submit} aria-busy={submitting}>
@@ -458,7 +482,21 @@
       />
 
       <ScreenshotPicker locale={data.locale} bind:ids={form.screenshot_ids} error={errorFor('screenshot_ids')} />
-      <p class="hint">{category?.skip_ai ? f.skipsAi : f.aiNote}</p>
+      {#if ai.applies}
+        <section class="ai-disclosure" aria-labelledby="ai-disclosure-title">
+          <h2 id="ai-disclosure-title">{f.aiTitle}</h2>
+          {#if ai.exempt}
+            <p>{f.skipsAi}</p>
+          {:else}
+            <p>{f.aiDisclosure}</p>
+            <p class="hint">{f.aiNext}</p>
+            {#if ai.maySkip}
+              <label class="check"><input type="checkbox" name="requester_skip" bind:checked={skipAi} aria-describedby="skip-ai-hint" /><span>{f.skipAi}</span></label>
+              <p class="hint" id="skip-ai-hint">{f.skipAiHint}</p>
+            {/if}
+          {/if}
+        </section>
+      {/if}
     </fieldset>
 
     <div class="form-actions">
@@ -505,6 +543,28 @@
     gap: 1rem;
     padding-left: 0.75rem;
     border-left: 0.25rem solid var(--line);
+  }
+  .ai-disclosure {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-left: 0.375rem solid var(--accent);
+    border-radius: 0.375rem;
+    background: var(--surface);
+  }
+  .ai-disclosure h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+  }
+  .ai-disclosure p {
+    margin: 0.5rem 0 0;
+  }
+  .ai-disclosure .check {
+    margin-top: 0.75rem;
+    font-weight: 400;
+  }
+  .ai-disclosure input[type='checkbox'] {
+    min-height: 0;
+    flex: none;
   }
   .form-actions button {
     min-width: 12rem;
