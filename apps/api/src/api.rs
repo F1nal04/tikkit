@@ -69,6 +69,20 @@ pub enum ApiError {
     SmtpDeliveryFailed,
     /// The stored password cannot be decrypted with the current encryption key.
     SmtpCredentialUnreadable,
+    /// No AI provider, model, or key for the selected provider is stored.
+    AiNotConfigured,
+    /// The stored AI key does not decrypt with this deployment's encryption key.
+    AiCredentialUnreadable,
+    /// The connection test cannot reach provider adapters in this build.
+    AiTestUnavailable,
+    /// The AI provider rejected the key.
+    AiProviderAuthFailed,
+    /// DNS, connect, TLS, or timeout talking to the AI provider.
+    AiProviderUnreachable,
+    /// The model is unknown to the provider or cannot take image input.
+    AiModelUnsupported,
+    /// Any other AI provider failure.
+    AiProviderFailed,
     Internal,
 }
 
@@ -103,6 +117,13 @@ pub enum ErrorCode {
     SmtpNetworkFailed,
     SmtpDeliveryFailed,
     SmtpCredentialUnreadable,
+    AiNotConfigured,
+    AiCredentialUnreadable,
+    AiTestUnavailable,
+    AiProviderAuthFailed,
+    AiProviderUnreachable,
+    AiModelUnsupported,
+    AiProviderFailed,
     Internal,
 }
 
@@ -271,6 +292,41 @@ impl ApiError {
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::SmtpCredentialUnreadable,
                 "The stored mail password could not be read. Enter it again.",
+            ),
+            AiNotConfigured => (
+                StatusCode::CONFLICT,
+                ErrorCode::AiNotConfigured,
+                "Select an AI provider and model and store its API key first.",
+            ),
+            AiCredentialUnreadable => (
+                StatusCode::CONFLICT,
+                ErrorCode::AiCredentialUnreadable,
+                "The stored AI API key could not be read. Enter it again.",
+            ),
+            AiTestUnavailable => (
+                StatusCode::NOT_IMPLEMENTED,
+                ErrorCode::AiTestUnavailable,
+                "The AI connection test is not available in this version.",
+            ),
+            AiProviderAuthFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderAuthFailed,
+                "The AI provider rejected the API key.",
+            ),
+            AiProviderUnreachable => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderUnreachable,
+                "The AI provider could not be reached.",
+            ),
+            AiModelUnsupported => (
+                StatusCode::CONFLICT,
+                ErrorCode::AiModelUnsupported,
+                "The model is not supported or cannot analyze screenshots. Choose an image-capable model.",
+            ),
+            AiProviderFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderFailed,
+                "The AI provider returned an error.",
             ),
             Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,

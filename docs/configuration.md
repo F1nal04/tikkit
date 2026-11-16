@@ -24,7 +24,11 @@ name the variable and the fix but never echo values.
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 
 AI providers are not environment configuration: they are optional, disabled by
-default, and configured by an Admin at runtime. Outbound SMTP is optional too
+default, and configured by an Admin at runtime (`/admin/ai`). Provider API keys
+are encrypted with `ENCRYPTION_KEY`, bound to their provider, and write-only;
+with a missing or unreadable key, tickets go straight to operators. Key rotation
+and recovery: [ai-configuration.md](ai-configuration.md#encryption-key-rotation-and-recovery).
+No new environment variables. Outbound SMTP is optional too
 and is **not** an environment variable. An Admin saves the host, port, sender,
 username, and password in the app (`/admin/email`). Username and password are
 encrypted with `ENCRYPTION_KEY` (AES-256-GCM) and are write-only: never returned,
@@ -85,7 +89,8 @@ No new environment variables are required. The Admin-only PUT endpoint is
   affect subsequent proposals. Timeout closure is separate from requester
   confirmation and never implies acceptance. This is not an SLA setting.
 - `allow_requester_ai_skip`: false by default; does not enable AI or change
-  category exemptions.
+  category exemptions. AI itself is configured separately
+  ([ai-configuration.md](ai-configuration.md)).
 
 This issue stores lifecycle policies for the ticket workflows that follow.
 Enforcement, snapshotted proposals and timeout processing belong to their

@@ -124,8 +124,14 @@ deadline is cleared, and late AI results or timeouts get `409`.
 row: `allow_reopening`, `requester_cancellation_policy`,
 `resolution_confirmation_hours`, `allow_requester_ai_skip`) `FOR SHARE` in the
 transition's transaction, so a concurrent settings change waits until the
-transition that relied on the old values commits. AI stays unavailable until AI
-configuration is persisted.
+transition that relied on the old values commits. `Policy::ai_available` comes
+from `ai_config::ai_available` (enabled, a key stored for the selected provider,
+and that key decrypts), which needs the deployment's encryption key. Only
+`lifecycle::submit` supplies it; it is the entry point for
+`Transition::Submit` and the only transition that routes on AI availability. A
+`Submit` through plain `lifecycle::transition` treats AI as unavailable and
+queues for operators. Until the attempt worker (#35) exists, `ai_available` is
+always false ([ai-configuration.md](ai-configuration.md#how-availability-reaches-the-lifecycle)).
 
 ## Concurrency
 
