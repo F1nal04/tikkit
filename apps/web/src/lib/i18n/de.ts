@@ -267,7 +267,7 @@ export default {
     cancelled: 'Du hast diese Anfrage während der KI-Unterstützung storniert. Sie wurde nicht an das Support-Team gesendet.',
     skipForbidden: 'Deine Organisation erlaubt es nicht, den KI-Vorschlag zu überspringen. Deine Anfrage wird weiter analysiert; es wurde nichts geändert.',
     conflict: 'Diese Anfrage wurde bereits an anderer Stelle entschieden oder geändert, zum Beispiel in einem anderen Tab. Dein Klick hat nichts geändert. Die Seite zeigt jetzt den aktuellen Stand: {status}.',
-    failed: 'Deine Entscheidung konnte nicht gespeichert werden. Es wurde nichts geändert. Versuche es erneut.',
+    failed: 'Wir konnten nicht bestätigen, dass deine Entscheidung gespeichert wurde. Diese Seite aktualisiert sich von selbst; wird die Auswahl weiterhin angezeigt, versuche es erneut.',
     announce: {
       suggestionReady: 'Der KI-Vorschlag ist da. Prüfe ihn und wähle „Gelöst“ oder „Ich brauche weiterhin Hilfe“.',
       handedOff: 'Deine Anfrage wurde an das Support-Team gesendet.',
@@ -293,6 +293,7 @@ export default {
     otherChoice: 'Sonstiges (eigene Angabe)',
     otherAnswer: 'Ihre Angabe zu „{label}“',
     aiTitle: 'KI-Unterstützung',
+    aiTurnedOn: 'Die KI-Unterstützung wurde eingeschaltet, während dieses Formular geöffnet war. Ihre Anfrage wurde noch nicht gesendet. Lesen Sie unten, was weitergegeben wird, und senden Sie dann erneut ab.',
     aiDisclosure:
       'Ihre Organisation nutzt KI-Unterstützung. Beim Absenden werden Betreff und Beschreibung, die Antworten auf die Fragen oben (zum Beispiel das betroffene Programm) und angehängte Screenshots an den externen KI-Anbieter gesendet, den Ihre Organisation eingerichtet hat. Er erstellt einen Lösungsvorschlag, den Sie ausprobieren können, bevor die Anfrage an das Support-Team geht.',
     aiNext:

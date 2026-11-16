@@ -130,7 +130,7 @@
       <h2 id="ai-step-title" tabindex="-1" bind:this={heading}>{a.handoffTitle}</h2>
       <p data-handoff-reason={view.reason}>{a.handoff[view.reason]}</p>
       <p>{a.handoffKept.replace('{reference}', reference)}</p>
-      {#if ai?.suggestion}
+      {#if ai?.suggestion && view.reason === 'not_solved'}
         <h3>{a.tried}</h3>
         {@render suggestionText()}
       {/if}

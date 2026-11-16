@@ -266,7 +266,7 @@ export default {
     cancelled: 'You cancelled this request during AI assistance. It was not sent to the support team.',
     skipForbidden: 'Skipping the AI suggestion is not allowed by your organization. Your request is still being analyzed and nothing was changed.',
     conflict: 'This request was already decided or changed somewhere else, for example in another tab. Your click changed nothing. This page now shows the current state: {status}.',
-    failed: 'Your decision could not be saved. Nothing was changed. Try again.',
+    failed: 'We could not confirm that your decision was saved. This page updates on its own; if the choice is still shown, try again.',
     announce: {
       suggestionReady: 'The AI suggestion is ready. Review it and choose “Solved” or “Still need help”.',
       handedOff: 'Your request was sent to the support team.',
@@ -292,6 +292,7 @@ export default {
     otherChoice: 'Other (type your own answer)',
     otherAnswer: 'Your answer for “{label}”',
     aiTitle: 'AI assistance',
+    aiTurnedOn: 'AI assistance was switched on while this form was open. Your request was not sent yet. Read what is shared below, then submit again.',
     aiDisclosure:
       'Your organization uses AI assistance. When you submit, your subject and description, the answers to the questions above (such as the affected program), and any attached screenshots are sent to the external AI provider your organization has configured. It prepares one suggested solution for you to try before the request goes to the support team.',
     aiNext:

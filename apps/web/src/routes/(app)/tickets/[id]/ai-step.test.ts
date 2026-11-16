@@ -78,7 +78,7 @@ test('an uncertain response keeps both actions for a safe retry', async () => {
   vi.stubGlobal('fetch', fetch)
   step()
   await fireEvent.click(screen.getByRole('button', { name: 'Still need help' }))
-  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Your decision could not be saved.'))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('We could not confirm that your decision was saved.'))
   expect(invalidateAll).not.toHaveBeenCalled()
   await fireEvent.click(screen.getByRole('button', { name: 'Still need help' }))
   await waitFor(() => expect(invalidateAll).toHaveBeenCalledTimes(1))

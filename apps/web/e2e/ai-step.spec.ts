@@ -59,6 +59,23 @@ async function toSuggestion(page: Page) {
   return id
 }
 
+test('AI switched on while the form is open: the disclosure is shown before anything is sent', async ({ page }) => {
+  await start(page, {})
+  await openForm(page)
+  await fill(page)
+  await expect(page.getByRole('heading', { name: 'AI assistance' })).toHaveCount(0)
+  await configure(page, { ai_assistance: true })
+  await submit(page)
+  await expect(page.getByRole('heading', { name: 'AI assistance' })).toBeFocused()
+  await expect(page.getByText('AI assistance was switched on while this form was open.')).toBeVisible()
+  expect(await tickets(page)).toEqual([])
+  expect((await aiLog(page)).provider_calls).toBe(0)
+  await expect(page.getByLabel('Subject')).toHaveValue('Word crashes')
+  await submit(page)
+  await expect(page).toHaveURL(/\/tickets\/[0-9a-f-]{36}$/)
+  await expect(page.getByRole('heading', { name: 'Preparing an AI suggestion' })).toBeVisible()
+})
+
 test('AI off: no disclosure, no skip control, and the request goes to support without a provider call', async ({ page }) => {
   await start(page, {})
   await openForm(page)

@@ -122,3 +122,11 @@ usable button of the step still holds it. Button hints are linked with
   categories, forged skip requests, disclosure, success, failure handoff,
   refresh and resume, abandonment, double clicks and a stale tab, late results
   after a handoff, cancellation, and German on a phone.
+
+## Policy changes while the form is open
+
+The form reads the AI policy when it loads. Before submitting a request for
+which no disclosure was shown, it reads the policy again; if AI assistance was
+switched on in the meantime, nothing is sent, the disclosure is shown and
+focused, and the requester submits again. A switch in the moment between that
+check and the submission is not caught by the page: Rust decides the route.

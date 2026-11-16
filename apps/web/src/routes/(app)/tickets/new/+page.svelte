@@ -46,6 +46,9 @@
   // The requester's wish to skip AI. It is offered and sent only while the policy allows it.
   let skipAi = $state(false)
   let skipDenied = $state(false)
+  // AI assistance was switched on after this page loaded: the disclosure is shown first.
+  let aiTurnedOn = $state(false)
+  let aiDisclosure = $state<HTMLElement>()
   let receiptHeading = $state<HTMLElement>()
 
   // Draft autosave. `draft` is the saved copy's identity and version; `stale` means another tab or
@@ -167,6 +170,7 @@
     formError = null
     stale = null
     attempt = null
+    skipAi = false
     setDraft({ id: saved.id, version: saved.version })
     savedAt = new Date(saved.updated_at)
     saveState = 'saved'
@@ -264,6 +268,20 @@
     submitting = true
     let focusErrors = false
     try {
+      // What goes to the AI provider is disclosed before submission. If an Admin switched AI
+      // on while this form was open, show the disclosure and let the requester submit again.
+      if (!untrack(() => ai.applies)) {
+        const fresh = await api().request('get', '/api/ai/policy').catch(() => null)
+        if (!alive) return
+        if (fresh?.ai_assistance) {
+          await invalidate('tikkit:catalog')
+          aiTurnedOn = true
+          await tick()
+          aiDisclosure?.focus()
+          return
+        }
+      }
+      aiTurnedOn = false
       // The draft endpoint submits the saved copy. Write the visible form first when resume
       // dropped answers, so they are not submitted and the idempotency key matches that write.
       if (serverDiffers) forceSync = true
@@ -484,7 +502,8 @@
       <ScreenshotPicker locale={data.locale} bind:ids={form.screenshot_ids} error={errorFor('screenshot_ids')} />
       {#if ai.applies}
         <section class="ai-disclosure" aria-labelledby="ai-disclosure-title">
-          <h2 id="ai-disclosure-title">{f.aiTitle}</h2>
+          <h2 id="ai-disclosure-title" tabindex="-1" bind:this={aiDisclosure}>{f.aiTitle}</h2>
+          {#if aiTurnedOn}<Alert kind="info">{f.aiTurnedOn}</Alert>{/if}
           {#if ai.exempt}
             <p>{f.skipsAi}</p>
           {:else}
