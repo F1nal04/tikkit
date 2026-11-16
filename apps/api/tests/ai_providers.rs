@@ -497,6 +497,7 @@ async fn anthropic_request_shape() {
     assert_eq!(body["model"], supported_models(provider)[0].id);
     assert_eq!(body["max_tokens"], 8192);
     assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+    assert_eq!(body["output_config"]["effort"], "low");
     assert_eq!(
         body["output_config"]["format"]["schema"]["additionalProperties"],
         false
@@ -676,6 +677,12 @@ async fn invalid_credentials_never_expose_the_key() {
     assert_eq!(error.kind, AiErrorKind::InvalidCredentials);
     assert_eq!(error.provider_code.as_deref(), Some("INVALID_ARGUMENT"));
     assert_no_secret(&error);
+
+    // The Interactions API error shape: a string code, no details.
+    let body = json!({ "error": { "code": "invalid_api_key", "message": message } });
+    let (error, _) = fails(Provider::Gemini, vec![Reply::json(400, body)]).await;
+    assert_eq!(error.kind, AiErrorKind::InvalidCredentials);
+    assert_no_secret(&error);
 }
 
 #[tokio::test]
@@ -729,6 +736,14 @@ async fn upstream_errors_are_retried_within_bounds() {
         let suggestion = suggest(&mock, provider, &request()).await.unwrap();
         assert_eq!(suggestion.steps.len(), 2);
         assert_eq!(mock.count(), 2);
+
+        // A `Retry-After` beyond the call's deadline ends the call at once
+        // instead of spending the remaining retries early.
+        let reply = Reply::json(503, failure(provider, 503, "busy")).header("retry-after", "3600");
+        let (error, mock) = fails(provider, vec![reply]).await;
+        assert_eq!(error.kind, AiErrorKind::UpstreamUnavailable);
+        assert_eq!(error.retry_after, Some(Duration::from_secs(3600)));
+        assert_eq!(mock.count(), 1);
     }
 }
 

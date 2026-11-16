@@ -11,6 +11,8 @@ use super::{
 };
 
 const API_VERSION: &str = "2026-10-21";
+/// The one listed model that does not accept `output_config.effort`.
+const NO_EFFORT_MODEL: &str = "claude-haiku-4-5";
 
 pub(crate) struct Anthropic;
 
@@ -47,14 +49,21 @@ impl ProviderAdapter for Anthropic {
             })
             .collect();
         content.push(json!({ "type": "text", "text": prompt.user_text }));
+        let mut output_config = json!({
+            "format": { "type": "json_schema", "schema": prompt.schema }
+        });
+        // Thinking counts against `max_tokens` and is on by default on the
+        // newer models, so pin it low like the other adapters do. Haiku 4.5
+        // rejects the parameter.
+        if model != NO_EFFORT_MODEL {
+            output_config["effort"] = json!("low");
+        }
         json!({
             "model": model,
             "max_tokens": prompt.max_output_tokens,
             "system": prompt.system,
             "messages": [{ "role": "user", "content": content }],
-            "output_config": {
-                "format": { "type": "json_schema", "schema": prompt.schema }
-            },
+            "output_config": output_config,
         })
     }
 

@@ -91,6 +91,7 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         || ip.is_documentation()
         || (a == 100 && (64..128).contains(&b)) // 100.64.0.0/10 CGNAT
         || (a == 192 && b == 0 && c == 0) // 192.0.0.0/24
+        || (a == 192 && b == 88 && c == 99) // 192.88.99.0/24 6to4 relay anycast
         || (a == 198 && (18..20).contains(&b)) // 198.18.0.0/15
         || a >= 240)
 }
@@ -118,6 +119,8 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         || (s[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
         || (s[0] & 0xffc0) == 0xfec0 // fec0::/10 site-local
         || s[0] == 0x2002 // 6to4 embeds an arbitrary IPv4 address
+        || (s[0] == 0x2001 && s[1] == 0) // Teredo embeds IPv4 addresses
+        || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1) // 64:ff9b:1::/48 local-use NAT64
         || (s[0] == 0x2001 && s[1] == 0x0db8)) // documentation
 }
 
@@ -256,6 +259,9 @@ mod tests {
             "2002:7f00:1::",
             "2001:db8::1",
             "::7f00:1",
+            "64:ff9b:1::a00:5",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            "192.88.99.1",
         ] {
             assert!(!is_public(ip(blocked)), "{blocked} must be blocked");
         }

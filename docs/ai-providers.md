@@ -59,10 +59,14 @@ to invent sources or links.
 | Output limit | `max_output_tokens` | `generation_config.max_output_tokens` | `max_tokens` |
 | Probe | `GET /v1/models/{model}` | `GET /v1beta/models/{model}` | `GET /v1/models/{model}` |
 
-OpenAI and Gemini are asked for low reasoning effort (`reasoning.effort`,
-`thinking_level`). Anthropic is left at the model default because the effort
-parameter is not accepted by every listed model. No sampling parameters are
-sent.
+All three are asked for low reasoning effort (`reasoning.effort`,
+`thinking_level`, `output_config.effort`), so thinking cannot use up the output
+limit. `claude-haiku-4-5` does not accept the parameter and is sent without it.
+No sampling parameters are sent.
+
+A retry happens only when no success status arrived (connection failure, 408,
+5xx). It waits for the longer of the backoff and the provider's `Retry-After`;
+if that wait would pass the whole-call limit, the call fails at once.
 
 The supported model lists in `ai/mod.rs` were checked against the provider
 documentation on 2026-11-16. Each entry is a general-purpose text model with

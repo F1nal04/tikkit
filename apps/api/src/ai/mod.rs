@@ -167,7 +167,7 @@ impl fmt::Debug for ApiKey {
 }
 
 /// Where requests go.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Endpoint {
     /// The provider's own public API host. The only choice for normal use.
     Official,
@@ -179,6 +179,23 @@ pub enum Endpoint {
         base_url: Url,
         allow_private_network: bool,
     },
+}
+
+impl fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Official => f.write_str("Official"),
+            // Only the host: a URL can carry credentials in its userinfo or query.
+            Self::Override {
+                base_url,
+                allow_private_network,
+            } => f
+                .debug_struct("Override")
+                .field("host", &base_url.host_str())
+                .field("allow_private_network", allow_private_network)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -601,6 +618,7 @@ impl AiClient {
             headers.insert(HeaderName::from_static(name), value);
         }
 
+        let deadline = tokio::time::Instant::now() + self.options.total_timeout;
         let mut attempt = 0;
         loop {
             let mut request = client
@@ -612,15 +630,22 @@ impl AiClient {
                     .header("content-type", "application/json")
                     .body(body.clone());
             }
-            let error = match self.attempt(request, adapter, call.has_images).await {
+            let (error, retryable) = match self.attempt(request, adapter, call.has_images).await {
                 Ok(value) => return Ok(value),
-                Err(error) => error,
+                Err(failure) => failure,
             };
-            if error.kind != AiErrorKind::UpstreamUnavailable || attempt >= call.max_retries {
+            if !retryable || attempt >= call.max_retries {
                 return Err(error);
             }
             attempt += 1;
-            tokio::time::sleep(self.options.retry_backoff * attempt).await;
+            // Honor the provider's `Retry-After`; a retry that cannot start
+            // before the call's deadline is not worth waiting for.
+            let wait =
+                (self.options.retry_backoff * attempt).max(error.retry_after.unwrap_or_default());
+            if tokio::time::Instant::now() + wait >= deadline {
+                return Err(error);
+            }
+            tokio::time::sleep(wait).await;
         }
     }
 
@@ -629,7 +654,7 @@ impl AiClient {
         request: reqwest::RequestBuilder,
         adapter: &dyn ProviderAdapter,
         has_images: bool,
-    ) -> Result<Value, AiError> {
+    ) -> Result<Value, (AiError, bool)> {
         let transport = |e: reqwest::Error| {
             AiError::new(if e.is_timeout() {
                 AiErrorKind::Timeout
@@ -639,21 +664,28 @@ impl AiClient {
                 AiErrorKind::UpstreamUnavailable
             })
         };
-        let response = request.send().await.map_err(transport)?;
+        // The bool says whether the attempt may be retried: only failures
+        // before a success status arrived. After a 2xx the provider has
+        // already generated (and billed) an answer.
+        let response = request.send().await.map_err(|e| {
+            let error = transport(e);
+            let retryable = error.kind == AiErrorKind::UpstreamUnavailable;
+            (error, retryable)
+        })?;
         let status = response.status();
 
         if status.is_success() {
             let body = match http::read_capped(response, MAX_RESPONSE_BYTES).await {
                 Ok(body) => body,
                 Err(http::ReadError::TooLarge) => {
-                    return Err(AiError::new(AiErrorKind::OversizedOutput));
+                    return Err((AiError::new(AiErrorKind::OversizedOutput), false));
                 }
-                Err(http::ReadError::Transport(e)) => return Err(transport(e)),
+                Err(http::ReadError::Transport(e)) => return Err((transport(e), false)),
             };
             return serde_json::from_slice(&body).map_err(|_| {
                 let mut error = AiError::new(AiErrorKind::MalformedOutput);
                 error.status = Some(status.as_u16());
-                error
+                (error, false)
             });
         }
 
@@ -678,12 +710,15 @@ impl AiClient {
         if kind == AiErrorKind::ModelError && has_images && mentions_image(&body) {
             kind = AiErrorKind::Vision;
         }
-        Err(AiError {
-            kind,
-            status: Some(code),
-            provider_code: adapter.error_code(&body).as_deref().and_then(sanitize_code),
-            retry_after,
-        })
+        Err((
+            AiError {
+                kind,
+                status: Some(code),
+                provider_code: adapter.error_code(&body).as_deref().and_then(sanitize_code),
+                retry_after,
+            },
+            kind == AiErrorKind::UpstreamUnavailable,
+        ))
     }
 }
 

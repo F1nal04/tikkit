@@ -113,6 +113,14 @@ impl ProviderAdapter for Gemini {
             .into_iter()
             .flatten()
             .any(|detail| detail.get("reason").and_then(Value::as_str) == Some("API_KEY_INVALID"));
+        // The Interactions API reports errors with a string `error.code`
+        // instead of `details`.
+        let code = body.pointer("/error/code").and_then(Value::as_str);
+        let invalid_key = invalid_key
+            || code.is_some_and(|code| {
+                let code = code.to_ascii_lowercase();
+                code.contains("api_key") || code == "unauthenticated"
+            });
         (status == 400 && invalid_key).then_some(AiErrorKind::InvalidCredentials)
     }
 }
