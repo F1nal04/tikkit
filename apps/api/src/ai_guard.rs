@@ -199,6 +199,11 @@ impl AiGuard {
         }
     }
 
+    /// Upper bound of one provider call, retries included.
+    pub fn call_timeout(&self) -> Duration {
+        self.client.total_timeout()
+    }
+
     pub fn from_state(state: &AppState) -> Self {
         Self::new(
             state.pool.clone(),

@@ -67,14 +67,13 @@ The attempt also records the configuration it was created under: `provider`,
 process. It has two loops, both built on `notifications::poll_loop` (two-second
 poll, stops on shutdown):
 
-1. **Claim and run.** One statement takes the oldest `processing` attempt that
-   no live worker holds (`FOR UPDATE SKIP LOCKED`), sets `claimed_until` to now
-   plus the lease (30 s), and increments `claims`. Concurrent workers and
-   processes cannot claim the same attempt. A process works on at most four
-   attempts at once; provider concurrency across processes is the guard's limit.
-2. **Sweep.** Hands off any ticket in `ai_processing` whose attempt passed its
-   deadline (or that has no processing attempt at all, outcome `orphaned`).
-   This needs no worker to be alive for that attempt.
+1. **Claim and run.** A claim takes the oldest `processing` attempt that no
+   live worker holds, sets `claimed_until` to now plus the lease (30 s), and
+   increments `claims`. Claims are serialized across processes by an advisory
+   lock, so no attempt is claimed twice. A process works on at most four
+   attempts at once.
+2. **Sweep.** Hands off tickets in `ai_processing` whose attempt can no longer
+   end by itself (see [Deadline](#deadline) and [Sweep](#sweep)).
 
 Running one attempt:
 
@@ -89,25 +88,88 @@ Running one attempt:
 5. **Commit** in one transaction (see below).
 
 While the attempt runs, a heartbeat (every 5 s) renews the lease and checks
-that the attempt is still `processing`, still within its deadline, and still
-claimed by this worker. If not, the provider call is cancelled.
+that the attempt is still `processing` and still claimed by this worker. If
+not, the provider call is cancelled.
 
-### Restart and crash recovery
+### Provider slots and fairness
 
-All state is in the database. If a process dies or is stopped, its attempts
-keep `claimed_until`; once that passes, any worker claims them again (`claims`
-counts how often). The attempt is the same row with the same input: one logical
-attempt. A takeover makes a new guarded provider call; only one result can ever
-be stored. If the commit transaction fails, it is retried three times; after
-that the attempt is left to its lease and is run again.
+The guard admits at most `max_concurrency` provider calls at once
+([ai-usage.md](ai-usage.md#concurrency)). The worker respects that limit
+before it claims: an attempt is claimed only while fewer than
+`max_concurrency` attempts are held by live workers, counted over all
+processes. Attempts beyond that stay unclaimed and are taken oldest first as
+slots become free, so an older ticket is never refused while a newer one is
+served.
+
+If the guard still refuses with `concurrency_saturated` (slots held by calls
+of a crashed process, for example), the attempt keeps its claim, waits two
+seconds, and asks again. It is handed off as `concurrency_saturated` only when
+its deadline passes while it is still waiting for a slot.
 
 ### Deadline
 
-`deadline_at` is set at submission to five minutes later
-(`ATTEMPT_DEADLINE`) and never changes. Past it, nothing new is started: the
-sweep (or the worker's own commit) hands the ticket off with outcome `timeout`,
-even if the worker died. Transport retries inside one provider call are bounded
-separately by the provider client ([ai-providers.md](ai-providers.md#limits)).
+`deadline_at` is set at submission to five minutes later (`ATTEMPT_DEADLINE`)
+and never changes. It bounds when a provider call may be **started**:
+
+- An attempt past its deadline is never claimed, and a claimed attempt never
+  enters the guard after it. Without a live claim the sweep hands it off as
+  `timeout` (or the worker does, if the deadline passed before the call).
+- A call that entered the guard in time is not cut short. It ends by the
+  guard's own bounds: the wait for a slot (`concurrency_wait_seconds`, default
+  30 s, at most 300 s) plus the call timeout (120 s including transport
+  retries, [ai-providers.md](ai-providers.md#limits)). Its suggestion is
+  accepted even if `deadline_at` passed meanwhile.
+- The hard bound is therefore `deadline_at + concurrency_wait_seconds + call
+  timeout`: about 7.5 minutes after submission with the defaults. One minute
+  after that the sweep hands the ticket off as `timeout` even though a worker
+  still holds it; a result that arrives later is dropped. A worker that died
+  is noticed sooner, when its lease (30 s) runs out.
+
+A requester therefore waits at most the hard bound before the ticket is with
+operators, however the provider or the workers behave.
+
+### Restart, shutdown, and crash recovery
+
+All state is in the database.
+
+- **Shutdown.** When the API stops, the worker cancels the provider calls in
+  flight. The guard records each as `cancelled` and frees its slot at once.
+  The attempt stays `processing`, its claim is released (`claimed_until`
+  NULL), and nothing is handed off. `main.rs` waits for this within its
+  five-second worker window. The next process claims the attempt immediately.
+- **Crash.** A dead process leaves `claimed_until` set; once it passes, any
+  worker claims the attempt again. Its abandoned guard reservation is released
+  by the guard after its own lease.
+- **Claim cap.** Every claim can cost one provider call, so an attempt is
+  claimed at most three times (`MAX_CLAIMS`). After the third claim ended
+  without a result, the sweep hands the ticket off as `claims_exhausted` with
+  no further call.
+- **A result that cannot be stored.** If the commit transaction fails three
+  times, the worker hands the ticket off as `commit_failed` in a new
+  transaction instead of calling the provider again. Provider output that the
+  database cannot hold at all (a NUL character) is rejected by the adapters as
+  `malformed_output` before it gets that far.
+
+A takeover is the same row with the same input: one logical attempt, and only
+one result can ever be stored. A worker that lost its claim (it stalled past
+its lease) finds at commit that the attempt is finished or claimed by another
+worker and drops its result.
+
+### Sweep
+
+Each step takes one ticket in `ai_processing` (`FOR UPDATE SKIP LOCKED`,
+oldest first) for which one of these holds, and hands it off:
+
+| Condition | Outcome |
+| --- | --- |
+| No live claim and the deadline passed | `timeout` |
+| No live claim and already claimed `MAX_CLAIMS` times | `claims_exhausted` |
+| Past the hard bound plus one minute, whatever the claim | `timeout` |
+| No processing attempt at all | `orphaned`, plus an `ai_attempt_orphaned` audit event with the ticket id |
+
+A locked ticket is skipped, and a ticket whose handoff failed is left out
+until the current cycle has handled the others, so one stuck ticket never
+blocks the rest.
 
 ## Image preparation
 
@@ -123,7 +185,8 @@ every screenshot within the limits:
    needed, never below 10 % of its size.
 
 Full resolution is preferred over smaller files because error text in a
-screenshot must stay readable. If the images together exceed 12 MiB, each gets
+screenshot must stay readable. One preparation runs at a time per process,
+because decoding a large screenshot needs a lot of memory. If the images together exceed 12 MiB, each gets
 an equal share and is prepared again from the stored file. Transparent pixels
 become white. No screenshot is ever left out: if one cannot be prepared, the
 attempt fails with `image_preparation_failed` and the ticket is handed off.
@@ -139,7 +202,6 @@ policy under share locks, locks the ticket and the attempt, and then:
 
 - attempt no longer `processing`, or claimed by another worker: the result is
   dropped (a late result). Nothing is written;
-- deadline passed: hand off with `timeout`;
 - policy no longer allows it: hand off with the policy code, even if the
   provider returned a suggestion;
 - suggestion: store `explanation`, `steps`, and the usage id, and apply
@@ -204,15 +266,17 @@ transaction, under the ticket lock.
 
 `ai_attempts.outcome` is a stable identifier:
 
-- attempt: `timeout`, `orphaned`, `image_unavailable`,
-  `image_preparation_failed`, `requester_skip`, `requester_cancelled`;
+- attempt: `timeout`, `orphaned`, `claims_exhausted`, `commit_failed`,
+  `image_unavailable`, `image_preparation_failed`, `requester_skip`,
+  `requester_cancelled`;
 - policy: `ai_disabled`, `configuration_changed`, `credential_changed`,
   `credential_missing`, `credential_unreadable`, `model_unsupported`,
   `category_exempt`;
 - guard and provider: every `Refusal::code()` of [ai-usage.md](ai-usage.md#outcomes)
   (`budget_org_requests`, `circuit_open`, `rate_limited`,
   `upstream_unavailable`, `invalid_credentials`, ...). A provider call that
-  timed out is also `timeout`.
+  timed out is also `timeout`. `concurrency_saturated` appears only when the
+  deadline passed while waiting for a slot; `cancelled` is never stored.
 
 ## What the requester sees
 
@@ -262,8 +326,11 @@ routing and the stored suggestion, the one-solution rule, snapshot and language
 immutability, skip and exemption policy, handoff exactly once for provider
 failures, rate limits, budgets, and an open circuit, Admin invalidation before
 and during a call, the commit-time policy check, cancellation with late output,
-duplicate claims across pools, a worker that dies mid-call, the deadline, a
-failed commit, and image preparation. Unit tests in `ai_attempts.rs` cover
+duplicate claims across pools, a worker that dies mid-call, a takeover while
+the first worker still runs, the claim cap, shutdown (one worker and the whole
+loop), provider-slot fairness and saturation, the deadline and its hard bound,
+a locked ticket in the sweep, a result that cannot be stored, and image
+preparation. Unit tests in `ai_attempts.rs` cover
 `prepare_images`.
 
 ## What #37 and #36 build on

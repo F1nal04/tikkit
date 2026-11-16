@@ -213,6 +213,11 @@ pub(crate) fn parse(completion: Completion) -> Result<Suggestion, AiError> {
     if explanation.is_empty() || steps.is_empty() || steps.iter().any(String::is_empty) {
         return Err(malformed());
     }
+    // A NUL character is valid JSON text but cannot be stored (PostgreSQL text
+    // and jsonb reject it): such output can never become a suggestion.
+    if explanation.contains('\0') || steps.iter().any(|s| s.contains('\0')) {
+        return Err(malformed());
+    }
     if explanation.chars().count() > MAX_EXPLANATION_CHARS
         || steps.len() > MAX_STEPS
         || steps.iter().any(|s| s.chars().count() > MAX_STEP_CHARS)

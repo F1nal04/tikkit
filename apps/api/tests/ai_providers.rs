@@ -486,6 +486,23 @@ async fn malformed_payloads_are_rejected() {
                     true,
                 ),
             ),
+            // NUL characters cannot be stored, so they are not a suggestion.
+            Reply::json(
+                200,
+                success(
+                    provider,
+                    r#"{"explanation": "bad\u0000text", "steps": ["a"]}"#,
+                    true,
+                ),
+            ),
+            Reply::json(
+                200,
+                success(
+                    provider,
+                    r#"{"explanation": "x", "steps": ["a", "b\u0000"]}"#,
+                    true,
+                ),
+            ),
         ];
         for (index, reply) in cases.into_iter().enumerate() {
             let (error, mock) = fails(provider, vec![reply]).await;

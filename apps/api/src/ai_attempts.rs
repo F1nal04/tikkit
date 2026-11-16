@@ -45,24 +45,31 @@ use crate::{
         MAX_IMAGE_SIDE, MAX_TOTAL_IMAGE_BYTES, SuggestionRequest,
     },
     ai_config::{self, AiStatus},
-    ai_guard::{AiGuard, Guarded},
+    ai_guard::{AiGuard, Guarded, Refusal},
     ai_privacy,
     api::{ApiError, Language},
-    auth::{ident, ident_str},
+    auth::{audit, ident, ident_str},
     lifecycle::{self, By, Transition},
-    notifications::poll_loop,
+    notifications::{is_stopping, poll_loop},
     screenshots,
     submission::SubmittedIntake,
 };
 
-/// Overall bound of one attempt, from submission. Past it the ticket is handed
-/// to operators even if no worker is alive.
+/// How long after submission a provider call may still be started for an
+/// attempt. Past it the ticket is handed to operators even if no worker is
+/// alive; a call started in time may run to its own end (docs/ai-attempts.md).
 pub const ATTEMPT_DEADLINE: Duration = Duration::from_secs(300);
 /// Attempts one process works on at the same time. Provider concurrency over
 /// all processes is the guard's limit (docs/ai-usage.md).
 const WORKER_CONCURRENCY: usize = 4;
-/// Tries to commit a finished attempt before leaving it to the lease.
+/// Tries to commit a finished attempt before the ticket is handed off instead.
 const COMMIT_TRIES: u32 = 3;
+/// How often an attempt may be claimed (first run plus takeovers after a crash
+/// or shutdown). Each claim can cost one provider call.
+pub const MAX_CLAIMS: i32 = 3;
+/// Added to the guard's wait and call timeout before the sweep ends an attempt
+/// that a live worker still holds past its deadline.
+const SWEEP_MARGIN: Duration = Duration::from_secs(60);
 
 // --- Stable outcome codes ---------------------------------------------------------
 
@@ -88,6 +95,12 @@ pub const REQUESTER_SKIP: &str = "requester_skip";
 pub const REQUESTER_CANCELLED: &str = "requester_cancelled";
 /// The ticket was in `ai_processing` without a processing attempt.
 pub const ORPHANED: &str = "orphaned";
+/// The result could not be stored, so no further provider call was made.
+pub const COMMIT_FAILED: &str = "commit_failed";
+/// The attempt was claimed [`MAX_CLAIMS`] times without ending (a crash loop).
+pub const CLAIMS_EXHAUSTED: &str = "claims_exhausted";
+/// The provider call was stopped (never stored on an attempt).
+const CANCELLED: &str = "cancelled";
 
 // --- Snapshot -----------------------------------------------------------------------
 
@@ -444,6 +457,9 @@ pub struct WorkerOptions {
     pub lease: Duration,
     /// How often a running attempt renews its lease and checks it is still current.
     pub heartbeat: Duration,
+    /// How long an attempt waits before it asks the guard again after every
+    /// provider slot was taken.
+    pub saturated_retry: Duration,
 }
 
 impl Default for WorkerOptions {
@@ -451,11 +467,12 @@ impl Default for WorkerOptions {
         Self {
             lease: Duration::from_secs(30),
             heartbeat: Duration::from_secs(5),
+            saturated_retry: Duration::from_secs(2),
         }
     }
 }
 
-/// Everything the attempt worker needs. Cheap to clone.
+/// Everything the attempt worker needs. Clones share one shutdown signal.
 #[derive(Clone)]
 pub struct Worker {
     pool: PgPool,
@@ -463,6 +480,7 @@ pub struct Worker {
     guard: AiGuard,
     encryption_key: [u8; 32],
     options: WorkerOptions,
+    shutdown: Cancel,
 }
 
 impl Worker {
@@ -478,12 +496,20 @@ impl Worker {
             guard,
             encryption_key,
             options: WorkerOptions::default(),
+            shutdown: Cancel::new(),
         }
     }
 
     pub fn options(mut self, options: WorkerOptions) -> Self {
         self.options = options;
         self
+    }
+
+    /// Graceful shutdown: every provider call of this worker (and its clones)
+    /// is cancelled, which frees its guard slot at once, and its attempt is
+    /// released unfinished so the next process can take it over.
+    pub fn stop(&self) {
+        self.shutdown.cancel();
     }
 }
 
@@ -518,29 +544,50 @@ fn failed(code: &'static str) -> Outcome {
 
 /// Runs until [`crate::notifications::stop_workers`]: claims attempts and works
 /// on up to [`WORKER_CONCURRENCY`] at once, and separately hands off attempts
-/// that passed their deadline. Any number of processes may run it.
+/// that are overdue or were claimed too often. Any number of processes may run
+/// it. On shutdown it cancels the calls in flight and returns once their
+/// attempts are released.
 pub async fn worker_loop(worker: Worker) {
     let slots = Arc::new(Semaphore::new(WORKER_CONCURRENCY));
+    let running = Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
     let run = poll_loop("ai_attempts", || {
-        let (worker, slots) = (worker.clone(), slots.clone());
+        let (worker, slots, running) = (worker.clone(), slots.clone(), running.clone());
         async move {
-            let permit = slots
-                .acquire_owned()
-                .await
-                .map_err(|_| ApiError::Internal)?;
+            let Ok(permit) = slots.try_acquire_owned() else {
+                return Ok(false);
+            };
             let Some(job) = claim(&worker).await? else {
                 return Ok(false);
             };
-            tokio::spawn(async move {
+            let mut running = running.lock().await;
+            // Forget the tasks that already ended.
+            while running.try_join_next().is_some() {}
+            running.spawn(async move {
                 let _permit = permit;
-                // A failure leaves the attempt to its lease or the deadline sweep.
+                // A failure leaves the attempt to its lease and the sweep.
                 let _ = run_attempt(&worker, job).await;
             });
             Ok(true)
         }
     });
-    let sweep = poll_loop("ai_attempt_sweep", || sweep_one(&worker.pool));
-    tokio::join!(run, sweep);
+    let skipped = Arc::new(tokio::sync::Mutex::new(Vec::<Uuid>::new()));
+    let sweep = poll_loop("ai_attempt_sweep", || {
+        let (worker, skipped) = (worker.clone(), skipped.clone());
+        async move {
+            let mut skipped = skipped.lock().await;
+            sweep_due(&worker, &mut skipped).await
+        }
+    });
+    // Do not wait for the next poll to stop paying for calls nobody will read.
+    let stop = async {
+        while !is_stopping() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        worker.stop();
+    };
+    tokio::join!(run, sweep, stop);
+    let mut running = running.lock().await;
+    while running.join_next().await.is_some() {}
 }
 
 /// Claims one attempt and works on it to the end. Returns whether there was one.
@@ -552,34 +599,50 @@ pub async fn process_one(worker: &Worker) -> Result<bool, ApiError> {
     Ok(true)
 }
 
-/// Takes the oldest attempt that no live worker holds. One statement: the row
-/// lock makes concurrent claimers skip it, the lease keeps it taken afterwards.
+/// Takes the oldest attempt that no live worker holds. Claims are serialized
+/// by an advisory lock; the lease keeps the attempt taken afterwards.
+///
+/// Attempts are claimed only while fewer than the guard's `max_concurrency`
+/// are held by live workers, in every process together. The rest wait
+/// unclaimed, oldest first, instead of waiting inside the guard and being
+/// refused there. An attempt past its deadline or claimed [`MAX_CLAIMS`] times
+/// is never claimed again.
 async fn claim(worker: &Worker) -> Result<Option<Job>, ApiError> {
+    let mut tx = worker.pool.begin().await?;
+    // One claim at a time in the whole deployment, so concurrent claimers
+    // cannot each count the same free slot.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('ai_attempt_claim'))")
+        .execute(&mut *tx)
+        .await?;
     let job = sqlx::query_as(
         "UPDATE ai_attempts a
          SET claimed_until = clock_timestamp() + make_interval(secs => $1), claims = a.claims + 1
          FROM tickets t
          WHERE t.id = a.ticket_id AND a.id = (
              SELECT id FROM ai_attempts
-             WHERE state = 'processing' AND deadline_at > clock_timestamp()
+             WHERE state = 'processing' AND deadline_at > clock_timestamp() AND claims < $2
                AND (claimed_until IS NULL OR claimed_until <= clock_timestamp())
+               AND (SELECT count(*) FROM ai_attempts
+                    WHERE state = 'processing' AND claimed_until > clock_timestamp())
+                   < (SELECT max_concurrency FROM ai_limits)
              ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
          RETURNING a.id, a.ticket_id, t.requester_account_id, a.language, a.input, a.provider,
                    a.model, a.credential_set_at, a.claims",
     )
     .bind(worker.options.lease.as_secs_f64())
-    .fetch_optional(&worker.pool)
+    .bind(MAX_CLAIMS)
+    .fetch_optional(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(job)
 }
 
-/// Renews the lease. `false`: the attempt is finished, overdue, or claimed by
-/// another worker, so the running call should stop.
+/// Renews the lease. `false`: the attempt is finished or claimed by another
+/// worker, so the running call should stop.
 async fn renew(worker: &Worker, job: &Job) -> bool {
     let renewed = sqlx::query(
         "UPDATE ai_attempts SET claimed_until = clock_timestamp() + make_interval(secs => $3)
-         WHERE id = $1 AND claims = $2 AND state = 'processing'
-           AND deadline_at > clock_timestamp()",
+         WHERE id = $1 AND claims = $2 AND state = 'processing'",
     )
     .bind(job.id)
     .bind(job.claims)
@@ -590,8 +653,26 @@ async fn renew(worker: &Worker, job: &Job) -> bool {
     renewed.map_or(true, |done| done.rows_affected() == 1)
 }
 
+/// Gives the claim back without ending the attempt (shutdown): another worker
+/// may claim it at once.
+async fn release(worker: &Worker, job: &Job) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE ai_attempts SET claimed_until = NULL
+         WHERE id = $1 AND claims = $2 AND state = 'processing'",
+    )
+    .bind(job.id)
+    .bind(job.claims)
+    .execute(&worker.pool)
+    .await?;
+    Ok(())
+}
+
 async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
     let cancel = Cancel::new();
+    let mut stopped = worker.shutdown.is_cancelled();
+    if stopped {
+        cancel.cancel();
+    }
     let outcome = {
         let work = attempt(worker, &job, &cancel);
         tokio::pin!(work);
@@ -600,6 +681,10 @@ async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
         loop {
             tokio::select! {
                 outcome = &mut work => break outcome,
+                () = worker.shutdown.cancelled(), if !stopped => {
+                    stopped = true;
+                    cancel.cancel();
+                }
                 _ = beat.tick() => {
                     if !cancel.is_cancelled() && !renew(worker, &job).await {
                         cancel.cancel();
@@ -608,22 +693,66 @@ async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
             }
         }
     };
+    // Stopped by shutdown: the attempt is neither a failure nor finished. It
+    // stays `processing` for the next process. A result that still arrived is
+    // committed as usual.
+    if stopped && matches!(outcome, Outcome::Failed { code, .. } if code == CANCELLED) {
+        tracing::info!(
+            worker = "ai_attempts",
+            attempt_id = %job.id,
+            "AI attempt released at shutdown"
+        );
+        return release(worker, &job).await;
+    }
     let mut tries = 0;
-    loop {
+    let error = loop {
         tries += 1;
         match finish(worker, &job, &outcome).await {
             Ok(()) => return Ok(()),
-            Err(error) if tries >= COMMIT_TRIES => {
-                tracing::error!(
-                    worker = "ai_attempts",
-                    attempt_id = %job.id,
-                    "AI attempt result could not be committed; leaving it to the lease"
-                );
-                return Err(error);
-            }
+            Err(error) if tries >= COMMIT_TRIES => break error,
             Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
         }
-    }
+    };
+    // The result cannot be stored. Calling the provider again would not change
+    // that, so the ticket goes to operators now.
+    tracing::error!(
+        worker = "ai_attempts",
+        attempt_id = %job.id,
+        "AI attempt result could not be committed; handing off"
+    );
+    let usage_id = match &outcome {
+        Outcome::Suggested(guarded) => Some(guarded.usage_id),
+        Outcome::Failed { usage_id, .. } => *usage_id,
+    };
+    let handed_off = async {
+        let mut tx = worker.pool.begin().await?;
+        if lock_claimed(&mut tx, &job).await? {
+            hand_off(&mut tx, job.ticket_id, COMMIT_FAILED, usage_id).await?;
+        }
+        tx.commit().await?;
+        Ok::<(), ApiError>(())
+    };
+    // If even that fails the attempt is left to its lease; [`MAX_CLAIMS`]
+    // bounds how often it can be run again.
+    handed_off.await.map_err(|_| error)
+}
+
+/// Locks the ticket, then the attempt, and says whether the attempt is still
+/// processing under this worker's claim. After a lost lease it belongs to the
+/// worker that took it over.
+async fn lock_claimed(tx: &mut Transaction<'_, Postgres>, job: &Job) -> Result<bool, ApiError> {
+    sqlx::query("SELECT 1 FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(job.ticket_id)
+        .execute(&mut **tx)
+        .await?;
+    let claimed: Option<bool> = sqlx::query_scalar(
+        "SELECT state = 'processing' AND claims = $2 FROM ai_attempts WHERE id = $1 FOR UPDATE",
+    )
+    .bind(job.id)
+    .bind(job.claims)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(claimed == Some(true))
 }
 
 /// Whether the attempt may still run: AI is usable, the selection and key are
@@ -667,9 +796,22 @@ async fn still_allowed(
     })
 }
 
+/// Whether the attempt's deadline has passed: no provider call may be started
+/// for it any more. A database error counts as "not yet".
+async fn overdue(worker: &Worker, job: &Job) -> bool {
+    sqlx::query_scalar("SELECT deadline_at <= clock_timestamp() FROM ai_attempts WHERE id = $1")
+        .bind(job.id)
+        .fetch_one(&worker.pool)
+        .await
+        .unwrap_or(false)
+}
+
 /// The provider call of one attempt: policy check, screenshots, guarded call.
 /// Holds no transaction or lock while the provider answers.
 async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
+    if cancel.is_cancelled() {
+        return failed(CANCELLED);
+    }
     let allowed = async {
         let mut db = worker.pool.acquire().await?;
         still_allowed(&mut db, job, &worker.encryption_key).await
@@ -686,9 +828,6 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
         Ok(images) => images,
         Err(code) => return failed(code),
     };
-    if cancel.is_cancelled() {
-        return failed("cancelled");
-    }
     let input = &job.input.0;
     let request = SuggestionRequest {
         language: ai_language(language),
@@ -705,18 +844,51 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
             .collect(),
         images,
     };
-    match worker
-        .guard
-        .suggest(job.requester_account_id, &active, &request, cancel)
-        .await
-    {
-        Ok(guarded) => Outcome::Suggested(Box::new(guarded)),
-        Err(refused) => Outcome::Failed {
-            code: refused.refusal.code(),
-            usage_id: refused.usage_id,
-        },
+    // The deadline bounds when a guarded call may be started. One that was
+    // started in time runs to its own end (the guard's wait and call timeout).
+    let mut saturated: Option<Uuid> = None;
+    loop {
+        if cancel.is_cancelled() {
+            return failed(CANCELLED);
+        }
+        if overdue(worker, job).await {
+            // Every slot was taken until the deadline; otherwise it just ran out.
+            return match saturated {
+                Some(usage_id) => Outcome::Failed {
+                    code: Refusal::ConcurrencySaturated.code(),
+                    usage_id: Some(usage_id),
+                },
+                None => failed(TIMEOUT),
+            };
+        }
+        match worker
+            .guard
+            .suggest(job.requester_account_id, &active, &request, cancel)
+            .await
+        {
+            Ok(guarded) => return Outcome::Suggested(Box::new(guarded)),
+            // No provider slot within the guard's wait: the attempt keeps its
+            // place and asks again, rather than giving up with time left.
+            Err(refused) if refused.refusal == Refusal::ConcurrencySaturated => {
+                saturated = refused.usage_id.or(saturated);
+                tokio::select! {
+                    () = tokio::time::sleep(worker.options.saturated_retry) => {}
+                    () = cancel.cancelled() => {}
+                }
+            }
+            Err(refused) => {
+                return Outcome::Failed {
+                    code: refused.refusal.code(),
+                    usage_id: refused.usage_id,
+                };
+            }
+        }
     }
 }
+
+/// One image preparation at a time per process: decoding a large screenshot
+/// needs a lot of memory.
+static PREPARING: Semaphore = Semaphore::const_new(1);
 
 /// Resolves the snapshotted screenshots against the ticket's own intake, checks
 /// each file is still the snapshotted content, and brings them within the
@@ -739,6 +911,12 @@ async fn load_images(worker: &Worker, job: &Job) -> Result<Vec<ImageInput>, &'st
     .await
     .map_err(|_| IMAGE_UNAVAILABLE)?;
     let owned: HashMap<Uuid, String> = owned.into_iter().collect();
+    // Held from before the files are read until decoding ends, also if this
+    // future is dropped meanwhile (a blocking task cannot be aborted).
+    let permit = PREPARING
+        .acquire()
+        .await
+        .map_err(|_| IMAGE_PREPARATION_FAILED)?;
     let mut images = Vec::with_capacity(wanted.len());
     for shot in wanted {
         let content_type = owned.get(&shot.id).ok_or(IMAGE_UNAVAILABLE)?;
@@ -751,47 +929,38 @@ async fn load_images(worker: &Worker, job: &Job) -> Result<Vec<ImageInput>, &'st
         }
         images.push(ImageInput { media_type, bytes });
     }
-    tokio::task::spawn_blocking(move || prepare_images(images))
-        .await
-        .map_err(|_| IMAGE_PREPARATION_FAILED)?
-        .map_err(|PrepareError| IMAGE_PREPARATION_FAILED)
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        prepare_images(images)
+    })
+    .await
+    .map_err(|_| IMAGE_PREPARATION_FAILED)?
+    .map_err(|PrepareError| IMAGE_PREPARATION_FAILED)
 }
 
 /// Ends the attempt with `outcome` in one transaction, after re-checking under
-/// the ticket and attempt locks that it is still processing, within its
-/// deadline, and still allowed by the current configuration. Otherwise the
-/// result is dropped (finished attempt) or replaced by a handoff.
+/// the ticket and attempt locks that it is still processing under this
+/// worker's claim and still allowed by the current configuration. Otherwise
+/// the result is dropped (finished or taken-over attempt) or replaced by a
+/// handoff.
 async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), ApiError> {
     let mut tx = worker.pool.begin().await?;
     // Lock order everywhere: AI settings, category, ticket, attempt.
     let allowed = still_allowed(&mut tx, job, &worker.encryption_key).await?;
-    sqlx::query("SELECT 1 FROM tickets WHERE id = $1 FOR UPDATE")
-        .bind(job.ticket_id)
-        .execute(&mut *tx)
-        .await?;
-    // Still processing, and still this worker's claim: after a lost lease the
-    // attempt belongs to the worker that took it over.
-    let current: Option<(bool, bool)> = sqlx::query_as(
-        "SELECT state = 'processing' AND claims = $2, deadline_at <= clock_timestamp()
-         FROM ai_attempts WHERE id = $1 FOR UPDATE",
-    )
-    .bind(job.id)
-    .bind(job.claims)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let Some((true, overdue)) = current else {
+    if !lock_claimed(&mut tx, job).await? {
         tracing::info!(
             worker = "ai_attempts",
             attempt_id = %job.id,
             "AI attempt already finished or taken over; late result ignored"
         );
         return Ok(());
-    };
-    let (code, usage_id) = match (overdue, allowed, outcome) {
-        (true, ..) => (TIMEOUT, None),
-        (false, Err(code), _) => (code, None),
-        (false, Ok(_), Outcome::Failed { code, usage_id }) => (*code, *usage_id),
-        (false, Ok(_), Outcome::Suggested(guarded)) => {
+    }
+    let (code, usage_id) = match (allowed, outcome) {
+        // A suggestion that arrived under a changed policy is not stored.
+        (Err(code), Outcome::Suggested(guarded)) => (code, Some(guarded.usage_id)),
+        (Err(code), Outcome::Failed { usage_id, .. }) => (code, *usage_id),
+        (Ok(_), Outcome::Failed { code, usage_id }) => (*code, *usage_id),
+        (Ok(_), Outcome::Suggested(guarded)) => {
             lifecycle::transition(
                 &mut tx,
                 job.ticket_id,
@@ -819,11 +988,6 @@ async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), Api
             return Ok(());
         }
     };
-    // A suggestion that arrived too late or under a changed policy is not stored.
-    let usage_id = match outcome {
-        Outcome::Suggested(guarded) => Some(guarded.usage_id),
-        Outcome::Failed { .. } => usage_id,
-    };
     hand_off(&mut tx, job.ticket_id, code, usage_id).await?;
     tx.commit().await?;
     tracing::info!(
@@ -835,34 +999,88 @@ async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), Api
     Ok(())
 }
 
-/// Hands off one ticket that is in `ai_processing` with an overdue attempt (or
-/// with no processing attempt at all), whatever any worker is doing. Returns
-/// whether it found one. All state is in the database, so this also recovers
-/// attempts whose worker died.
-pub async fn sweep_one(pool: &PgPool) -> Result<bool, ApiError> {
-    let due: Option<(Uuid, bool)> = sqlx::query_as(
-        "SELECT t.id, a.state IS NOT DISTINCT FROM 'processing'
+/// [`sweep_due`] for one ticket. Returns whether it found one.
+pub async fn sweep_one(worker: &Worker) -> Result<bool, ApiError> {
+    sweep_due(worker, &mut Vec::new()).await
+}
+
+/// Hands off one ticket in `ai_processing` whose attempt can no longer end by
+/// itself, whatever any worker is doing:
+///
+/// - no live claim, and the deadline passed (`timeout`) or it was claimed
+///   [`MAX_CLAIMS`] times (`claims_exhausted`);
+/// - a live claim, but even a call started at the deadline would be over by
+///   now (deadline + the guard's wait + the call timeout + a margin);
+/// - no processing attempt at all (`orphaned`, also written to the audit log).
+///
+/// The ticket row is taken `FOR UPDATE SKIP LOCKED`, and a ticket whose
+/// handoff failed goes into `skipped` for this cycle, so one stuck ticket never
+/// blocks the ones behind it. `Ok(false)` means nothing is due; `skipped` is
+/// then cleared for the next cycle. All state is in the database, so this also
+/// recovers attempts whose worker died.
+pub async fn sweep_due(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, ApiError> {
+    let mut tx = worker.pool.begin().await?;
+    let due: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT t.id,
+                CASE WHEN a.state IS DISTINCT FROM 'processing' THEN 'orphaned'
+                     WHEN a.deadline_at <= clock_timestamp() THEN 'timeout'
+                     ELSE 'claims_exhausted' END
          FROM tickets t LEFT JOIN ai_attempts a ON a.ticket_id = t.id
-         WHERE t.status = 'ai_processing'
-           AND (a.state IS DISTINCT FROM 'processing' OR a.deadline_at <= clock_timestamp())
-         ORDER BY t.created_at, t.id LIMIT 1",
+         WHERE t.status = 'ai_processing' AND NOT (t.id = ANY($1))
+           AND (a.state IS DISTINCT FROM 'processing'
+                OR ((a.claimed_until IS NULL OR a.claimed_until <= clock_timestamp())
+                    AND (a.deadline_at <= clock_timestamp() OR a.claims >= $2))
+                OR a.deadline_at + make_interval(secs => $3
+                       + (SELECT concurrency_wait_seconds FROM ai_limits)) <= clock_timestamp())
+         ORDER BY t.created_at, t.id LIMIT 1
+         FOR UPDATE OF t SKIP LOCKED",
     )
-    .fetch_optional(pool)
+    .bind(&skipped[..])
+    .bind(MAX_CLAIMS)
+    .bind((worker.guard.call_timeout() + SWEEP_MARGIN).as_secs_f64())
+    .fetch_optional(&mut *tx)
     .await?;
-    let Some((ticket_id, overdue)) = due else {
+    let Some((ticket_id, outcome)) = due else {
+        skipped.clear();
         return Ok(false);
     };
-    let outcome = if overdue { TIMEOUT } else { ORPHANED };
-    let mut tx = pool.begin().await?;
-    let queued = hand_off(&mut tx, ticket_id, outcome, None).await?;
-    tx.commit().await?;
-    if queued {
-        tracing::warn!(
-            worker = "ai_attempt_sweep",
-            %ticket_id,
-            outcome,
-            "AI attempt handed off to operators"
-        );
+    let handed_off = async {
+        let queued = hand_off(&mut tx, ticket_id, &outcome, None).await?;
+        if queued && outcome == ORPHANED {
+            // There is no attempt row to carry the outcome.
+            audit(
+                &mut *tx,
+                "ai_attempt_orphaned",
+                None,
+                None,
+                serde_json::json!({ "ticket_id": ticket_id, "outcome": ORPHANED }),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok::<bool, ApiError>(queued)
+    };
+    match handed_off.await {
+        Ok(queued) => {
+            if queued {
+                tracing::warn!(
+                    worker = "ai_attempt_sweep",
+                    %ticket_id,
+                    outcome,
+                    "AI attempt handed off to operators"
+                );
+            }
+        }
+        Err(_) => {
+            // The transaction is gone (and its lock with it). Leave this
+            // ticket out until the cycle has handled the others.
+            tracing::error!(
+                worker = "ai_attempt_sweep",
+                %ticket_id,
+                "AI attempt handoff failed; skipping ticket for this cycle"
+            );
+            skipped.push(ticket_id);
+        }
     }
     Ok(true)
 }

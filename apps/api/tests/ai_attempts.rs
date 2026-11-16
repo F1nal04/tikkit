@@ -139,6 +139,7 @@ impl World {
         Worker::with(&test_state(self.pool()), guard, KEY).options(WorkerOptions {
             lease: Duration::from_millis(600),
             heartbeat,
+            saturated_retry: Duration::from_millis(100),
         })
     }
 
@@ -254,20 +255,62 @@ impl World {
         sqlx::query(statement).execute(self.pool()).await.unwrap();
     }
 
-    /// Moves time for an attempt: the trigger keeps the deadline immutable in
-    /// normal operation, so the test (as table owner) steps around it.
-    async fn overdue(&self, ticket: Uuid) {
+    /// Moves time for a ticket's attempt: its deadline becomes now plus
+    /// `seconds`. The trigger keeps the deadline immutable in normal operation,
+    /// so the test (as table owner) steps around it.
+    async fn deadline_in(&self, ticket: Uuid, seconds: f64) {
         let mut tx = self.pool().begin().await.unwrap();
-        for statement in [
-            "ALTER TABLE ai_attempts DISABLE TRIGGER ai_attempts_guard",
-            "UPDATE ai_attempts SET deadline_at = clock_timestamp() - interval '1 second'
-             WHERE state = 'processing'",
-            "ALTER TABLE ai_attempts ENABLE TRIGGER ai_attempts_guard",
-        ] {
-            sqlx::query(statement).execute(&mut *tx).await.unwrap();
-        }
+        sqlx::query("ALTER TABLE ai_attempts DISABLE TRIGGER ai_attempts_guard")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE ai_attempts SET deadline_at = clock_timestamp() + make_interval(secs => $2)
+             WHERE ticket_id = $1",
+        )
+        .bind(ticket)
+        .bind(seconds)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("ALTER TABLE ai_attempts ENABLE TRIGGER ai_attempts_guard")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
-        let _ = ticket;
+    }
+
+    async fn overdue(&self, ticket: Uuid) {
+        self.deadline_in(ticket, -1.0).await;
+    }
+
+    /// `(claims, has a claim)` of the ticket's attempt.
+    async fn claims(&self, ticket: Uuid) -> (i32, bool) {
+        sqlx::query_as(
+            "SELECT claims, claimed_until IS NOT NULL FROM ai_attempts WHERE ticket_id = $1",
+        )
+        .bind(ticket)
+        .fetch_one(self.pool())
+        .await
+        .unwrap()
+    }
+
+    /// Takes every provider slot of the guard for `seconds`, as calls of
+    /// another process would.
+    async fn occupy_slots(&self, seconds: f64) {
+        sqlx::query(
+            "INSERT INTO ai_usage (account_id, provider, model, image_count, status,
+                                   budget_tokens, budget_basis, lease_expires_at)
+             SELECT a.id, 'openai', $1, 0, 'reserved', 0, 'estimated',
+                    clock_timestamp() + make_interval(secs => $2)
+             FROM accounts a, generate_series(1, (SELECT max_concurrency FROM ai_limits))
+             WHERE a.username = 'operator'",
+        )
+        .bind(first_model())
+        .bind(seconds)
+        .execute(self.pool())
+        .await
+        .unwrap();
     }
 
     async fn wait_for_calls(&self, calls: usize) {
@@ -443,7 +486,7 @@ async fn a_non_exempt_ticket_gets_exactly_one_stored_suggestion() {
 
     // One attempt, one solution: nothing left to do, no second provider call.
     assert!(!ai_attempts::process_one(&worker).await.unwrap());
-    assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
     let (attempts, linked): (i64, i64) =
         sqlx::query_as("SELECT count(*), count(usage_id) FROM ai_attempts")
             .fetch_one(w.pool())
@@ -790,7 +833,7 @@ async fn every_failure_hands_the_ticket_to_operators_exactly_once() {
         assert_eq!(ai["suggestion"], Value::Null);
         // No retry: the worker and the sweep are done with it.
         assert!(!ai_attempts::process_one(&worker).await.unwrap());
-        assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+        assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
         assert_eq!(w.mock.count(), calls, "{outcome}");
         w.assert_handed_off(ticket, outcome).await;
         // Operators got it as ordinary queue work.
@@ -880,6 +923,27 @@ async fn disabling_ai_mid_flight_never_accepts_the_late_result() {
 }
 
 #[tokio::test]
+async fn removing_the_key_mid_flight_never_accepts_the_late_result() {
+    let Some(w) = world(vec![success().after(Duration::from_millis(800))]).await else {
+        return;
+    };
+    let ticket = w.submit("ai_processing").await;
+    let worker = w.worker_with(Duration::from_secs(10), Duration::from_secs(60));
+    let running = tokio::spawn(async move { ai_attempts::process_one(&worker).await });
+    w.wait_for_calls(1).await;
+    let path = "/api/settings/ai/credentials/openai";
+    let r = call(&w.app, "DELETE", path, None, Some(&w.admin)).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["status"], "disabled", "{}", r.body);
+    w.assert_handed_off(ticket, "credential_missing").await;
+    // The provider answers with a suggestion made with the revoked key.
+    assert!(running.await.unwrap().unwrap());
+    w.assert_handed_off(ticket, "credential_missing").await;
+    assert_eq!(w.ai(ticket).await["suggestion"], Value::Null);
+    assert_eq!(w.mock.count(), 1);
+}
+
+#[tokio::test]
 async fn a_running_call_is_cancelled_when_its_attempt_is_stopped() {
     let Some(w) = world(vec![success().after(Duration::from_secs(8))]).await else {
         return;
@@ -962,7 +1026,7 @@ async fn a_cancelled_request_is_terminated_and_late_output_is_ignored() {
         // The provider answers (or fails) afterwards: nothing happens.
         assert!(running.await.unwrap().unwrap());
         assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
-        assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+        assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
         assert_eq!(w.status(ticket).await, "cancelled");
         assert_eq!(
             w.attempt(ticket).await,
@@ -1096,37 +1160,91 @@ async fn an_overdue_attempt_is_handed_off_even_without_a_worker() {
     };
     // No worker at all: the sweep ends it at the deadline.
     let ticket = w.submit("ai_processing").await;
-    assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
     w.overdue(ticket).await;
     // An overdue attempt is not started any more.
     assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
-    assert!(ai_attempts::sweep_one(w.pool()).await.unwrap());
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
     w.assert_handed_off(ticket, "timeout").await;
     assert_eq!(w.ai(ticket).await["reason"], "timeout");
-    assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
     assert_eq!(w.mock.count(), 0);
 
-    // A worker stuck in a slow call: its own heartbeat ends the attempt.
+    // A worker that died mid-call: once its lease ran out past the deadline,
+    // the sweep hands the ticket off without another provider call.
     let ticket = w.submit("ai_processing").await;
     let worker = w.worker();
-    let started = std::time::Instant::now();
+    let dying = tokio::spawn(async move { ai_attempts::process_one(&worker).await });
+    w.wait_for_calls(1).await;
+    dying.abort();
+    let _ = dying.await;
+    w.overdue(ticket).await;
+    assert!(
+        !ai_attempts::sweep_one(&w.worker()).await.unwrap(),
+        "a live claim may still finish its call"
+    );
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    w.assert_handed_off(ticket, "timeout").await;
+    assert_eq!(w.mock.count(), 1);
+}
+
+#[tokio::test]
+async fn a_call_started_before_the_deadline_is_not_cut_short() {
+    let Some(w) = world(vec![success().after(Duration::from_millis(700))]).await else {
+        return;
+    };
+    // The deadline passes while the provider is answering: the call was
+    // admitted in time, so its suggestion is accepted.
+    let ticket = w.submit("ai_processing").await;
+    let worker = w.worker();
     let running = tokio::spawn(async move { ai_attempts::process_one(&worker).await });
     w.wait_for_calls(1).await;
     w.overdue(ticket).await;
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
     assert!(running.await.unwrap().unwrap());
-    assert!(started.elapsed() < Duration::from_secs(5));
-    w.assert_handed_off(ticket, "timeout").await;
+    assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+    assert_eq!(w.events(ticket, "ai_suggestion_ready").await, 1);
+    assert_eq!(w.queued(ticket).await, 0);
 
-    // Sweep and worker racing for the same overdue attempt queue it once.
+    // The hard bound: so long past the deadline that no call started in time
+    // can still be running. The sweep ends it whatever the worker does, and
+    // the result that arrives afterwards is dropped.
     let ticket = w.submit("ai_processing").await;
     let worker = w.worker();
     let running = tokio::spawn(async move { ai_attempts::process_one(&worker).await });
     w.wait_for_calls(2).await;
-    w.overdue(ticket).await;
-    let (swept, worked) = tokio::join!(ai_attempts::sweep_one(w.pool()), running);
-    swept.unwrap();
-    worked.unwrap().unwrap();
+    w.deadline_in(ticket, -3600.0).await;
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
     w.assert_handed_off(ticket, "timeout").await;
+    assert!(running.await.unwrap().unwrap());
+    w.assert_handed_off(ticket, "timeout").await;
+}
+
+#[tokio::test]
+async fn a_locked_ticket_does_not_block_the_sweep() {
+    let Some(w) = world(vec![success()]).await else {
+        return;
+    };
+    let first = w.submit("ai_processing").await;
+    let second = w.submit("ai_processing").await;
+    w.overdue(first).await;
+    w.overdue(second).await;
+    // Something holds the older ticket's row.
+    let mut holder = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(first)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    w.assert_handed_off(second, "timeout").await;
+    assert_eq!(w.status(first).await, "ai_processing");
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    holder.rollback().await.unwrap();
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    w.assert_handed_off(first, "timeout").await;
 }
 
 #[tokio::test]
@@ -1161,19 +1279,39 @@ async fn a_ticket_in_ai_processing_without_an_attempt_is_not_stranded() {
     tx.commit().await.unwrap();
     assert_eq!(w.status(ticket).await, "ai_processing");
     assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
-    assert!(ai_attempts::sweep_one(w.pool()).await.unwrap());
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
     assert_eq!(w.status(ticket).await, "queued");
     assert_eq!(w.queued(ticket).await, 1);
-    assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+    // There is no attempt row to carry the outcome, so it is in the audit log.
+    let audited: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_events WHERE event_type = 'ai_attempt_orphaned'",
+    )
+    .fetch_all(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        audited,
+        [json!({ "ticket_id": ticket, "outcome": "orphaned" })]
+    );
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
 }
 
 #[tokio::test]
-async fn a_failed_commit_stores_nothing_and_the_attempt_is_retried() {
+async fn a_result_that_cannot_be_stored_never_causes_another_provider_call() {
+    // Output the database cannot hold is not a suggestion in the first place.
+    let Some(w) = world(vec![success_with("bad\u{0}text", &["Step"])]).await else {
+        return;
+    };
+    let ticket = w.submit("ai_processing").await;
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    w.assert_handed_off(ticket, "malformed_output").await;
+    assert_eq!(w.mock.count(), 1);
+
+    // The transaction that stores a good suggestion keeps failing.
     let Some(w) = world(vec![success()]).await else {
         return;
     };
     let ticket = w.submit("ai_processing").await;
-    // The transaction that stores the suggestion fails after the transition.
     w.sql(
         "CREATE FUNCTION fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN RAISE EXCEPTION 'disk full'; END $$",
@@ -1184,28 +1322,223 @@ async fn a_failed_commit_stores_nothing_and_the_attempt_is_retried() {
          WHEN (NEW.state = 'suggestion_ready') EXECUTE FUNCTION fail_commit()",
     )
     .await;
-    assert!(ai_attempts::process_one(&w.worker()).await.is_err());
-    // All or nothing: no status change, no event, no suggestion.
-    assert_eq!(w.status(ticket).await, "ai_processing");
-    assert_eq!(w.events(ticket, "ai_suggestion_ready").await, 0);
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    // All or nothing: no half-stored suggestion. The ticket went to operators
+    // instead of waiting for the lease and a second paid call.
+    w.assert_handed_off(ticket, "commit_failed").await;
+    assert_eq!(w.ai(ticket).await["reason"], "ai_failed");
+    let linked: i64 = sqlx::query_scalar("SELECT count(usage_id) FROM ai_attempts")
+        .fetch_one(w.pool())
+        .await
+        .unwrap();
+    assert_eq!(linked, 1, "the paid call stays linked to the attempt");
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    assert_eq!(w.mock.count(), 1);
+}
+
+#[tokio::test]
+async fn a_crash_loop_ends_after_a_fixed_number_of_claims() {
+    let Some(w) = world(vec![success().after(Duration::from_secs(30))]).await else {
+        return;
+    };
+    // The dead workers' reservations must not be what stops the next call.
+    w.sql("UPDATE ai_limits SET max_concurrency = 16").await;
+    let ticket = w.submit("ai_processing").await;
+    for claim in 1..=ai_attempts::MAX_CLAIMS {
+        let worker = w.worker();
+        let dying = tokio::spawn(async move { ai_attempts::process_one(&worker).await });
+        w.wait_for_calls(claim as usize).await;
+        dying.abort();
+        let _ = dying.await;
+        assert_eq!(w.claims(ticket).await.0, claim);
+        // Not before the last lease ran out.
+        assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
+        tokio::time::sleep(Duration::from_millis(700)).await;
+    }
+    // No further claim and no further provider call: the next step hands off.
+    assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert_eq!(w.mock.count(), ai_attempts::MAX_CLAIMS as usize);
+    assert!(ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    w.assert_handed_off(ticket, "claims_exhausted").await;
+    assert_eq!(w.ai(ticket).await["reason"], "ai_failed");
+    assert_eq!(w.mock.count(), ai_attempts::MAX_CLAIMS as usize);
+}
+
+#[tokio::test]
+async fn a_takeover_drops_the_first_workers_late_result() {
+    let Some(w) = world(vec![
+        success_with("First answer.", &["Step"]).after(Duration::from_millis(1500)),
+        success_with("Second answer.", &["Step"]),
+    ])
+    .await
+    else {
+        return;
+    };
+    let ticket = w.submit("ai_processing").await;
+    // The first worker stalls: it is alive but no longer renews its lease.
+    let stalled = w.worker_with(Duration::from_secs(10), Duration::from_secs(60));
+    let first = tokio::spawn(async move { ai_attempts::process_one(&stalled).await });
+    w.wait_for_calls(1).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    // A second worker takes the attempt over and finishes it.
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+    assert_eq!(w.claims(ticket).await.0, 2);
+    // The first worker's provider answers afterwards: its result is dropped.
+    assert!(first.await.unwrap().unwrap());
+    assert_eq!(w.mock.count(), 2);
+    assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+    assert_eq!(w.events(ticket, "ai_suggestion_ready").await, 1);
     assert_eq!(w.queued(ticket).await, 0);
+    assert_eq!(
+        w.ai(ticket).await["suggestion"]["explanation"],
+        "Second answer."
+    );
+}
+
+#[tokio::test]
+async fn shutdown_cancels_the_call_and_leaves_the_attempt_for_the_next_start() {
+    let Some(w) = world(vec![success().after(Duration::from_secs(20)), success()]).await else {
+        return;
+    };
+    let ticket = w.submit("ai_processing").await;
+    let worker = w.worker();
+    let running = {
+        let worker = worker.clone();
+        tokio::spawn(async move { ai_attempts::process_one(&worker).await })
+    };
+    w.wait_for_calls(1).await;
+    let stopping = std::time::Instant::now();
+    worker.stop();
+    assert!(running.await.unwrap().unwrap());
+    assert!(stopping.elapsed() < Duration::from_secs(3));
+
+    // Not handed off, not cancelled: still processing, and unclaimed.
+    assert_eq!(w.status(ticket).await, "ai_processing");
     assert_eq!(
         w.attempt(ticket).await,
         Some(("processing".into(), None, false))
     );
-    assert_eq!(w.ai(ticket).await["state"], "processing");
+    assert_eq!(w.claims(ticket).await, (1, false));
+    assert_eq!(w.queued(ticket).await, 0);
+    assert_eq!(w.events(ticket, "ai_failed").await, 0);
+    // The cancelled call gave its provider slot back at once.
+    let usage: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT status, outcome FROM ai_usage")
+            .fetch_all(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(usage, [("failed".into(), Some("cancelled".into()))]);
+    // A stopped worker starts nothing new.
+    assert!(ai_attempts::process_one(&worker).await.unwrap());
+    assert_eq!(w.status(ticket).await, "ai_processing");
+    assert_eq!(w.mock.count(), 1);
 
-    // After the lease the same attempt is tried again and commits once.
-    w.sql("DROP TRIGGER fail_commit ON ai_attempts").await;
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    // The next process takes it over without waiting for a lease.
     assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
     assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
     assert_eq!(w.events(ticket, "ai_suggestion_ready").await, 1);
-    let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM ai_attempts")
+    assert_eq!(w.mock.count(), 2);
+}
+
+/// The background loop itself, as `main.rs` runs and stops it. The only test
+/// that calls `stop_workers` (a process-wide flag): nothing else in this binary
+/// uses the polling loops.
+#[tokio::test]
+async fn the_worker_loop_stops_within_the_shutdown_window() {
+    let Some(w) = world(vec![success().after(Duration::from_secs(20)), success()]).await else {
+        return;
+    };
+    let ticket = w.submit("ai_processing").await;
+    let looping = tokio::spawn(ai_attempts::worker_loop(w.worker()));
+    w.wait_for_calls(1).await;
+    let stopping = std::time::Instant::now();
+    tikkit_api::notifications::stop_workers();
+    // `main.rs` waits five seconds for its workers.
+    tokio::time::timeout(Duration::from_secs(5), looping)
+        .await
+        .expect("the worker loop ends in time")
+        .unwrap();
+    assert!(stopping.elapsed() < Duration::from_secs(5));
+    assert_eq!(w.status(ticket).await, "ai_processing");
+    assert_eq!(w.claims(ticket).await, (1, false));
+    let reserved: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ai_usage WHERE status = 'reserved'")
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(reserved, 0, "no provider slot stays taken after shutdown");
+    // After the restart the attempt is finished as usual.
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+}
+
+// --- Provider concurrency -------------------------------------------------------------------
+
+#[tokio::test]
+async fn attempts_beyond_the_provider_slots_wait_their_turn() {
+    let Some(w) = world(vec![success().after(Duration::from_millis(400))]).await else {
+        return;
+    };
+    // Two provider slots (the default), three tickets, three workers at once.
+    let tickets = [
+        w.submit("ai_processing").await,
+        w.submit("ai_processing").await,
+        w.submit("ai_processing").await,
+    ];
+    let claimed = futures(vec![w.worker(), w.worker(), w.worker()]).await;
+    assert_eq!(claimed.iter().filter(|c| **c).count(), 2);
+    assert_eq!(w.mock.max_in_flight(), 2);
+    // The oldest two are done; the third was left unclaimed, not refused.
+    assert_eq!(w.status(tickets[0]).await, "awaiting_ai_decision");
+    assert_eq!(w.status(tickets[1]).await, "awaiting_ai_decision");
+    assert_eq!(w.status(tickets[2]).await, "ai_processing");
+    assert_eq!(w.claims(tickets[2]).await, (0, false));
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert_eq!(w.status(tickets[2]).await, "awaiting_ai_decision");
+    let refused: i64 = sqlx::query_scalar("SELECT count(*) FROM ai_usage WHERE status = 'refused'")
         .fetch_one(w.pool())
         .await
         .unwrap();
-    assert_eq!(attempts, 1);
+    assert_eq!(refused, 0);
+}
+
+#[tokio::test]
+async fn a_saturated_attempt_retries_and_hands_off_only_at_its_deadline() {
+    let Some(w) = world(vec![success()]).await else {
+        return;
+    };
+    // The guard refuses at once when every slot is taken.
+    w.sql("UPDATE ai_limits SET concurrency_wait_seconds = 0")
+        .await;
+
+    // Slots held elsewhere for a moment: the attempt asks again and gets its
+    // suggestion under the same claim.
+    let ticket = w.submit("ai_processing").await;
+    w.occupy_slots(0.8).await;
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+    assert_eq!(w.claims(ticket).await.0, 1);
+    assert_eq!(w.mock.count(), 1);
+    let refused: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ai_usage WHERE outcome = 'concurrency_saturated'")
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    assert!(refused >= 1, "{refused}");
+
+    // Slots held past the attempt's deadline: only then it hands off as saturated.
+    let ticket = w.submit("ai_processing").await;
+    w.occupy_slots(3600.0).await;
+    w.deadline_in(ticket, 0.8).await;
+    let started = std::time::Instant::now();
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    assert!(started.elapsed() >= Duration::from_millis(700));
+    w.assert_handed_off(ticket, "concurrency_saturated").await;
+    assert_eq!(w.ai(ticket).await["reason"], "ai_failed");
+    assert_eq!(w.mock.count(), 1, "no provider call for the second ticket");
 }
 
 // --- Screenshots ----------------------------------------------------------------------------
@@ -1300,7 +1633,7 @@ async fn later_replies_and_screenshots_never_reach_the_provider() {
 
     // No regeneration, no second call, the snapshot is what it was.
     assert!(!ai_attempts::process_one(&w.worker()).await.unwrap());
-    assert!(!ai_attempts::sweep_one(w.pool()).await.unwrap());
+    assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
     assert_eq!(w.mock.count(), 1);
     let after: Value = sqlx::query_scalar("SELECT input FROM ai_attempts WHERE ticket_id = $1")
         .bind(ticket)
