@@ -277,8 +277,8 @@ Migration `0019_ai_configuration.sql`. Behavior: [ai-configuration.md](ai-config
 
 - `ai_settings` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`,
   inserted by the migration): `enabled` (default false), `provider` (`openai`,
-  `gemini`, `anthropic`, or NULL), `model` (a plain identifier, up to 100
-  characters), and the last connection test: `connection_status` (`untested`,
+  `gemini`, `anthropic`, or NULL), `model` (up to 100 characters; the API only
+  stores models from the adapters' supported table), and the last connection test: `connection_status` (`untested`,
   `ok`, `failed`), `connection_error` (a stable code, set exactly when `failed`),
   `connection_tested_at`. `enabled` requires a provider and a model.
 - `ai_credentials` has at most one row per provider (`provider` is the primary

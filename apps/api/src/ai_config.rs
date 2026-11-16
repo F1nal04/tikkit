@@ -2,18 +2,19 @@
 //!
 //! This module stores which provider and model the organization uses, one
 //! encrypted credential per provider, and the result of the last connection
-//! test. It makes no outbound calls itself: the provider adapters are #34 and
-//! are reached only through [`check_provider`].
+//! test. Its only outbound call is the connection test ([`check_provider`]),
+//! through the provider adapters in [`crate::ai`].
 //!
 //! Later branches read configuration through [`load_active`] (provider, model,
 //! and the decrypted key, or the reason AI cannot run) and route tickets through
 //! [`ai_available`].
 //!
 //! API keys are write-only. They are sealed with the external `ENCRYPTION_KEY`
-//! and bound to their provider, live in memory only as [`ApiKey`] (redacted
-//! `Debug`), and never reach responses, logs, errors, or audit metadata.
+//! and bound to their provider, live in memory only as [`ai::ApiKey`] (redacted
+//! `Debug`, readable only by the adapters), and never reach responses, logs,
+//! errors, or audit metadata.
 
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
@@ -30,32 +31,11 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
+    ai::{self, AiClient, AiErrorKind, ApiKey, Endpoint, ModelInfo, Provider, ProviderConfig},
     api::{ApiError, FieldErrors, Json, Path},
     auth::{Auth, CurrentUser, audit, ident, ident_str},
     authz::{Permission, require_permission},
 };
-
-/// The first-release providers. Nothing else is selectable or storable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AiProvider {
-    Openai,
-    Gemini,
-    Anthropic,
-}
-
-impl AiProvider {
-    pub const ALL: [Self; 3] = [Self::Openai, Self::Gemini, Self::Anthropic];
-
-    /// The stored and wire identifier.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Openai => "openai",
-            Self::Gemini => "gemini",
-            Self::Anthropic => "anthropic",
-        }
-    }
-}
 
 /// Why AI can or cannot run with the stored configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -71,29 +51,25 @@ pub enum AiStatus {
     Ready,
 }
 
-/// A decrypted provider key. Only [`ApiKey::expose`] yields the value.
-#[derive(Clone)]
-pub struct ApiKey(String);
-
-impl ApiKey {
-    /// The secret itself, for the request to its own provider. Never log it.
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for ApiKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<redacted>")
-    }
-}
-
 /// Everything a provider call needs. The key belongs to `provider` and no other.
 #[derive(Clone, Debug)]
 pub struct ActiveAi {
-    pub provider: AiProvider,
+    pub provider: Provider,
     pub model: String,
     pub api_key: ApiKey,
+}
+
+impl ActiveAi {
+    /// What the adapters need for a call with this selection. `endpoint` is
+    /// always the process-wide [`AppState::ai_endpoint`].
+    pub fn provider_config(&self, endpoint: &Endpoint) -> ProviderConfig {
+        ProviderConfig {
+            provider: self.provider,
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            endpoint: endpoint.clone(),
+        }
+    }
 }
 
 /// The usable configuration, or the reason there is none (never [`AiStatus::Ready`]).
@@ -151,14 +127,15 @@ const ATTEMPT_WORKER_WIRED: bool = false;
 /// Why a connection test failed. The stable codes are stored and shown to Admins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderCheckError {
-    /// The provider adapters (#34) are not connected to this endpoint yet.
-    NotWired,
     /// The provider rejected the key.
     Auth,
-    /// DNS, connect, TLS, or timeout.
+    /// DNS, connect, TLS, timeout, or a provider outage (5xx).
     Unreachable,
-    /// The provider does not offer this model, or it cannot take image input
-    /// (screenshot assistance needs a vision-capable model).
+    /// The provider's rate limit or the account's quota is exhausted.
+    RateLimited,
+    /// The model is not in the supported table, cannot take image input
+    /// (screenshot assistance needs a vision-capable model), or the provider
+    /// does not offer it to this key.
     ModelUnsupported,
     /// Any other provider-side failure.
     Failed,
@@ -167,9 +144,9 @@ pub enum ProviderCheckError {
 impl ProviderCheckError {
     pub fn code(self) -> &'static str {
         match self {
-            Self::NotWired => "ai_test_unavailable",
             Self::Auth => "ai_provider_auth_failed",
             Self::Unreachable => "ai_provider_unreachable",
+            Self::RateLimited => "ai_provider_rate_limited",
             Self::ModelUnsupported => "ai_model_unsupported",
             Self::Failed => "ai_provider_failed",
         }
@@ -177,24 +154,61 @@ impl ProviderCheckError {
 
     fn api(self) -> ApiError {
         match self {
-            Self::NotWired => ApiError::AiTestUnavailable,
             Self::Auth => ApiError::AiProviderAuthFailed,
             Self::Unreachable => ApiError::AiProviderUnreachable,
+            Self::RateLimited => ApiError::AiProviderRateLimited,
             Self::ModelUnsupported => ApiError::AiModelUnsupported,
             Self::Failed => ApiError::AiProviderFailed,
         }
     }
 }
 
-/// SEAM (#34): the connection test and model image-capability validation.
-/// The only place this module reaches a provider.
+// Only the kind crosses this boundary: the adapter error's HTTP status and
+// provider code are neither stored nor returned.
+impl From<AiErrorKind> for ProviderCheckError {
+    fn from(kind: AiErrorKind) -> Self {
+        match kind {
+            AiErrorKind::InvalidCredentials => Self::Auth,
+            AiErrorKind::Timeout
+            | AiErrorKind::UpstreamUnavailable
+            | AiErrorKind::DestinationBlocked => Self::Unreachable,
+            AiErrorKind::RateLimited => Self::RateLimited,
+            AiErrorKind::ModelError | AiErrorKind::Vision => Self::ModelUnsupported,
+            AiErrorKind::InvalidInput
+            | AiErrorKind::MalformedOutput
+            | AiErrorKind::OversizedOutput
+            | AiErrorKind::Cancelled => Self::Failed,
+        }
+    }
+}
+
+/// Why `model` cannot be selected, as a field error code: it must be in the
+/// adapters' supported table and accept image input.
+fn model_problem(model: Option<&ModelInfo>) -> Option<&'static str> {
+    match model {
+        None => Some("unsupported"),
+        Some(model) if !model.image_input => Some("image_input_required"),
+        Some(_) => None,
+    }
+}
+
+/// The connection test: the only place this module reaches a provider.
 ///
-/// `Ok` must mean: the key authenticates at `active.provider`, and
-/// `active.model` is a supported model that accepts image input. Wire it to the
-/// adapters' `probe` and supported-model table; map their errors onto
-/// [`ProviderCheckError`] and never pass provider response text through.
-async fn check_provider(_active: &ActiveAi) -> Result<(), ProviderCheckError> {
-    Err(ProviderCheckError::NotWired)
+/// `Ok` means `active.model` is a supported, image-capable model, the key
+/// authenticates at `active.provider`, and the provider offers that model to
+/// it. The probe reads model metadata only; it generates nothing.
+async fn check_provider(
+    client: &AiClient,
+    endpoint: &Endpoint,
+    active: &ActiveAi,
+) -> Result<(), ProviderCheckError> {
+    if model_problem(ai::model_info(active.provider, &active.model)).is_some() {
+        return Err(ProviderCheckError::ModelUnsupported);
+    }
+    client
+        .probe(&active.provider_config(endpoint))
+        .await
+        .map_err(|error| error.kind.into())
 }
 
 // --- Admin API ---
@@ -204,7 +218,7 @@ async fn check_provider(_active: &ActiveAi) -> Result<(), ProviderCheckError> {
 pub struct AiSettings {
     pub enabled: bool,
     #[schema(required = true)]
-    pub provider: Option<AiProvider>,
+    pub provider: Option<Provider>,
     #[schema(required = true)]
     pub model: Option<String>,
     /// Whether the stored configuration is usable.
@@ -224,7 +238,9 @@ pub struct AiSettings {
 
 #[derive(Serialize, ToSchema)]
 pub struct AiProviderState {
-    pub provider: AiProvider,
+    pub provider: Provider,
+    /// The models that can be selected for this provider. Nothing else is accepted.
+    pub models: Vec<ModelInfo>,
     #[schema(required = true)]
     pub credential: Option<AiCredentialInfo>,
 }
@@ -271,8 +287,8 @@ pub struct AiConnection {
 pub struct AiSettingsWrite {
     /// Enabling needs a provider, a model, and a readable stored key for that provider.
     pub enabled: bool,
-    pub provider: Option<AiProvider>,
-    /// The provider's model identifier, up to 100 characters.
+    pub provider: Option<Provider>,
+    /// One of the selected provider's `models` that accepts image input.
     pub model: Option<String>,
 }
 
@@ -323,7 +339,7 @@ struct CredentialRow {
     set_by_username: Option<String>,
 }
 
-fn provider_of(stored: String) -> Option<AiProvider> {
+fn provider_of(stored: String) -> Option<Provider> {
     ident(stored).ok()
 }
 
@@ -346,10 +362,11 @@ async fn view(db: &mut PgConnection, encryption_key: &[u8; 32]) -> Result<AiSett
         Ok(_) => AiStatus::Ready,
         Err(status) => status,
     };
-    let providers = AiProvider::ALL
+    let providers = Provider::ALL
         .into_iter()
         .map(|provider| AiProviderState {
             provider,
+            models: ai::supported_models(provider).to_vec(),
             credential: credentials
                 .iter()
                 .find(|c| c.provider == provider.as_str())
@@ -411,7 +428,7 @@ pub async fn get_ai(
         (status = 200, body = AiSettings),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
-        (status = 422, description = "`validation_failed` (`provider`/`model`: `required` or `invalid`; `enabled`: `credential_required` or `credential_unreadable`)", body = crate::api::ErrorEnvelope),
+        (status = 422, description = "`validation_failed` (`provider`: `required`; `model`: `required`, `unsupported`, or `image_input_required`; `enabled`: `credential_required` or `credential_unreadable`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn put_ai(
     State(state): State<AppState>,
@@ -428,8 +445,12 @@ pub async fn put_ai(
     let mut tx = state.pool.begin().await?;
     let old = lock_settings(&mut tx).await?;
     let mut errors = FieldErrors::new();
-    if model.as_deref().is_some_and(|m| !valid_model(m)) {
-        errors.insert("model".into(), vec!["invalid"]);
+    if let Some(model) = &model {
+        match body.provider {
+            None => errors.insert("provider".into(), vec!["required"]),
+            Some(provider) => model_problem(ai::model_info(provider, model))
+                .and_then(|code| errors.insert("model".into(), vec![code])),
+        };
     }
     if body.enabled {
         if body.provider.is_none() {
@@ -456,7 +477,7 @@ pub async fn put_ai(
     if !errors.is_empty() {
         return Err(ApiError::Validation(errors));
     }
-    let provider = body.provider.map(AiProvider::as_str);
+    let provider = body.provider.map(Provider::as_str);
     // A test result describes one provider and model; it does not carry over.
     let retested = old.provider.as_deref() != provider || old.model != model;
     sqlx::query(
@@ -492,7 +513,7 @@ pub async fn put_ai(
 /// Stores or replaces one provider's API key (Admin only). The key is
 /// encrypted, bound to this provider, and never returned.
 #[utoipa::path(put, path = "/api/settings/ai/credentials/{provider}", tag = "settings",
-    request_body = AiCredentialWrite, params(("provider" = AiProvider, Path)),
+    request_body = AiCredentialWrite, params(("provider" = Provider, Path)),
     responses(
         (status = 200, body = AiSettings),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
@@ -503,7 +524,7 @@ pub async fn put_credential(
     State(state): State<AppState>,
     Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
-    Path(provider): Path<AiProvider>,
+    Path(provider): Path<Provider>,
     Json(body): Json<AiCredentialWrite>,
 ) -> Result<Json<AiSettings>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
@@ -561,7 +582,7 @@ pub async fn put_credential(
 /// Deletes one provider's API key (Admin only). Removing the selected
 /// provider's key also disables AI, so the next submission goes to operators.
 #[utoipa::path(delete, path = "/api/settings/ai/credentials/{provider}", tag = "settings",
-    params(("provider" = AiProvider, Path)),
+    params(("provider" = Provider, Path)),
     responses(
         (status = 200, body = AiSettings),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
@@ -572,7 +593,7 @@ pub async fn delete_credential(
     State(state): State<AppState>,
     Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
-    Path(provider): Path<AiProvider>,
+    Path(provider): Path<Provider>,
 ) -> Result<Json<AiSettings>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
     let mut tx = state.pool.begin().await?;
@@ -615,8 +636,7 @@ pub async fn delete_credential(
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 409, description = "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported`", body = crate::api::ErrorEnvelope),
-        (status = 501, description = "`ai_test_unavailable`", body = crate::api::ErrorEnvelope),
-        (status = 502, description = "`ai_provider_auth_failed`, `ai_provider_unreachable`, or `ai_provider_failed`", body = crate::api::ErrorEnvelope),
+        (status = 502, description = "`ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed`", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn test_ai(
     State(state): State<AppState>,
@@ -646,7 +666,7 @@ pub async fn test_ai(
         api_key,
     };
     // No transaction or lock is held across the provider call.
-    let result = check_provider(&active).await;
+    let result = check_provider(&state.ai_client, &state.ai_endpoint, &active).await;
     let code = result.err().map(ProviderCheckError::code);
     // Record the outcome only if it still describes the stored selection and key.
     sqlx::query(
@@ -714,13 +734,6 @@ async fn reset_connection(db: &mut PgConnection) -> Result<(), sqlx::Error> {
     .map(drop)
 }
 
-fn valid_model(model: &str) -> bool {
-    let mut chars = model.chars();
-    model.len() <= 100
-        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
-}
-
 /// Last four characters, only when the key is long enough that they reveal little.
 fn hint(api_key: &str) -> &str {
     if api_key.len() >= 20 {
@@ -731,11 +744,11 @@ fn hint(api_key: &str) -> &str {
 }
 
 /// Associated data: ties a ciphertext to its provider row.
-fn binding(provider: AiProvider) -> Vec<u8> {
+fn binding(provider: Provider) -> Vec<u8> {
     format!("tikkit:ai-credential:v1:{}", provider.as_str()).into_bytes()
 }
 
-fn seal(key: &[u8; 32], provider: AiProvider, api_key: &str) -> Vec<u8> {
+fn seal(key: &[u8; 32], provider: Provider, api_key: &str) -> Vec<u8> {
     let mut nonce = [0u8; 12];
     OsRng.fill_bytes(&mut nonce);
     let ciphertext = Aes256Gcm::new(key.into())
@@ -750,7 +763,7 @@ fn seal(key: &[u8; 32], provider: AiProvider, api_key: &str) -> Vec<u8> {
     [nonce.as_slice(), &ciphertext].concat()
 }
 
-fn open(key: &[u8; 32], provider: AiProvider, sealed: &[u8]) -> Option<ApiKey> {
+fn open(key: &[u8; 32], provider: Provider, sealed: &[u8]) -> Option<ApiKey> {
     if sealed.len() < 12 + 16 {
         return None;
     }
@@ -764,7 +777,7 @@ fn open(key: &[u8; 32], provider: AiProvider, sealed: &[u8]) -> Option<ApiKey> {
             },
         )
         .ok()?;
-    String::from_utf8(plain).ok().map(ApiKey)
+    String::from_utf8(plain).ok().map(ApiKey::new)
 }
 
 #[cfg(test)]
@@ -776,22 +789,22 @@ mod tests {
     #[test]
     fn a_sealed_key_opens_only_with_its_key_and_its_provider() {
         let key = [7u8; 32];
-        let sealed = seal(&key, AiProvider::Openai, SECRET);
+        let sealed = seal(&key, Provider::OpenAi, SECRET);
         assert!(!sealed.windows(8).any(|w| w == &SECRET.as_bytes()[..8]));
-        let opened = open(&key, AiProvider::Openai, &sealed).unwrap();
+        let opened = open(&key, Provider::OpenAi, &sealed).unwrap();
         assert_eq!(opened.expose(), SECRET);
-        assert!(open(&[8u8; 32], AiProvider::Openai, &sealed).is_none());
-        assert!(open(&key, AiProvider::Anthropic, &sealed).is_none());
-        assert!(open(&key, AiProvider::Gemini, &sealed).is_none());
-        assert!(open(&key, AiProvider::Openai, &sealed[..20]).is_none());
+        assert!(open(&[8u8; 32], Provider::OpenAi, &sealed).is_none());
+        assert!(open(&key, Provider::Anthropic, &sealed).is_none());
+        assert!(open(&key, Provider::Gemini, &sealed).is_none());
+        assert!(open(&key, Provider::OpenAi, &sealed[..20]).is_none());
     }
 
     #[test]
     fn keys_are_redacted_and_hints_stay_short() {
         let active = ActiveAi {
-            provider: AiProvider::Openai,
+            provider: Provider::OpenAi,
             model: "some-model".into(),
-            api_key: ApiKey(SECRET.into()),
+            api_key: ApiKey::new(SECRET),
         };
         let text = format!("{active:?}");
         assert!(!text.contains("sk-test"), "{text}");
@@ -801,13 +814,39 @@ mod tests {
     }
 
     #[test]
-    fn model_identifiers_are_plain_tokens() {
-        assert!(valid_model("gpt-4.1-mini"));
-        assert!(valid_model("models:gemini_2.5"));
-        assert!(!valid_model(""));
-        assert!(!valid_model("-leading"));
-        assert!(!valid_model("has space"));
-        assert!(!valid_model("https://evil.example/model"));
-        assert!(!valid_model(&"m".repeat(101)));
+    fn only_supported_image_capable_models_are_selectable() {
+        let model = |image_input| ModelInfo {
+            id: "m",
+            image_input,
+        };
+        assert_eq!(model_problem(None), Some("unsupported"));
+        assert_eq!(
+            model_problem(Some(&model(false))),
+            Some("image_input_required")
+        );
+        assert_eq!(model_problem(Some(&model(true))), None);
+        for provider in Provider::ALL {
+            assert!(!ai::supported_models(provider).is_empty());
+            assert_eq!(
+                model_problem(ai::model_info(provider, "some-model")),
+                Some("unsupported")
+            );
+        }
+    }
+
+    #[test]
+    fn provider_failures_map_to_stable_codes() {
+        use AiErrorKind::*;
+        let code = |kind| ProviderCheckError::from(kind).code();
+        assert_eq!(code(InvalidCredentials), "ai_provider_auth_failed");
+        assert_eq!(code(RateLimited), "ai_provider_rate_limited");
+        assert_eq!(code(ModelError), "ai_model_unsupported");
+        assert_eq!(code(Vision), "ai_model_unsupported");
+        for kind in [Timeout, UpstreamUnavailable, DestinationBlocked] {
+            assert_eq!(code(kind), "ai_provider_unreachable");
+        }
+        for kind in [InvalidInput, MalformedOutput, OversizedOutput, Cancelled] {
+            assert_eq!(code(kind), "ai_provider_failed");
+        }
     }
 }

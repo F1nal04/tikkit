@@ -2862,7 +2862,7 @@
             }
           },
           "422": {
-            "description": "`validation_failed` (`provider`/`model`: `required` or `invalid`; `enabled`: `credential_required` or `credential_unreadable`)",
+            "description": "`validation_failed` (`provider`: `required`; `model`: `required`, `unsupported`, or `image_input_required`; `enabled`: `credential_required` or `credential_unreadable`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3052,18 +3052,8 @@
               }
             }
           },
-          "501": {
-            "description": "`ai_test_unavailable`",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "502": {
-            "description": "`ai_provider_auth_failed`, `ai_provider_unreachable`, or `ai_provider_failed`",
+            "description": "`ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed`",
             "content": {
               "application/json": {
                 "schema": {
@@ -5072,6 +5062,23 @@
         },
         "additionalProperties": false
       },
+      "AiModelInfo": {
+        "type": "object",
+        "description": "A model the adapters are known to work with.",
+        "required": [
+          "id",
+          "image_input"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "image_input": {
+            "type": "boolean",
+            "description": "Whether screenshots can be sent to this model as image inputs."
+          }
+        }
+      },
       "AiPolicy": {
         "type": "object",
         "description": "What any signed-in account may know: the effective AI policy for new tickets.",
@@ -5103,6 +5110,7 @@
         "type": "object",
         "required": [
           "provider",
+          "models",
           "credential"
         ],
         "properties": {
@@ -5115,6 +5123,13 @@
                 "$ref": "#/components/schemas/AiCredentialInfo"
               }
             ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiModelInfo"
+            },
+            "description": "The models that can be selected for this provider. Nothing else is accepted."
           },
           "provider": {
             "$ref": "#/components/schemas/AiProvider"
@@ -5198,7 +5213,7 @@
               "string",
               "null"
             ],
-            "description": "The provider's model identifier, up to 100 characters."
+            "description": "One of the selected provider's `models` that accepts image input."
           },
           "provider": {
             "oneOf": [
@@ -6179,9 +6194,9 @@
           "smtp_credential_unreadable",
           "ai_not_configured",
           "ai_credential_unreadable",
-          "ai_test_unavailable",
           "ai_provider_auth_failed",
           "ai_provider_unreachable",
+          "ai_provider_rate_limited",
           "ai_model_unsupported",
           "ai_provider_failed",
           "internal"

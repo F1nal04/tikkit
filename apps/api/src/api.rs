@@ -73,12 +73,12 @@ pub enum ApiError {
     AiNotConfigured,
     /// The stored AI key does not decrypt with this deployment's encryption key.
     AiCredentialUnreadable,
-    /// The connection test cannot reach provider adapters in this build.
-    AiTestUnavailable,
     /// The AI provider rejected the key.
     AiProviderAuthFailed,
-    /// DNS, connect, TLS, or timeout talking to the AI provider.
+    /// DNS, connect, TLS, timeout, or outage talking to the AI provider.
     AiProviderUnreachable,
+    /// The AI provider's rate limit or the account's quota is exhausted.
+    AiProviderRateLimited,
     /// The model is unknown to the provider or cannot take image input.
     AiModelUnsupported,
     /// Any other AI provider failure.
@@ -119,9 +119,9 @@ pub enum ErrorCode {
     SmtpCredentialUnreadable,
     AiNotConfigured,
     AiCredentialUnreadable,
-    AiTestUnavailable,
     AiProviderAuthFailed,
     AiProviderUnreachable,
+    AiProviderRateLimited,
     AiModelUnsupported,
     AiProviderFailed,
     Internal,
@@ -303,11 +303,6 @@ impl ApiError {
                 ErrorCode::AiCredentialUnreadable,
                 "The stored AI API key could not be read. Enter it again.",
             ),
-            AiTestUnavailable => (
-                StatusCode::NOT_IMPLEMENTED,
-                ErrorCode::AiTestUnavailable,
-                "The AI connection test is not available in this version.",
-            ),
             AiProviderAuthFailed => (
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::AiProviderAuthFailed,
@@ -318,10 +313,15 @@ impl ApiError {
                 ErrorCode::AiProviderUnreachable,
                 "The AI provider could not be reached.",
             ),
+            AiProviderRateLimited => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderRateLimited,
+                "The AI provider refused the request because of a rate limit or quota. Check the plan and billing of the provider account.",
+            ),
             AiModelUnsupported => (
                 StatusCode::CONFLICT,
                 ErrorCode::AiModelUnsupported,
-                "The model is not supported or cannot analyze screenshots. Choose an image-capable model.",
+                "The model is not supported, cannot analyze screenshots, or is not available to this API key. Choose another model.",
             ),
             AiProviderFailed => (
                 StatusCode::BAD_GATEWAY,

@@ -47,6 +47,23 @@ pub struct AppState {
     pub pool: PgPool,
     /// Private screenshot volume (`SCREENSHOT_DIR`); never served directly.
     pub screenshot_dir: Arc<Path>,
+    /// Outbound client for AI provider calls (one per process).
+    pub ai_client: ai::AiClient,
+    /// Where AI provider calls go. [`ai::Endpoint::Official`] in production;
+    /// there is no setting for it. Tests point it at a local mock.
+    pub ai_endpoint: ai::Endpoint,
+}
+
+impl AppState {
+    /// Production state: AI provider calls go to the providers' official hosts.
+    pub fn new(pool: PgPool, screenshot_dir: Arc<Path>) -> Self {
+        Self {
+            pool,
+            screenshot_dir,
+            ai_client: ai::AiClient::new(),
+            ai_endpoint: ai::Endpoint::Official,
+        }
+    }
 }
 
 #[derive(OpenApi)]
@@ -482,10 +499,7 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(200))
             .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
             .unwrap();
-        super::AppState {
-            pool,
-            screenshot_dir: std::env::temp_dir().into(),
-        }
+        super::AppState::new(pool, std::env::temp_dir().into())
     }
 
     #[derive(Deserialize)]

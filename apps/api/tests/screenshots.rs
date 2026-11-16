@@ -906,8 +906,8 @@ async fn storage_failures_leave_no_misleading_records() {
     let blocked = screenshot_dir(&w.db.pool).with_extension("file");
     std::fs::write(&blocked, b"not a directory").unwrap();
     let broken = tikkit_api::app(AppState {
-        pool: w.db.pool.clone(),
         screenshot_dir: blocked.join("screenshots").into(),
+        ..support::test_state(&w.db.pool)
     });
     let r = upload(&broken, &w.requester, "x.png", "image/png", png()).await;
     assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);

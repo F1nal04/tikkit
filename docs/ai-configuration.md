@@ -11,15 +11,17 @@ provider keys. Code: `apps/api/src/ai_config.rs`. Tables: [schema.md](schema.md#
 ## What is stored
 
 - **Enablement**, the **selected provider** (`openai`, `gemini`, or `anthropic`;
-  nothing else can be selected or stored) and its **model** identifier.
+  nothing else can be selected or stored) and its **model**, one of the models
+  the provider adapters support ([ai-providers.md](ai-providers.md#adapters)).
 - **One API key per provider**, entered by an Admin. Changing the selected
   provider never moves a key: each provider only ever uses the key stored for
   it, and a provider without its own key cannot be enabled.
 - The **result of the last connection test** as a stable code.
 
-There is no custom endpoint or base URL setting. Requests go only to the
-supported providers' fixed hosts, through the outbound client of the provider
-adapters (#34), which owns SSRF and redirect protection.
+There is no custom endpoint or base URL setting, for Admins or in the
+environment. Requests go only to the supported providers' fixed hosts
+(`ai::Endpoint::Official`), through the outbound client of the provider adapters
+([ai-providers.md](ai-providers.md)), which owns SSRF and redirect protection.
 
 ## Secrets
 
@@ -31,7 +33,8 @@ adapters (#34), which owns SSRF and redirect protection.
   Admins see the last four characters (only for keys of 20+ characters), when it
   was set, and by which account.
 - Keys never appear in logs, error responses, or audit metadata. In memory a key
-  lives in `ai_config::ApiKey`, whose `Debug` output is `<redacted>`.
+  lives in `ai::ApiKey`: its `Debug` output is redacted and only the provider
+  adapters can read the value.
 - `ENCRYPTION_KEY` lives outside the database (see
   [configuration.md](configuration.md)). A database dump alone does not reveal
   provider keys. Keep the encryption key's backup separate from database backups.
@@ -43,7 +46,7 @@ All of these require the Admin role (`ManageSettings`); every other role gets
 
 | Request | Effect | Audit event |
 |---|---|---|
-| `GET /api/settings/ai` | Masked configuration, per-provider key metadata, effective `status`, last connection test | |
+| `GET /api/settings/ai` | Masked configuration, per provider the selectable `models` (`id`, `image_input`) and key metadata, effective `status`, last connection test | |
 | `PUT /api/settings/ai` `{enabled, provider, model}` | Select provider/model, enable or disable | `ai_settings_updated` (`from`/`to`) |
 | `PUT /api/settings/ai/credentials/{provider}` `{api_key}` | Store or replace that provider's key | `ai_credential_set` (`provider`, `replaced`) |
 | `DELETE /api/settings/ai/credentials/{provider}` | Delete that provider's key | `ai_credential_removed` (`provider`, `disabled_ai`) |
@@ -51,6 +54,12 @@ All of these require the Admin role (`ManageSettings`); every other role gets
 
 Rules:
 
+- A model is accepted only if it is in the selected provider's supported table
+  and accepts image input, whether or not AI is being enabled: `422
+  validation_failed` with `model`: `unsupported` or `image_input_required`
+  (and `provider`: `required` for a model without a provider). The Admin page
+  offers exactly the image-capable entries of `providers[].models` in a
+  selector; there is no free-text model field.
 - Enabling needs a provider, a model, and a readable stored key for that
   provider (`422` with `provider`/`model`: `required`, or `enabled`:
   `credential_required` / `credential_unreadable`).
@@ -80,15 +89,37 @@ whether new tickets are really routed through AI right now.
 ## Connection test and image capability
 
 Screenshots are sent to the provider as image inputs, so the model must accept
-images. The connection test succeeds only if the key authenticates and the model
-is a supported, image-capable one. Failures are stored and returned as stable
-codes, never as provider text: `ai_provider_auth_failed`,
-`ai_provider_unreachable`, `ai_model_unsupported`, `ai_provider_failed`, plus
-`ai_not_configured` and `ai_credential_unreadable` before any call is made.
+images. `POST /api/settings/ai/test` checks the stored selection in two steps:
 
-The test goes through one function, `ai_config::check_provider`. Until it is
-connected to the provider adapters (#34) it reports `ai_test_unavailable`
-(`501`), which is stored like any other failure.
+1. The model must be in the supported table and image-capable
+   (`ai::model_info`). If not, no provider is contacted.
+2. `ai::AiClient::probe` reads that model's metadata at the provider with the
+   stored key: one GET, a short timeout, no retries, no prompt, no tokens.
+
+AI does not have to be enabled to run the test. The outcome is stored
+(`connection.status`, `connection.error`, `connection.tested_at`), audited, and
+returned as one of these stable codes:
+
+| Outcome | HTTP | Code | What the Admin should do |
+|---|---|---|---|
+| Key accepted, model available | 200 | (`status: ok`) | |
+| No provider, model, or key stored | 409 | `ai_not_configured` (not stored) | Select and store them |
+| Key does not decrypt | 409 | `ai_credential_unreadable` (not stored) | Enter the key again |
+| Model not supported, not image-capable, or not offered to this key (provider 404/400) | 409 | `ai_model_unsupported` | Choose another model |
+| Provider rejected the key (401/403) | 502 | `ai_provider_auth_failed` | Check or replace the key |
+| Rate limit or quota (429/402) | 502 | `ai_provider_rate_limited` | Check plan and billing at the provider |
+| DNS, connect, TLS, timeout, provider 5xx, or a redirect | 502 | `ai_provider_unreachable` | Try again later; check outbound network access |
+| Anything else | 502 | `ai_provider_failed` | Try again later |
+
+Only the adapter's error kind (`ai::AiErrorKind`) is mapped. The provider's
+response text, its error code, and its HTTP status are never stored, returned,
+or written to the audit log, and neither is the key.
+
+The test goes through one function, `ai_config::check_provider`, with the
+process-wide client and endpoint from `AppState` (`ai_client`, `ai_endpoint`).
+`AppState::new` always uses `Endpoint::Official`. Only integration tests build a
+state with `Endpoint::Override` to reach a local mock provider
+([testing.md](testing.md#ai-provider-tests)).
 
 ## Effective policy for requesters
 
@@ -113,7 +144,9 @@ submission is queued for operators even when `status` is `ready`.
 
 Code that needs the provider, model, and decrypted key calls
 `ai_config::load_active(conn, &encryption_key)`. It returns the reason instead
-when AI cannot run, and only ever decrypts the selected provider's key.
+when AI cannot run, and only ever decrypts the selected provider's key. The
+result becomes an adapter call with
+`active.provider_config(&state.ai_endpoint)` and `state.ai_client`.
 
 ## Encryption key rotation and recovery
 

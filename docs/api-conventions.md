@@ -65,10 +65,10 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Stored mail password cannot be decrypted | 502 | `smtp_credential_unreadable` |
 | AI provider, model, or its key is not stored | 409 | `ai_not_configured` |
 | Stored AI key cannot be decrypted | 409 | `ai_credential_unreadable` |
-| Model unknown to the provider or not image-capable | 409 | `ai_model_unsupported` |
-| AI connection test not available in this build | 501 | `ai_test_unavailable` |
+| Model not supported, not image-capable, or not offered to the key | 409 | `ai_model_unsupported` |
 | AI provider rejected the key | 502 | `ai_provider_auth_failed` |
-| AI provider DNS, connect, TLS, or timeout | 502 | `ai_provider_unreachable` |
+| AI provider DNS, connect, TLS, timeout, or outage | 502 | `ai_provider_unreachable` |
+| AI provider rate limit or quota | 502 | `ai_provider_rate_limited` |
 | Any other AI provider failure | 502 | `ai_provider_failed` |
 | Anything unexpected (logged with the request ID) | 500 | `internal` |
 

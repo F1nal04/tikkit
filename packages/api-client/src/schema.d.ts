@@ -1368,6 +1368,12 @@ export interface components {
             /** @description 8 to 512 printable ASCII characters without spaces. Write-only. */
             api_key: string;
         };
+        /** @description A model the adapters are known to work with. */
+        AiModelInfo: {
+            id: string;
+            /** @description Whether screenshots can be sent to this model as image inputs. */
+            image_input: boolean;
+        };
         /** @description What any signed-in account may know: the effective AI policy for new tickets. */
         AiPolicy: {
             /** @description New tickets in non-exempt categories get an AI suggestion before human support. */
@@ -1385,6 +1391,8 @@ export interface components {
         AiProvider: "openai" | "gemini" | "anthropic";
         AiProviderState: {
             credential: null | components["schemas"]["AiCredentialInfo"];
+            /** @description The models that can be selected for this provider. Nothing else is accepted. */
+            models: components["schemas"]["AiModelInfo"][];
             provider: components["schemas"]["AiProvider"];
         };
         /** @description Masked configuration. No key, ciphertext, or key length is ever included. */
@@ -1410,7 +1418,7 @@ export interface components {
         AiSettingsWrite: {
             /** @description Enabling needs a provider, a model, and a readable stored key for that provider. */
             enabled: boolean;
-            /** @description The provider's model identifier, up to 100 characters. */
+            /** @description One of the selected provider's `models` that accepts image input. */
             model?: string | null;
             provider?: null | components["schemas"]["AiProvider"];
         };
@@ -1711,7 +1719,7 @@ export interface components {
          * @description Stable machine-readable error codes. Never translated; clients map them to text.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_test_unavailable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
+        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
         ErrorDetails: {
             /** @description Invalid input fields (dotted paths) and their stable error codes. */
             fields: {
@@ -4958,7 +4966,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `validation_failed` (`provider`/`model`: `required` or `invalid`; `enabled`: `credential_required` or `credential_unreadable`) */
+            /** @description `validation_failed` (`provider`: `required`; `model`: `required`, `unsupported`, or `image_input_required`; `enabled`: `credential_required` or `credential_unreadable`) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5113,16 +5121,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `ai_test_unavailable` */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description `ai_provider_auth_failed`, `ai_provider_unreachable`, or `ai_provider_failed` */
+            /** @description `ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed` */
             502: {
                 headers: {
                     [name: string]: unknown;

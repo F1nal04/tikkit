@@ -44,10 +44,7 @@ async fn main() -> anyhow::Result<()> {
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
     let app = app_with(
-        AppState {
-            pool: pool.clone(),
-            screenshot_dir: config.screenshot_dir.as_path().into(),
-        },
+        AppState::new(pool.clone(), config.screenshot_dir.as_path().into()),
         auth::Settings::from(&config),
     );
     let server = axum::serve(

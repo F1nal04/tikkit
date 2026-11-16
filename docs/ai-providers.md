@@ -190,8 +190,9 @@ Provider calls use their own HTTP client (`ai/http.rs`):
   request is refused, and the connection only goes to addresses that passed.
 - `Endpoint::Override { base_url, allow_private_network: true }` also allows
   plain HTTP and private addresses. This is the explicit policy for tests (the
-  mock server on loopback) and for a deployment that routes provider traffic
-  through its own gateway. Nothing sets it by default.
+  mock server on loopback). The application never sets it: `AppState::new` uses
+  `Endpoint::Official` and there is no setting or environment variable for the
+  endpoint ([ai-configuration.md](ai-configuration.md)).
 - Redirects are never followed. Any 3xx is `destination_blocked`.
 - Override URLs with credentials, a query, or a fragment are refused.
 - Environment proxy settings are ignored.

@@ -63,6 +63,12 @@ mock HTTP server on loopback (`Endpoint::Override` with
 `allow_private_network: true`). It needs no database, credential, or network
 access. See [ai-providers.md](ai-providers.md).
 
+The mock lives in `tests/support/provider_mock.rs` (`serve(replies) -> Mock`,
+scripted `Reply`s, recorded requests). `test_app` never reaches a real provider:
+its AI endpoint is a closed loopback port. To exercise a route that calls a
+provider (the Admin connection test in `tests/ai_config.rs`), start a mock and
+build the app with `test_app_with_provider(&pool, &mock.url)`.
+
 ## Browser tests
 
 ```sh
