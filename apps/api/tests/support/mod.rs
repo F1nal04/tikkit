@@ -17,9 +17,17 @@ use sqlx::{
     Connection, Executor, PgConnection, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use tikkit_api::{AppState, auth::Settings, config::Config, db};
+use tikkit_api::{
+    AppState,
+    ai::{AiClient, Endpoint},
+    auth::Settings,
+    config::Config,
+    db,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
+
+pub mod provider_mock;
 
 /// A freshly created and migrated database, dropped when this value is dropped
 /// (also on panic). Set TEST_DATABASE_URL (or DATABASE_URL) to a role that may
@@ -108,11 +116,34 @@ pub fn test_app(pool: &PgPool) -> Router {
 }
 
 pub fn test_app_with(pool: &PgPool, settings: Settings) -> Router {
+    tikkit_api::app_with(test_state(pool), settings)
+}
+
+/// [`test_app`] whose AI provider calls go to `provider`, a local mock
+/// ([`provider_mock::serve`]).
+pub fn test_app_with_provider(pool: &PgPool, provider: &url::Url) -> Router {
     let state = AppState {
+        ai_endpoint: Endpoint::Override {
+            base_url: provider.clone(),
+            allow_private_network: true,
+        },
+        ..test_state(pool)
+    };
+    tikkit_api::app_with(state, Settings::default())
+}
+
+/// Application state on `pool`. Tests never reach a real AI provider: provider
+/// calls go to a closed loopback port unless a mock is set.
+pub fn test_state(pool: &PgPool) -> AppState {
+    AppState {
         pool: pool.clone(),
         screenshot_dir: screenshot_dir(pool).into(),
-    };
-    tikkit_api::app_with(state, settings)
+        ai_client: AiClient::new(),
+        ai_endpoint: Endpoint::Override {
+            base_url: "http://127.0.0.1:1".parse().unwrap(),
+            allow_private_network: true,
+        },
+    }
 }
 
 /// This test database's private screenshot directory, removed with the [`TestDb`].

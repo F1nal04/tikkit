@@ -58,8 +58,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 // --- Providers and models ----------------------------------------------------
 
+/// The first-release providers. Nothing else is selectable or storable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
+#[schema(as = AiProvider)]
 pub enum Provider {
     #[serde(rename = "openai")]
     OpenAi,
@@ -94,6 +96,7 @@ impl Provider {
 
 /// A model the adapters are known to work with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[schema(as = AiModelInfo)]
 pub struct ModelInfo {
     pub id: &'static str,
     /// Whether screenshots can be sent to this model as image inputs.
@@ -157,6 +160,11 @@ pub struct ApiKey(String);
 impl ApiKey {
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expose(&self) -> &str {
+        &self.0
     }
 }
 

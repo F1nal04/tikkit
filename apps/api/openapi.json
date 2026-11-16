@@ -455,6 +455,37 @@
         }
       }
     },
+    "/api/ai/policy": {
+      "get": {
+        "tags": [
+          "tickets"
+        ],
+        "summary": "The effective AI policy for new tickets, for any signed-in account. Read-only:\nit reveals whether AI applies and whether skipping is allowed, and nothing\nabout the provider. Category exemptions (\"Skip AI automatically\") apply on\ntop of this and are decided by Rust at submission.",
+        "operationId": "policy",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiPolicy"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/login": {
       "post": {
         "tags": [
@@ -2743,6 +2774,297 @@
         }
       }
     },
+    "/api/settings/ai": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Masked AI configuration (Admin only).",
+        "operationId": "get_ai",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Selects the provider and model and enables or disables AI (Admin only).\nKeys are stored separately per provider; changing the selection never moves\na key to another provider. Disabling takes effect for the next submission.",
+        "operationId": "put_ai",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSettingsWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`provider`: `required`; `model`: `required`, `unsupported`, or `image_input_required`; `enabled`: `credential_required` or `credential_unreadable`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/ai/credentials/{provider}": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Stores or replaces one provider's API key (Admin only). The key is\nencrypted, bound to this provider, and never returned.",
+        "operationId": "put_credential",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AiProvider"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiCredentialWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`api_key`: `required`, `invalid`, or `too_long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Deletes one provider's API key (Admin only). Removing the selected\nprovider's key also disables AI, so the next submission goes to operators.",
+        "operationId": "delete_credential",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AiProvider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (no key stored for this provider)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/ai/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Tests the selected provider and model with the stored key (Admin only):\nthe key must authenticate and the model must accept image input. The\noutcome is stored as a stable code; provider responses are never echoed.",
+        "operationId": "test_ai",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiTestResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings/smtp": {
       "get": {
         "tags": [
@@ -4653,6 +4975,282 @@
           }
         }
       },
+      "AiConnection": {
+        "type": "object",
+        "description": "The last connection test of the selected provider and model.",
+        "required": [
+          "status",
+          "error",
+          "tested_at"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code of the failure (`ai_provider_auth_failed`, ...), if it failed."
+          },
+          "status": {
+            "$ref": "#/components/schemas/AiConnectionStatus"
+          },
+          "tested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "AiConnectionStatus": {
+        "type": "string",
+        "enum": [
+          "untested",
+          "ok",
+          "failed"
+        ]
+      },
+      "AiCredentialInfo": {
+        "type": "object",
+        "description": "What an Admin may know about a stored key.",
+        "required": [
+          "hint",
+          "set_at",
+          "set_by",
+          "set_by_username",
+          "readable"
+        ],
+        "properties": {
+          "hint": {
+            "type": "string",
+            "description": "Last four characters of the key, or empty for a short key."
+          },
+          "readable": {
+            "type": "boolean",
+            "description": "`false`: the key does not decrypt with the current `ENCRYPTION_KEY`. Enter it again."
+          },
+          "set_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "set_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "set_by_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AiCredentialWrite": {
+        "type": "object",
+        "required": [
+          "api_key"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "description": "8 to 512 printable ASCII characters without spaces. Write-only."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AiModelInfo": {
+        "type": "object",
+        "description": "A model the adapters are known to work with.",
+        "required": [
+          "id",
+          "image_input"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "image_input": {
+            "type": "boolean",
+            "description": "Whether screenshots can be sent to this model as image inputs."
+          }
+        }
+      },
+      "AiPolicy": {
+        "type": "object",
+        "description": "What any signed-in account may know: the effective AI policy for new tickets.",
+        "required": [
+          "ai_assistance",
+          "requester_skip_allowed"
+        ],
+        "properties": {
+          "ai_assistance": {
+            "type": "boolean",
+            "description": "New tickets in non-exempt categories get an AI suggestion before human support."
+          },
+          "requester_skip_allowed": {
+            "type": "boolean",
+            "description": "The requester may skip AI. Always `false` while `ai_assistance` is `false`.\nOnly an Admin can change the underlying toggle."
+          }
+        }
+      },
+      "AiProvider": {
+        "type": "string",
+        "description": "The first-release providers. Nothing else is selectable or storable.",
+        "enum": [
+          "openai",
+          "gemini",
+          "anthropic"
+        ]
+      },
+      "AiProviderState": {
+        "type": "object",
+        "required": [
+          "provider",
+          "models",
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiCredentialInfo"
+              }
+            ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiModelInfo"
+            },
+            "description": "The models that can be selected for this provider. Nothing else is accepted."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AiProvider"
+          }
+        }
+      },
+      "AiSettings": {
+        "type": "object",
+        "description": "Masked configuration. No key, ciphertext, or key length is ever included.",
+        "required": [
+          "enabled",
+          "provider",
+          "model",
+          "status",
+          "active",
+          "allow_requester_skip",
+          "providers",
+          "connection",
+          "updated_at"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Whether new tickets are routed through AI right now. `false` with\n`status: ready` means this build does not process AI suggestions yet."
+          },
+          "allow_requester_skip": {
+            "type": "boolean",
+            "description": "The organization toggle \"Allow requester to skip AI\" (`PUT /api/admin/settings`)."
+          },
+          "connection": {
+            "$ref": "#/components/schemas/AiConnection"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiProvider"
+              }
+            ]
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiProviderState"
+            },
+            "description": "Every supported provider, in a fixed order."
+          },
+          "status": {
+            "$ref": "#/components/schemas/AiStatus",
+            "description": "Whether the stored configuration is usable."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AiSettingsWrite": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enabling needs a provider, a model, and a readable stored key for that provider."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One of the selected provider's `models` that accepts image input."
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiProvider"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AiStatus": {
+        "type": "string",
+        "description": "Why AI can or cannot run with the stored configuration.",
+        "enum": [
+          "disabled",
+          "credential_missing",
+          "credential_unreadable",
+          "model_unsupported",
+          "ready"
+        ]
+      },
+      "AiTestResult": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "The key authenticated and the model accepts image input."
+          }
+        }
+      },
       "AnswerSnapshot": {
         "type": "object",
         "required": [
@@ -5595,6 +6193,13 @@
           "smtp_network_failed",
           "smtp_delivery_failed",
           "smtp_credential_unreadable",
+          "ai_not_configured",
+          "ai_credential_unreadable",
+          "ai_provider_auth_failed",
+          "ai_provider_unreachable",
+          "ai_provider_rate_limited",
+          "ai_model_unsupported",
+          "ai_provider_failed",
           "internal"
         ]
       },

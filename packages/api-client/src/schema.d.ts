@@ -127,6 +127,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The effective AI policy for new tickets, for any signed-in account. Read-only:
+         *     it reveals whether AI applies and whether skipping is allowed, and nothing
+         *     about the provider. Category exemptions ("Skip AI automatically") apply on
+         *     top of this and are decided by Rust at submission.
+         */
+        get: operations["policy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/login": {
         parameters: {
             query?: never;
@@ -847,6 +869,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Masked AI configuration (Admin only). */
+        get: operations["get_ai"];
+        /**
+         * Selects the provider and model and enables or disables AI (Admin only).
+         *     Keys are stored separately per provider; changing the selection never moves
+         *     a key to another provider. Disabling takes effect for the next submission.
+         */
+        put: operations["put_ai"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/credentials/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Stores or replaces one provider's API key (Admin only). The key is
+         *     encrypted, bound to this provider, and never returned.
+         */
+        put: operations["put_credential"];
+        post?: never;
+        /**
+         * Deletes one provider's API key (Admin only). Removing the selected
+         *     provider's key also disables AI, so the next submission goes to operators.
+         */
+        delete: operations["delete_credential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tests the selected provider and model with the stored key (Admin only):
+         *     the key must authenticate and the model must accept image input. The
+         *     outcome is stored as a stable code; provider responses are never echoed.
+         */
+        post: operations["test_ai"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/smtp": {
         parameters: {
             query?: never;
@@ -1253,6 +1342,95 @@ export interface components {
         ActionResult: {
             status: components["schemas"]["TicketStatus"];
         };
+        /** @description The last connection test of the selected provider and model. */
+        AiConnection: {
+            /** @description Stable code of the failure (`ai_provider_auth_failed`, ...), if it failed. */
+            error: string | null;
+            status: components["schemas"]["AiConnectionStatus"];
+            /** Format: date-time */
+            tested_at: string | null;
+        };
+        /** @enum {string} */
+        AiConnectionStatus: "untested" | "ok" | "failed";
+        /** @description What an Admin may know about a stored key. */
+        AiCredentialInfo: {
+            /** @description Last four characters of the key, or empty for a short key. */
+            hint: string;
+            /** @description `false`: the key does not decrypt with the current `ENCRYPTION_KEY`. Enter it again. */
+            readable: boolean;
+            /** Format: date-time */
+            set_at: string;
+            /** Format: uuid */
+            set_by: string | null;
+            set_by_username: string | null;
+        };
+        AiCredentialWrite: {
+            /** @description 8 to 512 printable ASCII characters without spaces. Write-only. */
+            api_key: string;
+        };
+        /** @description A model the adapters are known to work with. */
+        AiModelInfo: {
+            id: string;
+            /** @description Whether screenshots can be sent to this model as image inputs. */
+            image_input: boolean;
+        };
+        /** @description What any signed-in account may know: the effective AI policy for new tickets. */
+        AiPolicy: {
+            /** @description New tickets in non-exempt categories get an AI suggestion before human support. */
+            ai_assistance: boolean;
+            /**
+             * @description The requester may skip AI. Always `false` while `ai_assistance` is `false`.
+             *     Only an Admin can change the underlying toggle.
+             */
+            requester_skip_allowed: boolean;
+        };
+        /**
+         * @description The first-release providers. Nothing else is selectable or storable.
+         * @enum {string}
+         */
+        AiProvider: "openai" | "gemini" | "anthropic";
+        AiProviderState: {
+            credential: null | components["schemas"]["AiCredentialInfo"];
+            /** @description The models that can be selected for this provider. Nothing else is accepted. */
+            models: components["schemas"]["AiModelInfo"][];
+            provider: components["schemas"]["AiProvider"];
+        };
+        /** @description Masked configuration. No key, ciphertext, or key length is ever included. */
+        AiSettings: {
+            /**
+             * @description Whether new tickets are routed through AI right now. `false` with
+             *     `status: ready` means this build does not process AI suggestions yet.
+             */
+            active: boolean;
+            /** @description The organization toggle "Allow requester to skip AI" (`PUT /api/admin/settings`). */
+            allow_requester_skip: boolean;
+            connection: components["schemas"]["AiConnection"];
+            enabled: boolean;
+            model: string | null;
+            provider: null | components["schemas"]["AiProvider"];
+            /** @description Every supported provider, in a fixed order. */
+            providers: components["schemas"]["AiProviderState"][];
+            /** @description Whether the stored configuration is usable. */
+            status: components["schemas"]["AiStatus"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AiSettingsWrite: {
+            /** @description Enabling needs a provider, a model, and a readable stored key for that provider. */
+            enabled: boolean;
+            /** @description One of the selected provider's `models` that accepts image input. */
+            model?: string | null;
+            provider?: null | components["schemas"]["AiProvider"];
+        };
+        /**
+         * @description Why AI can or cannot run with the stored configuration.
+         * @enum {string}
+         */
+        AiStatus: "disabled" | "credential_missing" | "credential_unreadable" | "model_unsupported" | "ready";
+        AiTestResult: {
+            /** @description The key authenticated and the model accepts image input. */
+            ok: boolean;
+        };
         AnswerSnapshot: {
             /**
              * Format: uuid
@@ -1541,7 +1719,7 @@ export interface components {
          * @description Stable machine-readable error codes. Never translated; clients map them to text.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "internal";
+        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
         ErrorDetails: {
             /** @description Invalid input fields (dotted paths) and their stable error codes. */
             fields: {
@@ -2816,6 +2994,34 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiPolicy"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4675,6 +4881,248 @@ export interface operations {
             };
             /** @description `not_found` (missing or not visible) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_ai: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_ai: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiSettingsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`provider`: `required`; `model`: `required`, `unsupported`, or `image_input_required`; `enabled`: `credential_required` or `credential_unreadable`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_credential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: components["schemas"]["AiProvider"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiCredentialWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`api_key`: `required`, `invalid`, or `too_long`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_credential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: components["schemas"]["AiProvider"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (no key stored for this provider) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    test_ai: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTestResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed` */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

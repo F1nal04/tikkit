@@ -18,6 +18,7 @@ use utoipa::{OpenApi, ToSchema};
 
 pub mod accounts;
 pub mod ai;
+pub mod ai_config;
 pub mod api;
 pub mod assignment;
 pub mod auth;
@@ -46,6 +47,23 @@ pub struct AppState {
     pub pool: PgPool,
     /// Private screenshot volume (`SCREENSHOT_DIR`); never served directly.
     pub screenshot_dir: Arc<Path>,
+    /// Outbound client for AI provider calls (one per process).
+    pub ai_client: ai::AiClient,
+    /// Where AI provider calls go. [`ai::Endpoint::Official`] in production;
+    /// there is no setting for it. Tests point it at a local mock.
+    pub ai_endpoint: ai::Endpoint,
+}
+
+impl AppState {
+    /// Production state: AI provider calls go to the providers' official hosts.
+    pub fn new(pool: PgPool, screenshot_dir: Arc<Path>) -> Self {
+        Self {
+            pool,
+            screenshot_dir,
+            ai_client: ai::AiClient::new(),
+            ai_endpoint: ai::Endpoint::Official,
+        }
+    }
 }
 
 #[derive(OpenApi)]
@@ -91,6 +109,12 @@ pub struct AppState {
         smtp::put_smtp,
         smtp::delete_smtp,
         smtp::test_smtp,
+        ai_config::get_ai,
+        ai_config::put_ai,
+        ai_config::put_credential,
+        ai_config::delete_credential,
+        ai_config::test_ai,
+        ai_config::policy,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -295,6 +319,16 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
                 .delete(smtp::delete_smtp),
         )
         .route("/api/settings/smtp/test", post(smtp::test_smtp))
+        .route(
+            "/api/settings/ai",
+            get(ai_config::get_ai).put(ai_config::put_ai),
+        )
+        .route(
+            "/api/settings/ai/credentials/{provider}",
+            put(ai_config::put_credential).delete(ai_config::delete_credential),
+        )
+        .route("/api/settings/ai/test", post(ai_config::test_ai))
+        .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))
         .route("/api/categories", post(catalog::create_category))
@@ -465,10 +499,7 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(200))
             .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
             .unwrap();
-        super::AppState {
-            pool,
-            screenshot_dir: std::env::temp_dir().into(),
-        }
+        super::AppState::new(pool, std::env::temp_dir().into())
     }
 
     #[derive(Deserialize)]

@@ -21,6 +21,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
+    ai_config,
     api::{ApiError, FieldErrors, TicketStatus},
     auth::{ident, ident_str},
     authz::{self, Actor, Permission, TeamScope, TicketScope, TicketView},
@@ -60,18 +61,28 @@ impl Default for Policy {
 
 /// The current organization settings, read `FOR SHARE` so a concurrent
 /// settings change waits for the transition that relied on them.
-pub async fn policy(db: &mut PgConnection) -> Result<Policy, ApiError> {
+///
+/// AI availability needs the deployment's encryption key (the stored provider
+/// key must decrypt). Without one the policy says AI is unavailable, which only
+/// ever sends a submission to operators; [`submit`] is the caller that has it.
+pub async fn policy(
+    db: &mut PgConnection,
+    encryption_key: Option<&[u8; 32]>,
+) -> Result<Policy, ApiError> {
     let (allow_requester_skip, allow_reopen, cancellation, hours): (bool, bool, String, i32) =
         sqlx::query_as(
             "SELECT allow_requester_ai_skip, allow_reopening, requester_cancellation_policy,
                     resolution_confirmation_hours
              FROM organization WHERE id FOR SHARE",
         )
-        .fetch_one(db)
+        .fetch_one(&mut *db)
         .await?;
+    let ai_available = match encryption_key {
+        Some(key) => ai_config::ai_available(db, key).await?,
+        None => false,
+    };
     Ok(Policy {
-        // ponytail: AI stays unavailable until AI configuration (#33) is persisted.
-        ai_available: false,
+        ai_available,
         allow_requester_skip,
         allow_reopen,
         cancellation: ident(cancellation)?,
@@ -427,7 +438,30 @@ pub async fn transition(
     by: By,
     t: &Transition,
 ) -> Result<TicketStatus, ApiError> {
-    transition_with(tx, ticket_id, by, t, None).await
+    run(tx, ticket_id, by, t, None, None).await
+}
+
+/// Submits the requester's draft ticket: [`Transition::Submit`] with the real AI
+/// availability. Submission is the only transition that routes on it, and
+/// checking it needs `encryption_key`; a `Submit` through plain [`transition`]
+/// treats AI as unavailable and always queues for operators.
+pub async fn submit(
+    tx: &mut Transaction<'_, Postgres>,
+    ticket_id: Uuid,
+    requester: Uuid,
+    requester_skip: bool,
+    encryption_key: &[u8; 32],
+) -> Result<TicketStatus, ApiError> {
+    let t = Transition::Submit { requester_skip };
+    run(
+        tx,
+        ticket_id,
+        By::Account(requester),
+        &t,
+        None,
+        Some(encryption_key),
+    )
+    .await
 }
 
 /// [`transition`] with a fixed policy instead of the current one, for tests of
@@ -439,6 +473,17 @@ pub async fn transition_with(
     by: By,
     t: &Transition,
     fixed_policy: Option<Policy>,
+) -> Result<TicketStatus, ApiError> {
+    run(tx, ticket_id, by, t, fixed_policy, None).await
+}
+
+async fn run(
+    tx: &mut Transaction<'_, Postgres>,
+    ticket_id: Uuid,
+    by: By,
+    t: &Transition,
+    fixed_policy: Option<Policy>,
+    encryption_key: Option<&[u8; 32]>,
 ) -> Result<TicketStatus, ApiError> {
     let conn = &mut **tx;
     let actor = match by {
@@ -458,7 +503,7 @@ pub async fn transition_with(
     let row = row.ok_or(ApiError::NotFound)?;
     let policy = match fixed_policy {
         Some(p) => p,
-        None => policy(conn).await?,
+        None => policy(conn, encryption_key).await?,
     };
     // A fresh statement sees events committed by a previous ticket lock holder;
     // the clock is read after locking, not at the start of a possibly old transaction.

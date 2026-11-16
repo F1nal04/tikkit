@@ -45,7 +45,8 @@ language; translations map them to display text.
   `invitation_created`, `invitation_revoked`, `invitation_accepted`,
   `recovery_requested`, `recovery_completed`, `profile_updated`,
   `account_deactivated`, `account_reactivated`, `smtp_configured`,
-  `smtp_updated`, `smtp_removed`, `smtp_tested`, `notifications_retried`, `catalog_item_created`,
+  `smtp_updated`, `smtp_removed`, `smtp_tested`, `ai_settings_updated`,
+  `ai_credential_set`, `ai_credential_removed`, `ai_connection_tested`, `notifications_retried`, `catalog_item_created`,
   `catalog_item_updated`, `catalog_reordered` (metadata `kind`: `category`,
   `priority`, `intake_field`)
 - `intake_fields.kind`: `text`, `select`
@@ -269,3 +270,20 @@ inbox, one row per delivered in-app job, with `read_at`). An `AFTER INSERT`
 trigger on `ticket_events` fills the outbox in the event writer's transaction.
 Behavior, recipients, and retries: [notifications.md](notifications.md). No new
 configuration variables.
+
+## AI configuration
+
+Migration `0019_ai_configuration.sql`. Behavior: [ai-configuration.md](ai-configuration.md).
+
+- `ai_settings` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`,
+  inserted by the migration): `enabled` (default false), `provider` (`openai`,
+  `gemini`, `anthropic`, or NULL), `model` (up to 100 characters; the API only
+  stores models from the adapters' supported table), and the last connection test: `connection_status` (`untested`,
+  `ok`, `failed`), `connection_error` (a stable code, set exactly when `failed`),
+  `connection_tested_at`. `enabled` requires a provider and a model.
+- `ai_credentials` has at most one row per provider (`provider` is the primary
+  key). `key_ciphertext` is AES-256-GCM (12-byte nonce, then ciphertext and tag)
+  under `ENCRYPTION_KEY` with the provider name as associated data, never the
+  plaintext key. `key_hint` is the last four characters of a long key or empty;
+  `set_at` and `set_by` record who stored it.
+- "Allow requester to skip AI" stays `organization.allow_requester_ai_skip`.

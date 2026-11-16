@@ -867,10 +867,7 @@ mod tests {
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
                 .unwrap();
-            let state = AppState {
-                pool,
-                screenshot_dir: std::env::temp_dir().into(),
-            };
+            let state = AppState::new(pool, std::env::temp_dir().into());
             let body = || Request::new(axum::body::Body::from(vec![0u8; 32]));
             let first = UploadBody::from_request(body(), &state).await.unwrap();
             let second = UploadBody::from_request(body(), &state).await.unwrap();

@@ -1,7 +1,9 @@
 //! Private requester drafts and atomic, idempotent submission. See docs/submission.md.
 use std::collections::BTreeMap;
 
-use axum::{extract::State, http::StatusCode};
+use std::sync::Arc;
+
+use axum::{Extension, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -13,10 +15,9 @@ use uuid::Uuid;
 use crate::{
     AppState,
     api::{ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketStatus},
-    auth::{CurrentUser, audit, ident, ident_str},
+    auth::{Auth, CurrentUser, audit, ident, ident_str},
     catalog::{self, IntakeAnswer, IntakeSnapshot},
-    lifecycle::{self, By, Transition},
-    screenshots,
+    lifecycle, screenshots,
 };
 
 pub const SUBJECT_MAX: usize = 200;
@@ -358,6 +359,7 @@ async fn persist_submission(
     hash: &[u8],
     intake: TicketIntake,
     requester_skip: bool,
+    encryption_key: &[u8; 32],
 ) -> Result<SubmissionReceipt, ApiError> {
     intake.validate(true)?;
     // Catalog edits span several tables. Hold one coherent catalog until the
@@ -383,13 +385,7 @@ async fn persist_submission(
         .bind(owner).bind(snapshot.catalog.category_id).bind(snapshot.catalog.priority_id)
         .bind(&snapshot.subject).bind(&snapshot.description).bind(sqlx::types::Json(&snapshot)).fetch_one(&mut **db).await?;
     screenshots::attach(db, owner, &snapshot.screenshot_ids, id).await?;
-    let status = lifecycle::transition(
-        db,
-        id,
-        By::Account(owner),
-        &Transition::Submit { requester_skip },
-    )
-    .await?;
+    let status = lifecycle::submit(db, id, owner, requester_skip, encryption_key).await?;
     sqlx::query("INSERT INTO ticket_submission_keys (requester_account_id, idempotency_key, request_hash, ticket_id, submitted_status) VALUES ($1, $2, $3, $4, $5)")
         .bind(owner).bind(key).bind(hash).bind(id).bind(ident_str(status)).execute(&mut **db).await?;
     Ok(SubmissionReceipt {
@@ -410,6 +406,7 @@ async fn persist_submission(
         (status = 422, description = "`validation_failed` (intake/catalog)", body = crate::api::ErrorEnvelope)))]
 pub async fn submit_ticket(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Json(body): Json<SubmitTicket>,
 ) -> Result<(StatusCode, Json<SubmissionReceipt>), ApiError> {
@@ -426,6 +423,7 @@ pub async fn submit_ticket(
         &hash,
         body.intake,
         body.requester_skip,
+        &auth.settings.encryption_key,
     )
     .await?;
     tx.commit().await?;
@@ -444,6 +442,7 @@ pub async fn submit_ticket(
         (status = 422, description = "`validation_failed` (intake/catalog)", body = crate::api::ErrorEnvelope)))]
 pub async fn submit_draft(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(body): Json<SubmitDraft>,
@@ -462,6 +461,7 @@ pub async fn submit_draft(
         &hash,
         intake,
         body.requester_skip,
+        &auth.settings.encryption_key,
     )
     .await?;
     sqlx::query("UPDATE ticket_drafts SET intake = NULL, submitted_ticket_id = $2, version = version + 1, updated_at = now() WHERE id = $1")

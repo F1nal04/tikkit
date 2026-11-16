@@ -77,10 +77,11 @@ Legacy tickets predating this endpoint may have a null snapshot.
 Catalog tables are share-locked until commit to keep validation, names,
 conditional applicability, and category routing coherent with concurrent Admin
 edits. A stable ticket UUID/reference is inserted in the transaction before
-`lifecycle::transition(..., Submit { requester_skip })` runs. This is the only
+`lifecycle::submit(...)` (`Transition::Submit { requester_skip }`) runs. This is the only
 status mutation. The existing lifecycle rechecks the current account and
 server policy, writes the attributable transition, and chooses the route.
-With AI unavailable in this milestone, all submissions enter `queued` with
+With AI unavailable (disabled, no key, an unreadable key, or no attempt worker
+yet; see [ai-configuration.md](ai-configuration.md)), all submissions enter `queued` with
 `payload.route = ai_disabled`, no team, no assignee, and zero provider calls.
 This global check precedes category exemption and requester-skip handling.
 When AI settings arrive, the lifecycle retains authority over mandatory AI,
