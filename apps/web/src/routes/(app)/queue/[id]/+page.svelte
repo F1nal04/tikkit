@@ -223,7 +223,7 @@
           <ol>{#each ai.suggestion.steps as step, n (n)}<li>{step}</li>{/each}</ol>
         </div>
         <p>
-          {s.ai.decisions[ai.decision ?? 'pending']}
+          {#if ai.decision || ticket.status === 'awaiting_ai_decision'}{s.ai.decisions[ai.decision ?? 'pending']}{/if}
           {#if ai.decided_at}<time datetime={ai.decided_at}>{when(ai.decided_at)}</time>{/if}
         </p>
       {:else}
