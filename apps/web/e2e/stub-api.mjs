@@ -256,6 +256,21 @@ createServer(async (req, res) => {
     return reply(res, 200, account(user, tokenOf(req)))
   }
   if (route === 'GET /api/organization') return reply(res, 200, { ...settings, ...stateOf(req).policy })
+  if (route === 'GET /api/settings/ai') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const credential = { hint: 'WXYZ', set_at: '2026-01-01T00:00:00Z', set_by: null, set_by_username: 'admin', readable: true }
+    return reply(res, 200, {
+      enabled: false,
+      provider: null,
+      model: null,
+      status: 'disabled',
+      active: false,
+      allow_requester_skip: false,
+      providers: [{ provider: 'openai', credential }, { provider: 'gemini', credential: null }, { provider: 'anthropic', credential: null }],
+      connection: { status: 'untested', error: null, tested_at: null },
+      updated_at: '2026-01-01T00:00:00Z',
+    })
+  }
   if (route === 'GET /api/settings/smtp') return ROLES[user] === 'admin' ? reply(res, 200, { connection: null }) : fail(res, 403, 'forbidden')
   if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
