@@ -213,9 +213,22 @@
     </dl>
     <p class="prose">{ticket.intake_snapshot?.description ?? ticket.description}</p>
     <ScreenshotGallery ids={ticket.intake_snapshot?.screenshot_ids ?? []} locale={data.locale} />
-    {#if route === 'not_solved' || route === 'ai_failed' || ['ai_processing', 'awaiting_ai_decision', 'ai_solved'].includes(ticket.status)}
+    {#if ticket.ai}
+      {@const ai = ticket.ai}
       <h3>{s.aiSuggestion}</h3>
-      <p class="prose">{t.history.noSolution}</p>
+      {#if ai.suggestion}
+        <p class="hint">{s.ai.context}</p>
+        <div data-testid="ai-suggestion" lang={ai.language}>
+          <p class="prose">{ai.suggestion.explanation}</p>
+          <ol>{#each ai.suggestion.steps as step, n (n)}<li>{step}</li>{/each}</ol>
+        </div>
+        <p>
+          {s.ai.decisions[ai.decision ?? 'pending']}
+          {#if ai.decided_at}<time datetime={ai.decided_at}>{when(ai.decided_at)}</time>{/if}
+        </p>
+      {:else}
+        <p>{ai.state === 'handed_off' ? s.ai.none[ai.reason ?? 'ai_failed'] : ai.state === 'cancelled' ? s.ai.none.cancelled : s.ai.none.processing}</p>
+      {/if}
     {/if}
   </section>
 

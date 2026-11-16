@@ -231,6 +231,10 @@
 <h2>{t.ai.skip}</h2>
 <p>{ai.allow_requester_skip ? t.ai.skipOn : t.ai.skipOff} <a href="/admin/settings">{t.nav.settings}</a></p>
 
+<h2>{t.ai.records.title}</h2>
+<p>{t.ai.records.intro}</p>
+<p><a href="/admin/ai/records">{t.ai.records.link}</a></p>
+
 <h2>{t.ai.usage.title}</h2>
 <p>{t.ai.usage.intro}</p>
 <dl data-testid="ai-budget-window">

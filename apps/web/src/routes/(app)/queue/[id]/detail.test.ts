@@ -115,9 +115,38 @@ test('German labels and history actors', () => {
   expect(screen.getByText(/Normal → Urgent/)).toBeTruthy()
 })
 
-test('AI handoff shows unavailable suggestion text without a stored solution field', () => {
-  show({ transitions: [{ id: 1, event_type: 'ai_not_solved', from_status: 'awaiting_ai_decision', to_status: 'queued', payload: { route: 'not_solved' }, created_at: '2026-10-02T10:00:00Z' }] })
-  expect(screen.getByText('The AI suggestion text is unavailable for this record.')).toBeTruthy()
+const aiOf = (over = {}) => ({
+  state: 'suggestion_ready', language: 'de', reason: null, decision: 'not_solved',
+  suggestion: { explanation: 'Der Einzug ist <i>verstellt</i>.', steps: ['Fach öffnen', 'Fach einrasten'] },
+  created_at: '2026-10-01T10:00:00Z', finished_at: '2026-10-01T10:00:09Z', decided_at: '2026-10-01T10:05:00Z', ...over,
+})
+
+test('an escalated ticket shows the stored AI suggestion and the requester decision as context', () => {
+  show({ ai: aiOf() })
+  const suggestion = screen.getByTestId('ai-suggestion')
+  expect(suggestion.getAttribute('lang')).toBe('de')
+  expect(suggestion.textContent).toContain('Der Einzug ist <i>verstellt</i>.')
+  expect(suggestion.querySelector('i')).toBeNull()
+  expect([...suggestion.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['Fach öffnen', 'Fach einrasten'])
+  expect(screen.getByText(/The requester still needed help after this suggestion\./)).toBeTruthy()
+  expect(screen.getByText(/It was written from the original request only/)).toBeTruthy()
+})
+
+test('an AI-solved record is read-only for the Admin and shows the confirmation', () => {
+  show({ status: 'ai_solved', resolution_source: 'ai', closure_reason: 'requester_confirmed', assignment: { team_name: null, assignee_display_name: null },
+    staff_access: access({ can_handle: false }), ai: aiOf({ decision: 'solved' }) }, 'de')
+  expect(screen.getByText(/Der Antragsteller hat bestätigt, dass dies das Problem gelöst hat\./)).toBeTruthy()
+  expect(screen.queryByRole('textbox')).toBeNull()
+  expect(screen.queryByRole('button', { name: /öffnen|Senden|Vorschlagen|Übernehmen|Zuweisen/ })).toBeNull()
+})
+
+test('a handoff without a suggestion says why, and a ticket that never went through AI shows no AI section', () => {
+  const first = show({ ai: aiOf({ state: 'handed_off', suggestion: null, reason: 'requester_skip', decision: null, decided_at: null }) })
+  expect(screen.getByText('No suggestion: the requester skipped AI assistance.')).toBeTruthy()
+  expect(screen.queryByTestId('ai-suggestion')).toBeNull()
+  first.unmount()
+  show({ ai: null })
+  expect(screen.queryByText('AI suggestion offered to the requester')).toBeNull()
 })
 
 test('changing priority keeps an unrelated unsent resolution summary', async () => {
