@@ -314,3 +314,27 @@ Behavior: [ai-usage.md](ai-usage.md).
 - `ai_circuit` has at most one row per provider: `consecutive_failures`,
   `open_until` / `opened_at` (set while open), and `probe_expires_at` (the
   half-open probe in flight). No row means closed.
+
+## AI attempts
+
+Migration `0022_ai_attempts.sql`. Behavior: [ai-attempts.md](ai-attempts.md).
+
+- `ai_attempts` has at most one row per ticket (`ticket_id` is unique): `state`
+  (`processing`, `suggestion_ready`, `handed_off`, `cancelled`), `outcome`
+  (stable code, set exactly for `handed_off` and `cancelled`), `language`
+  (`en`/`de`, the requester's language at submission), `input` (the minimized
+  intake snapshot as JSON: category, subject, description, visible answers,
+  and the intake screenshots with their SHA-256), the configuration it was
+  created under (`provider`, `model`, `credential_set_at`), the suggestion
+  (`explanation`, `steps` as a JSON array, set exactly for `suggestion_ready`),
+  `usage_id` (the guarded call in `ai_usage`, `ON DELETE SET NULL`),
+  `created_at`, `deadline_at`, the worker lease (`claimed_until`, `claims`),
+  and `finished_at` (set exactly when not `processing`).
+- A trigger keeps the history immutable: `id`, `ticket_id`, `language`,
+  `input`, `provider`, `model`, `credential_set_at`, `created_at`, and
+  `deadline_at` never change; a row that left `processing` never changes again
+  (only `usage_id` may become NULL); rows cannot be deleted
+  (`restrict_violation`).
+- Indexes: a partial index on `processing` attempts by `created_at`, and
+  `tickets_ai_processing_idx` on `tickets (created_at)` for status
+  `ai_processing` (the deadline sweep).

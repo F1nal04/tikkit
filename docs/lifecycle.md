@@ -60,6 +60,12 @@ organization toggle allows it, otherwise `403`; else `ai_processing` (route
 `ai_failed`, `requester_skip`, or `not_solved`. Rust decides the route from the
 current policy and the category; nothing the client sends can force it.
 
+A ticket routed to `ai` gets its one AI attempt in the same transaction. The
+attempt worker ends `ai_processing` with `ai_suggestion_ready` (the suggestion
+is stored) or `ai_failed` (handoff to operators, exactly once); an Admin
+configuration change, the attempt deadline, a requester skip, and a requester
+cancellation end it too. See [ai-attempts.md](ai-attempts.md).
+
 Tickets before human support and AI-solved records never have a team
 (`tickets_pre_triage_unrouted`), so every entry into `queued` lands in the
 shared general queue with no team or assignee. Dispatch and assignment are
@@ -116,7 +122,9 @@ The requester cancels a submitted open ticket with a reason. Policy
 `anytime_while_open` (default), `before_work_starts` (no `in_progress` event
 was ever recorded; unassignment or transfer does not reset that), or
 `disabled`. The ticket keeps its team, history, and reference; the confirmation
-deadline is cleared, and late AI results or timeouts get `409`.
+deadline is cleared, and late AI results or timeouts get `409`. Cancelling
+during `ai_processing` ends the AI attempt; it never sends the ticket to
+operators.
 
 ## Policy
 
@@ -130,8 +138,8 @@ and that key decrypts), which needs the deployment's encryption key. Only
 `lifecycle::submit` supplies it; it is the entry point for
 `Transition::Submit` and the only transition that routes on AI availability. A
 `Submit` through plain `lifecycle::transition` treats AI as unavailable and
-queues for operators. Until the attempt worker (#35) exists, `ai_available` is
-always false ([ai-configuration.md](ai-configuration.md#how-availability-reaches-the-lifecycle)).
+queues for operators
+([ai-configuration.md](ai-configuration.md#how-availability-reaches-the-lifecycle)).
 
 ## Concurrency
 
@@ -183,8 +191,11 @@ invisible tickets return `404`. Reopen retains the lifecycle's requester-or-
 authorized-staff rule. No AI escalation, general state setter, or intake edit
 is exposed by this endpoint.
 
-The persisted AI suggestion belongs to the AI attempt records (#35) and is not
-exposed yet; AI-solved history shows an explicit unavailable-suggestion message.
+The persisted AI suggestion belongs to the AI attempt record. The requester's
+own `TicketDetail.ai` carries its state, the stored suggestion with its
+language, and the handoff reason ([ai-attempts.md](ai-attempts.md#what-the-requester-sees));
+it is `null` in staff views. A `cancel` or `skip_ai` from `ai_processing` also
+ends the attempt in the same transaction, so late provider output is ignored.
 
 ## Staff HTTP actions
 

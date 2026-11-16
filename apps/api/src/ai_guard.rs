@@ -8,7 +8,7 @@
 //! move time by editing rows.
 //!
 //! Nothing here reads or writes ticket state. A refusal is a value: the caller
-//! (#35's attempt worker) hands the ticket to human support exactly once.
+//! (the attempt worker, `ai_attempts`) hands the ticket to human support exactly once.
 //!
 //! `ai_usage` rows and log lines carry metadata only: account id, provider,
 //! model, image count, token counts as reported, and stable outcome codes.

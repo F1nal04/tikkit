@@ -13,7 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
-    AppState,
+    AppState, ai_attempts,
     api::{ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketStatus},
     auth::{Auth, CurrentUser, audit, ident, ident_str},
     catalog::{self, IntakeAnswer, IntakeSnapshot},
@@ -352,6 +352,12 @@ async fn replay(
     }))
 }
 
+/// What submission needs to route a ticket through AI and snapshot its input.
+struct AiRouting<'a> {
+    encryption_key: &'a [u8; 32],
+    screenshot_dir: &'a std::path::Path,
+}
+
 async fn persist_submission(
     db: &mut Transaction<'_, Postgres>,
     owner: Uuid,
@@ -359,7 +365,7 @@ async fn persist_submission(
     hash: &[u8],
     intake: TicketIntake,
     requester_skip: bool,
-    encryption_key: &[u8; 32],
+    ai: AiRouting<'_>,
 ) -> Result<SubmissionReceipt, ApiError> {
     intake.validate(true)?;
     // Catalog edits span several tables. Hold one coherent catalog until the
@@ -385,7 +391,12 @@ async fn persist_submission(
         .bind(owner).bind(snapshot.catalog.category_id).bind(snapshot.catalog.priority_id)
         .bind(&snapshot.subject).bind(&snapshot.description).bind(sqlx::types::Json(&snapshot)).fetch_one(&mut **db).await?;
     screenshots::attach(db, owner, &snapshot.screenshot_ids, id).await?;
-    let status = lifecycle::submit(db, id, owner, requester_skip, encryption_key).await?;
+    let status = lifecycle::submit(db, id, owner, requester_skip, ai.encryption_key).await?;
+    // The one AI attempt and its immutable input commit with the ticket, so a
+    // ticket is never in `ai_processing` without a job that will end it.
+    if status == TicketStatus::AiProcessing {
+        ai_attempts::create(db, ai.screenshot_dir, id, owner, &snapshot).await?;
+    }
     sqlx::query("INSERT INTO ticket_submission_keys (requester_account_id, idempotency_key, request_hash, ticket_id, submitted_status) VALUES ($1, $2, $3, $4, $5)")
         .bind(owner).bind(key).bind(hash).bind(id).bind(ident_str(status)).execute(&mut **db).await?;
     Ok(SubmissionReceipt {
@@ -423,7 +434,10 @@ pub async fn submit_ticket(
         &hash,
         body.intake,
         body.requester_skip,
-        &auth.settings.encryption_key,
+        AiRouting {
+            encryption_key: &auth.settings.encryption_key,
+            screenshot_dir: &state.screenshot_dir,
+        },
     )
     .await?;
     tx.commit().await?;
@@ -461,7 +475,10 @@ pub async fn submit_draft(
         &hash,
         intake,
         body.requester_skip,
-        &auth.settings.encryption_key,
+        AiRouting {
+            encryption_key: &auth.settings.encryption_key,
+            screenshot_dir: &state.screenshot_dir,
+        },
     )
     .await?;
     sqlx::query("UPDATE ticket_drafts SET intake = NULL, submitted_ticket_id = $2, version = version + 1, updated_at = now() WHERE id = $1")

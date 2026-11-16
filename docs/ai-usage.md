@@ -145,8 +145,8 @@ Only what `SuggestionRequest` can hold: category, subject, description, the
 visible conditional answers, and the intake screenshots, plus the fixed system
 instructions. Nothing else exists in the type: no internal notes, no later
 messages, no other tickets, no account data, no hidden or stale answers.
-Building the request from the frozen intake is #35's job; it must pass the
-result through `ai_privacy::minimize` before the guarded call.
+The attempt worker builds the request from the frozen intake snapshot
+([ai-attempts.md](ai-attempts.md)), which is minimized before it is stored.
 
 `minimize(raw) -> Minimized { request, redactions, truncated }`:
 
@@ -204,8 +204,10 @@ One `ai_usage` row per guarded call or refusal:
   `none`;
 - timestamps.
 
-Not stored, anywhere: prompt text, ticket content, the suggestion, image bytes
-or base64, text read from screenshots, provider message text, API keys.
+Not stored in `ai_usage`, logs, or audit events: prompt text, ticket content,
+the suggestion, image bytes or base64, text read from screenshots, provider
+message text, API keys. The minimized input and the one suggestion of a ticket
+are stored with its attempt record only ([ai-attempts.md](ai-attempts.md)).
 
 **No cost.** Tikkit has no price information for any model, so it stores and
 reports no cost, not even an estimate. Token counts are the provider's own
@@ -283,14 +285,10 @@ thinking tokens, so it can exceed input plus output); Anthropic reports input
 and output only, so its `total_tokens` is `NULL` and its budget figure is the
 sum of the two reported values.
 
-## What #35 must do
+## The caller
 
-- Build the raw `SuggestionRequest` only from the frozen intake of the ticket
-  being processed, call `ai_privacy::minimize`, and snapshot the minimized
-  request.
-- Call the provider only through `AiGuard::suggest`, passing the ticket
-  owner's account id.
-- On any `Err(Refused)`, hand the ticket to operators exactly once through
-  `lifecycle::transition`. `refusal.code()` is a safe value to store on the
-  attempt record; so are `usage_id`, `Minimized::redactions`, and
-  `Minimized::truncated`.
+The suggestion-attempt worker is the caller of `AiGuard::suggest`
+([ai-attempts.md](ai-attempts.md)). It builds the request from the frozen
+intake snapshot, passes the ticket owner's account id, and on any
+`Err(Refused)` hands the ticket to operators exactly once, storing
+`refusal.code()` and the usage id on the attempt.

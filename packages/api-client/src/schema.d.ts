@@ -1385,6 +1385,11 @@ export interface components {
         ActionResult: {
             status: components["schemas"]["TicketStatus"];
         };
+        /**
+         * @description Where a ticket's single AI attempt stands.
+         * @enum {string}
+         */
+        AiAttemptState: "processing" | "suggestion_ready" | "handed_off" | "cancelled";
         /** @description The organization budgets in the current rolling window. */
         AiBudgetWindow: {
             /**
@@ -1452,6 +1457,11 @@ export interface components {
             /** @description 8 to 512 printable ASCII characters without spaces. Write-only. */
             api_key: string;
         };
+        /**
+         * @description Why a ticket went to the help desk without a suggestion.
+         * @enum {string}
+         */
+        AiHandoffReason: "timeout" | "requester_skip" | "ai_unavailable" | "ai_failed";
         /** @description Budgets and operational limits for AI provider calls. */
         AiLimits: {
             /**
@@ -1576,11 +1586,6 @@ export interface components {
         };
         /** @description Masked configuration. No key, ciphertext, or key length is ever included. */
         AiSettings: {
-            /**
-             * @description Whether new tickets are routed through AI right now. `false` with
-             *     `status: ready` means this build does not process AI suggestions yet.
-             */
-            active: boolean;
             /** @description The organization toggle "Allow requester to skip AI" (`PUT /api/admin/settings`). */
             allow_requester_skip: boolean;
             connection: components["schemas"]["AiConnection"];
@@ -1589,7 +1594,10 @@ export interface components {
             provider: null | components["schemas"]["AiProvider"];
             /** @description Every supported provider, in a fixed order. */
             providers: components["schemas"]["AiProviderState"][];
-            /** @description Whether the stored configuration is usable. */
+            /**
+             * @description Whether the stored configuration is usable. With `ready`, new tickets
+             *     in non-exempt categories get an AI suggestion before human support.
+             */
             status: components["schemas"]["AiStatus"];
             /** Format: date-time */
             updated_at: string;
@@ -1606,6 +1614,12 @@ export interface components {
          * @enum {string}
          */
         AiStatus: "disabled" | "credential_missing" | "credential_unreadable" | "model_unsupported" | "ready";
+        /** @description The single AI suggestion of a ticket. */
+        AiSuggestion: {
+            explanation: string;
+            /** @description Ordered steps, 1 to 12. */
+            steps: string[];
+        };
         AiTestResult: {
             /** @description The key authenticated and the model accepts image input. */
             ok: boolean;
@@ -2694,6 +2708,21 @@ export interface components {
              */
             version: string;
         };
+        /** @description The AI attempt of a ticket, as its requester sees it. */
+        TicketAi: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            /**
+             * @description The language the suggestion was requested in: the requester's language
+             *     at submission. It never changes afterwards.
+             */
+            language: components["schemas"]["Language"];
+            reason: null | components["schemas"]["AiHandoffReason"];
+            state: components["schemas"]["AiAttemptState"];
+            suggestion: null | components["schemas"]["AiSuggestion"];
+        };
         /**
          * @description Public handling details shown to a ticket's requester. `team_name: null`
          *     means the shared general queue; `assignee_display_name: null` means unassigned.
@@ -2704,6 +2733,7 @@ export interface components {
         };
         /** @description One ticket as the caller may see it. */
         TicketDetail: {
+            ai: null | components["schemas"]["TicketAi"];
             assignment: components["schemas"]["TicketAssignmentView"];
             /** @description Dispatch and assignment history, oldest first; staff view only (empty for the requester). */
             assignment_changes: components["schemas"]["AssignmentChange"][];

@@ -32,7 +32,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     ai::{self, AiClient, AiErrorKind, ApiKey, Endpoint, ModelInfo, Provider, ProviderConfig},
-    ai_guard,
+    ai_attempts, ai_guard,
     api::{ApiError, FieldErrors, Json, Path},
     auth::{Auth, CurrentUser, audit, ident, ident_str},
     authz::{Permission, require_permission},
@@ -137,22 +137,29 @@ async fn load(
     })
 }
 
-/// SEAM (#35): the single decision whether a new ticket is routed through AI.
-/// `lifecycle::policy` and the requester capability response both ask here.
-///
-/// The stored configuration must be usable ([`load_active`]) AND the attempt
-/// worker must exist. Until #35 adds that worker, nothing would ever move a
-/// ticket out of `ai_processing`, so this stays `false` and every submission
-/// goes straight to the operator queue. #35 flips [`ATTEMPT_WORKER_WIRED`].
+/// The single decision whether a new ticket is routed through AI: the stored
+/// configuration is usable ([`load_active`]). `lifecycle::policy` asks here.
 pub async fn ai_available(
     db: &mut PgConnection,
     encryption_key: &[u8; 32],
 ) -> Result<bool, sqlx::Error> {
-    Ok(load_active(db, encryption_key).await?.is_ok() && ATTEMPT_WORKER_WIRED)
+    Ok(load_active(db, encryption_key).await?.is_ok())
 }
 
-/// See [`ai_available`]. `true` only once the suggestion-attempt worker (#35) ships.
-const ATTEMPT_WORKER_WIRED: bool = false;
+/// The selected provider and model and the version of that provider's key
+/// (when it was stored), or `None` without a selection or key. An attempt
+/// records this and is invalid once it differs (docs/ai-attempts.md).
+pub async fn selection(
+    db: &mut PgConnection,
+) -> Result<Option<(String, String, OffsetDateTime)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT s.provider, s.model, c.set_at
+         FROM ai_settings s JOIN ai_credentials c ON c.provider = s.provider
+         WHERE s.model IS NOT NULL",
+    )
+    .fetch_optional(db)
+    .await
+}
 
 /// Why a connection test failed. The stable codes are stored and shown to Admins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,11 +258,9 @@ pub struct AiSettings {
     pub provider: Option<Provider>,
     #[schema(required = true)]
     pub model: Option<String>,
-    /// Whether the stored configuration is usable.
+    /// Whether the stored configuration is usable. With `ready`, new tickets
+    /// in non-exempt categories get an AI suggestion before human support.
     pub status: AiStatus,
-    /// Whether new tickets are routed through AI right now. `false` with
-    /// `status: ready` means this build does not process AI suggestions yet.
-    pub active: bool,
     /// The organization toggle "Allow requester to skip AI" (`PUT /api/admin/settings`).
     pub allow_requester_skip: bool,
     /// Every supported provider, in a fixed order.
@@ -414,7 +419,6 @@ async fn view(db: &mut PgConnection, encryption_key: &[u8; 32]) -> Result<AiSett
         provider: row.provider.map(ident).transpose()?,
         model: row.model,
         status,
-        active: status == AiStatus::Ready && ATTEMPT_WORKER_WIRED,
         allow_requester_skip,
         providers,
         connection: AiConnection {
@@ -529,6 +533,13 @@ pub async fn put_ai(
         ai_guard::reset_circuit(&mut tx, provider).await?;
     }
     if retested || old.enabled != body.enabled {
+        // Attempts created under the old configuration must not finish under
+        // the new one: stop them and hand their tickets to operators now.
+        let handed_off = if !body.enabled {
+            ai_attempts::invalidate(&mut tx, None, ai_attempts::AI_DISABLED).await?
+        } else {
+            ai_attempts::invalidate(&mut tx, None, ai_attempts::CONFIGURATION_CHANGED).await?
+        };
         audit(
             &mut *tx,
             "ai_settings_updated",
@@ -537,6 +548,7 @@ pub async fn put_ai(
             json!({
                 "from": { "enabled": old.enabled, "provider": old.provider, "model": old.model },
                 "to": { "enabled": body.enabled, "provider": provider, "model": model },
+                "attempts_handed_off": handed_off,
             }),
         )
         .await?;
@@ -599,8 +611,12 @@ pub async fn put_credential(
     .bind(user.account_id())
     .fetch_one(&mut *tx)
     .await?;
+    let mut handed_off = 0;
     if settings.provider.as_deref() == Some(provider.as_str()) {
         reset_connection(&mut tx).await?;
+        // Attempts in flight were started with the previous key.
+        handed_off =
+            ai_attempts::invalidate(&mut tx, None, ai_attempts::CREDENTIAL_CHANGED).await?;
     }
     // A new key starts with a closed circuit: the old key's failures are not its own.
     ai_guard::reset_circuit(&mut tx, provider).await?;
@@ -609,7 +625,7 @@ pub async fn put_credential(
         "ai_credential_set",
         Some(user.account_id()),
         None,
-        json!({ "provider": provider, "replaced": replaced }),
+        json!({ "provider": provider, "replaced": replaced, "attempts_handed_off": handed_off }),
     )
     .await?;
     let settings = view(&mut tx, key).await?;
@@ -645,19 +661,26 @@ pub async fn delete_credential(
         return Err(ApiError::NotFound);
     }
     let selected = settings.provider.as_deref() == Some(provider.as_str());
+    let mut handed_off = 0;
     if selected {
         reset_connection(&mut tx).await?;
         sqlx::query("UPDATE ai_settings SET enabled = false, updated_at = now(), updated_by = $1")
             .bind(user.account_id())
             .execute(&mut *tx)
             .await?;
+        handed_off =
+            ai_attempts::invalidate(&mut tx, None, ai_attempts::CREDENTIAL_MISSING).await?;
     }
     audit(
         &mut *tx,
         "ai_credential_removed",
         Some(user.account_id()),
         None,
-        json!({ "provider": provider, "disabled_ai": selected && settings.enabled }),
+        json!({
+            "provider": provider,
+            "disabled_ai": selected && settings.enabled,
+            "attempts_handed_off": handed_off,
+        }),
     )
     .await?;
     let settings = view(&mut tx, &auth.settings.encryption_key).await?;
@@ -756,8 +779,7 @@ pub async fn policy(
     let mut db = state.pool.acquire().await?;
     let ai_assistance = peek_active(&mut db, &auth.settings.encryption_key)
         .await?
-        .is_ok()
-        && ATTEMPT_WORKER_WIRED;
+        .is_ok();
     let allow_skip: bool =
         sqlx::query_scalar("SELECT allow_requester_ai_skip FROM organization WHERE id")
             .fetch_one(&mut *db)

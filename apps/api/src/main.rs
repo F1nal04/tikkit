@@ -2,7 +2,8 @@ use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use tikkit_api::{
-    AppState, ai_guard, app_with, auth, autoclose, config::Config, db, notifications, screenshots,
+    AppState, ai_attempts, ai_guard, app_with, auth, autoclose, config::Config, db, notifications,
+    screenshots,
 };
 use tokio::{net::TcpListener, sync::watch};
 
@@ -44,10 +45,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
-    let app = app_with(
-        AppState::new(pool.clone(), config.screenshot_dir.as_path().into()),
-        auth::Settings::from(&config),
-    );
+    let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
+    let settings = auth::Settings::from(&config);
+    // AI suggestion attempts. An attempt in flight at shutdown is not waited
+    // for: its lease runs out and the next start takes it over.
+    tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
+        &state,
+        settings.encryption_key,
+    )));
+    let app = app_with(state, settings);
     let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

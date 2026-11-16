@@ -52,9 +52,9 @@ All of these require the Admin role (`ManageSettings`); every other role gets
 | Request | Effect | Audit event |
 |---|---|---|
 | `GET /api/settings/ai` | Masked configuration, per provider the selectable `models` (`id`, `image_input`) and key metadata, effective `status`, last connection test | |
-| `PUT /api/settings/ai` `{enabled, provider, model}` | Select provider/model, enable or disable | `ai_settings_updated` (`from`/`to`) |
-| `PUT /api/settings/ai/credentials/{provider}` `{api_key}` | Store or replace that provider's key | `ai_credential_set` (`provider`, `replaced`) |
-| `DELETE /api/settings/ai/credentials/{provider}` | Delete that provider's key | `ai_credential_removed` (`provider`, `disabled_ai`) |
+| `PUT /api/settings/ai` `{enabled, provider, model}` | Select provider/model, enable or disable | `ai_settings_updated` (`from`/`to`, `attempts_handed_off`) |
+| `PUT /api/settings/ai/credentials/{provider}` `{api_key}` | Store or replace that provider's key | `ai_credential_set` (`provider`, `replaced`, `attempts_handed_off`) |
+| `DELETE /api/settings/ai/credentials/{provider}` | Delete that provider's key | `ai_credential_removed` (`provider`, `disabled_ai`, `attempts_handed_off`) |
 | `POST /api/settings/ai/test` | Test the selected provider/model with its stored key | `ai_connection_tested` (`provider`, `model`, `result`) |
 
 Rules:
@@ -71,6 +71,11 @@ Rules:
 - Deleting the selected provider's key also disables AI in the same
   transaction. Disabling or deleting takes effect for the next submission; Admin
   writes lock the settings row that submissions read `FOR SHARE`.
+- Disabling AI, selecting another provider or model, and replacing or removing
+  the selected provider's key also stop the AI attempts still in progress: in
+  the same transaction those tickets go to the operator queue, and a provider
+  result that arrives later is not accepted. The audit event records the number
+  as `attempts_handed_off` ([ai-attempts.md](ai-attempts.md#policy-check-and-invalidation)).
 - A test result describes one provider, model, and key. Changing any of them
   resets it to `untested`.
 - "Allow requester to skip AI" is the organization setting
@@ -89,8 +94,9 @@ Rules:
 | `model_unsupported` | Enabled, but the stored model is no longer in this version's supported table (or takes no image input). Select another model. |
 | `ready` | Enabled with a provider, a supported model, and a readable key. |
 
-Anything but `ready` routes new tickets directly to operators. `active` says
-whether new tickets are really routed through AI right now.
+Anything but `ready` routes new tickets directly to operators. With `ready`,
+new tickets in non-exempt categories get one AI suggestion attempt first
+([ai-attempts.md](ai-attempts.md)).
 
 ## Connection test and image capability
 
@@ -143,10 +149,16 @@ through AI. `lifecycle::submit` passes the encryption key so
 `lifecycle::policy` can ask it; the answer becomes `Policy::ai_available`
 ([lifecycle.md](lifecycle.md#routing-into-human-support)).
 
-It requires a usable configuration (`ai_config::load_active`) **and** the
-suggestion-attempt worker (#35). Until that worker exists nothing could move a
-ticket out of `ai_processing`, so `ai_available` returns `false` and every
-submission is queued for operators even when `status` is `ready`.
+It is true exactly when the stored configuration is usable
+(`ai_config::load_active`): enabled, a supported image-capable model, and a key
+for the selected provider that decrypts. A ticket routed to AI gets its attempt
+in the submission transaction, and the attempt worker
+([ai-attempts.md](ai-attempts.md)) always ends it with a suggestion or a
+handoff to operators.
+
+`ai_config::selection` returns the selected provider, model, and the time the
+provider's key was stored. An attempt records these three values and is
+invalid as soon as they differ.
 
 Code that needs the provider, model, and decrypted key calls
 `ai_config::load_active(conn, &encryption_key)`. It returns the reason instead

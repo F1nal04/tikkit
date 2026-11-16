@@ -349,7 +349,7 @@ fn normalize_filename(raw: Option<&str>, kind: Kind) -> Result<String, &'static 
     Ok(format!("{clean}.{}", kind.extensions()[0]))
 }
 
-fn file_path(dir: &FsPath, id: Uuid) -> PathBuf {
+pub(crate) fn file_path(dir: &FsPath, id: Uuid) -> PathBuf {
     dir.join(id.to_string())
 }
 

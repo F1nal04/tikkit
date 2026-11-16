@@ -78,6 +78,15 @@ test database to stand in for a second process. Tests move time by editing
 rows (`ai_usage.started_at`, `ai_circuit.open_until`), never by sleeping
 through a window.
 
+`apps/api/tests/ai_attempts.rs` covers suggestion attempts end to end
+([ai-attempts.md](ai-attempts.md)): it submits through the HTTP API and drives
+the worker step by step with `ai_attempts::process_one(&worker)` and
+`ai_attempts::sweep_one(&pool)`; no background loop runs in tests. The worker
+is built with `Worker::with(&test_state(&pool), guard, key)` and short
+`WorkerOptions` (lease, heartbeat). A delayed mock reply
+(`Reply::after`) keeps a provider call in flight while the test changes
+configuration, cancels, or aborts the worker task.
+
 ## Browser tests
 
 ```sh

@@ -21,7 +21,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    ai_config,
+    ai_attempts, ai_config,
     api::{ApiError, FieldErrors, TicketStatus},
     auth::{ident, ident_str},
     authz::{self, Actor, Permission, TeamScope, TicketScope, TicketView},
@@ -555,6 +555,18 @@ async fn run(
     .bind(now)
     .execute(&mut *conn)
     .await?;
+    // A requester who cancels or skips while AI is processing ends the attempt
+    // here, under the ticket lock: its late provider result is then ignored.
+    if state.scope.status == TicketStatus::AiProcessing {
+        let ended = match t {
+            Transition::Cancel { .. } => Some(("cancelled", ai_attempts::REQUESTER_CANCELLED)),
+            Transition::SkipAi => Some(("handed_off", ai_attempts::REQUESTER_SKIP)),
+            _ => None,
+        };
+        if let Some((attempt_state, outcome)) = ended {
+            ai_attempts::close(conn, ticket_id, attempt_state, outcome, None).await?;
+        }
+    }
     Ok(out.to)
 }
 
