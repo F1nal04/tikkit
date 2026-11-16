@@ -110,11 +110,12 @@ test('AI settings render in the admin shell, keep keys write-only, and bind a ke
     await route.fulfill({ status: 422, json: { error: { code: 'validation_failed', details: { fields: { enabled: ['credential_required'] } } }, request_id: 'e2e' } })
   })
   await page.getByLabel('Anbieter').selectOption('gemini')
-  await page.getByLabel('Modell').fill('some-model')
+  // The model is a selector fed by the API: only the selected provider's image-capable models.
+  await expect(page.getByLabel('Modell').locator('option')).toHaveText(['gemini-vision'])
   await page.getByLabel('KI-Unterstützung aktivieren').check()
   await page.getByRole('button', { name: 'Speichern', exact: true }).click()
   await expect(page.getByText('Speichern Sie zuerst einen API-Schlüssel für diesen Anbieter.')).toBeVisible()
-  expect(sent).toEqual({ enabled: true, provider: 'gemini', model: 'some-model' })
+  expect(sent).toEqual({ enabled: true, provider: 'gemini', model: 'gemini-vision' })
 })
 
 test('AI settings are not reachable for non-admins', async ({ page }) => {

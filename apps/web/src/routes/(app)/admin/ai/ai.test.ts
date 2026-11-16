@@ -5,17 +5,22 @@ import Page from './+page.svelte'
 // Assembled so the secret scanner does not take the fixture for a real key.
 const SECRET = ['sk-test', '0123456789abcdefWXYZ'].join('-')
 const stored = { hint: 'WXYZ', set_at: '2026-01-01T00:00:00Z', set_by: null, set_by_username: 'admin', readable: true }
+const models = {
+  openai: [{ id: 'openai-a', image_input: true }, { id: 'openai-b', image_input: true }, { id: 'openai-text', image_input: false }],
+  gemini: [{ id: 'gemini-a', image_input: true }],
+  anthropic: [{ id: 'anthropic-a', image_input: true }],
+}
 const settings = (over: object = {}) => ({
   enabled: false,
   provider: 'openai' as const,
-  model: 'some-model',
+  model: 'openai-b',
   status: 'disabled' as const,
   active: false,
   allow_requester_skip: false,
   providers: [
-    { provider: 'openai' as const, credential: stored },
-    { provider: 'gemini' as const, credential: null },
-    { provider: 'anthropic' as const, credential: null },
+    { provider: 'openai' as const, models: models.openai, credential: stored },
+    { provider: 'gemini' as const, models: models.gemini, credential: null },
+    { provider: 'anthropic' as const, models: models.anthropic, credential: null },
   ],
   connection: { status: 'untested' as const, error: null, tested_at: null },
   updated_at: '2026-01-01T00:00:00Z',
@@ -32,6 +37,11 @@ test('shows masked key metadata, never a key, and only the three providers', () 
   for (const input of document.querySelectorAll<HTMLInputElement>('input[type="password"]')) expect(input.value).toBe('')
   const options = [...(screen.getByLabelText('Anbieter') as HTMLSelectElement).options].map((o) => o.value)
   expect(options).toEqual(['openai', 'gemini', 'anthropic'])
+  // The model is chosen from the API's table: image-capable models of the selected provider only.
+  const model = screen.getByLabelText('Modell') as HTMLSelectElement
+  expect(model.tagName).toBe('SELECT')
+  expect([...model.options].map((o) => o.value)).toEqual(['openai-a', 'openai-b'])
+  expect(model.value).toBe('openai-b')
   expect(screen.getByRole('status').textContent).toContain('Die KI-Unterstützung ist aus')
 })
 
@@ -63,7 +73,9 @@ test('saving the selection sends no key and reports why enabling was refused', a
   expect(await screen.findByText('Store an API key for this provider first.')).toBeTruthy()
   const [url, init] = fetch.mock.calls[0]
   expect(url).toBe('/api/settings/ai')
-  expect(JSON.parse(init.body)).toEqual({ enabled: true, provider: 'gemini', model: 'some-model' })
+  // Switching the provider switched the model list with it.
+  expect([...(screen.getByLabelText('Model') as HTMLSelectElement).options].map((o) => o.value)).toEqual(['gemini-a'])
+  expect(JSON.parse(init.body)).toEqual({ enabled: true, provider: 'gemini', model: 'gemini-a' })
   // What was chosen stays after the rejection.
   expect((screen.getByLabelText('Enable AI assistance') as HTMLInputElement).checked).toBe(true)
 })
@@ -86,4 +98,17 @@ test('explains an unreadable key and a failed connection test', async () => {
   expect(await screen.findByText(/The last test failed\. The AI provider rejected the API key\./)).toBeTruthy()
   expect(fetch.mock.calls[0][0]).toBe('/api/settings/ai/test')
   expect(fetch.mock.calls[0][1].method).toBe('POST')
+})
+
+test('a stored model outside the table is not offered and a rejected model is explained', async () => {
+  const fetch = vi.fn().mockResolvedValue(json({ error: { code: 'validation_failed', message: '', details: { fields: { model: ['unsupported'] } } }, request_id: 't' }, 422))
+  vi.stubGlobal('fetch', fetch)
+  mount(settings({ model: 'retired-model' }), 'de')
+  const model = screen.getByLabelText('Modell') as HTMLSelectElement
+  await vi.waitFor(() => expect(model.value).toBe('openai-a'))
+  expect([...model.options].map((o) => o.value)).not.toContain('retired-model')
+  await fireEvent.submit(screen.getByRole('button', { name: 'Speichern' }).closest('form')!)
+  expect(await screen.findByText('Dieses Modell wird nicht unterstützt. Wählen Sie eines aus der Liste.')).toBeTruthy()
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, provider: 'openai', model: 'openai-a' })
+  expect(model.getAttribute('aria-invalid')).toBe('true')
 })

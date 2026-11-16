@@ -266,7 +266,11 @@ createServer(async (req, res) => {
       status: 'disabled',
       active: false,
       allow_requester_skip: false,
-      providers: [{ provider: 'openai', credential }, { provider: 'gemini', credential: null }, { provider: 'anthropic', credential: null }],
+      providers: [
+        { provider: 'openai', models: [{ id: 'openai-vision', image_input: true }], credential },
+        { provider: 'gemini', models: [{ id: 'gemini-vision', image_input: true }, { id: 'gemini-text', image_input: false }], credential: null },
+        { provider: 'anthropic', models: [{ id: 'anthropic-vision', image_input: true }], credential: null },
+      ],
       connection: { status: 'untested', error: null, tested_at: null },
       updated_at: '2026-01-01T00:00:00Z',
     })

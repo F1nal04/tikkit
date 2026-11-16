@@ -25,6 +25,13 @@
   let error = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
 
+  // Only models from the API's supported table that accept screenshots are offered.
+  let models = $derived((ai.providers.find((p) => p.provider === form.provider)?.models ?? []).filter((m) => m.image_input))
+  // Each provider has its own models: keep the selection inside the current list.
+  $effect(() => {
+    if (!models.some((m) => m.id === form.model)) form.model = models[0]?.id ?? ''
+  })
+
   let request = $derived(apiClient(data.locale).request)
   let date = $derived(new Intl.DateTimeFormat(data.locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }))
   const problem = (code: string | null | undefined) =>
@@ -50,7 +57,7 @@
     event.preventDefault()
     return run(async () => {
       ai = await request('put', '/api/settings/ai', {
-        body: { enabled, provider: form.provider as Provider, model: form.model.trim() || null },
+        body: { enabled, provider: form.provider as Provider, model: form.model || null },
       })
       enabled = ai.enabled
       return t.saved
@@ -104,7 +111,14 @@
     options={ai.providers.map((p) => ({ value: p.provider, label: t.ai.providers[p.provider] }))}
     error={fieldText(t, fields.provider?.[0])}
   />
-  <Field name="model" label={t.ai.model} bind:value={form.model} autocomplete="off" hint={t.ai.modelHint} error={fieldText(t, fields.model?.[0])} />
+  <Field
+    name="model"
+    label={t.ai.model}
+    bind:value={form.model}
+    hint={t.ai.modelHint}
+    options={models.map((m) => ({ value: m.id, label: m.id }))}
+    error={fieldText(t, fields.model?.[0])}
+  />
   <label class="check">
     <input name="enabled" type="checkbox" bind:checked={enabled} aria-invalid={!!fields.enabled} aria-describedby="enabled-hint" />{t.ai.enabled}
   </label>
