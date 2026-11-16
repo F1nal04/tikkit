@@ -2,7 +2,7 @@ use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use tikkit_api::{
-    AppState, app_with, auth, autoclose, config::Config, db, notifications, screenshots,
+    AppState, ai_guard, app_with, auth, autoclose, config::Config, db, notifications, screenshots,
 };
 use tokio::{net::TcpListener, sync::watch};
 
@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         auth::Settings::from(&config),
     ));
     let auto_close = tokio::spawn(autoclose::worker_loop(pool.clone()));
+    let ai_retention = tokio::spawn(ai_guard::retention_loop(pool.clone()));
 
     let listener = TcpListener::bind(config.api_addr)
         .await
@@ -72,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
     // Let a notification already being sent record its outcome, and an auto-close
     // already running commit, before the pool closes.
     if tokio::time::timeout(Duration::from_secs(5), async {
-        let _ = tokio::join!(notifier, auto_close);
+        let _ = tokio::join!(notifier, auto_close, ai_retention);
     })
     .await
     .is_err()

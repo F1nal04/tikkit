@@ -19,6 +19,9 @@ use utoipa::{OpenApi, ToSchema};
 pub mod accounts;
 pub mod ai;
 pub mod ai_config;
+pub mod ai_guard;
+pub mod ai_privacy;
+pub mod ai_usage;
 pub mod api;
 pub mod assignment;
 pub mod auth;
@@ -115,6 +118,9 @@ impl AppState {
         ai_config::delete_credential,
         ai_config::test_ai,
         ai_config::policy,
+        ai_usage::get_limits,
+        ai_usage::put_limits,
+        ai_usage::usage,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -328,6 +334,11 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             put(ai_config::put_credential).delete(ai_config::delete_credential),
         )
         .route("/api/settings/ai/test", post(ai_config::test_ai))
+        .route(
+            "/api/settings/ai/limits",
+            get(ai_usage::get_limits).put(ai_usage::put_limits),
+        )
+        .route("/api/settings/ai/usage", get(ai_usage::usage))
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))

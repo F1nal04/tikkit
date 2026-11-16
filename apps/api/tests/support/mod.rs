@@ -60,6 +60,14 @@ impl TestDb {
         Some(Self { pool, name, admin })
     }
 
+    /// Another pool on the same database: a second process (the API and a worker).
+    pub async fn pool_for(db: &TestDb) -> PgPool {
+        PgPoolOptions::new()
+            .connect_with(db.admin.clone().database(&db.name))
+            .await
+            .unwrap()
+    }
+
     /// Whether a database with this name exists on the test server.
     pub async fn exists(&self, name: &str) -> bool {
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)")

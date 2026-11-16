@@ -32,6 +32,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     ai::{self, AiClient, AiErrorKind, ApiKey, Endpoint, ModelInfo, Provider, ProviderConfig},
+    ai_guard,
     api::{ApiError, FieldErrors, Json, Path},
     auth::{Auth, CurrentUser, audit, ident, ident_str},
     authz::{Permission, require_permission},
@@ -523,6 +524,10 @@ pub async fn put_ai(
     .bind(user.account_id())
     .execute(&mut *tx)
     .await?;
+    // Failures of the previous model say nothing about the new one.
+    if let (true, Some(provider)) = (retested, body.provider) {
+        ai_guard::reset_circuit(&mut tx, provider).await?;
+    }
     if retested || old.enabled != body.enabled {
         audit(
             &mut *tx,
@@ -597,6 +602,8 @@ pub async fn put_credential(
     if settings.provider.as_deref() == Some(provider.as_str()) {
         reset_connection(&mut tx).await?;
     }
+    // A new key starts with a closed circuit: the old key's failures are not its own.
+    ai_guard::reset_circuit(&mut tx, provider).await?;
     audit(
         &mut *tx,
         "ai_credential_set",

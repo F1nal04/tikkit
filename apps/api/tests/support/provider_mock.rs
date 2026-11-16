@@ -3,7 +3,10 @@
 //! (`test_app_with_provider` for the app). No test talks to a real provider.
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -66,16 +69,31 @@ pub struct Seen {
 struct Script {
     replies: Arc<Mutex<Vec<Reply>>>,
     seen: Arc<Mutex<Vec<Seen>>>,
+    /// Requests being answered right now, and the most there ever were.
+    in_flight: Arc<AtomicUsize>,
+    max_in_flight: Arc<AtomicUsize>,
 }
 
 pub struct Mock {
     pub url: Url,
     seen: Arc<Mutex<Vec<Seen>>>,
+    max_in_flight: Arc<AtomicUsize>,
 }
 
 impl Mock {
     pub fn count(&self) -> usize {
         self.seen.lock().unwrap().len()
+    }
+
+    /// The most requests the mock was answering at the same time.
+    pub fn max_in_flight(&self) -> usize {
+        self.max_in_flight.load(Ordering::SeqCst)
+    }
+
+    /// Every request body received so far, as text.
+    pub fn bodies(&self) -> Vec<String> {
+        let seen = self.seen.lock().unwrap();
+        seen.iter().map(|s| s.body.to_string()).collect()
     }
 
     /// The only request the mock received.
@@ -108,7 +126,10 @@ async fn handler(
             replies[0].clone()
         }
     };
+    let now = script.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+    script.max_in_flight.fetch_max(now, Ordering::SeqCst);
     tokio::time::sleep(reply.delay).await;
+    script.in_flight.fetch_sub(1, Ordering::SeqCst);
     let mut response = (StatusCode::from_u16(reply.status).unwrap(), reply.body).into_response();
     for (name, value) in reply.headers {
         response.headers_mut().insert(name, value.parse().unwrap());
@@ -120,9 +141,12 @@ async fn handler(
 /// last one repeats.
 pub async fn serve(replies: Vec<Reply>) -> Mock {
     let seen = Arc::new(Mutex::new(Vec::new()));
+    let max_in_flight = Arc::new(AtomicUsize::new(0));
     let script = Script {
         replies: Arc::new(Mutex::new(replies)),
         seen: seen.clone(),
+        in_flight: Arc::default(),
+        max_in_flight: max_in_flight.clone(),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
@@ -131,5 +155,9 @@ pub async fn serve(replies: Vec<Reply>) -> Mock {
         .layer(DefaultBodyLimit::disable())
         .with_state(script);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    Mock { url, seen }
+    Mock {
+        url,
+        seen,
+        max_in_flight,
+    }
 }
