@@ -16,7 +16,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    AppState,
+    AppState, ai_attempts,
     api::{ApiError, FieldErrors, Json, Path},
     auth::{CurrentUser, audit, ident, unique_violation},
     authz::{Permission, require_permission},
@@ -330,6 +330,11 @@ pub async fn update_category(
     .await
     .map_err(|e| unique_violation(e, "name"))?
     .ok_or(ApiError::NotFound)?;
+    // An exempt category bypasses AI: stop its attempts still in flight and
+    // hand those tickets to operators. Their results are never accepted.
+    if category.skip_ai {
+        ai_attempts::invalidate(&mut tx, Some(id), ai_attempts::CATEGORY_EXEMPT).await?;
+    }
     audit_item(
         &mut tx,
         &user,

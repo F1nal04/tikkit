@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
+    ai_attempts::{self, TicketAi},
     api::{
         ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketAssignmentView,
         TicketStatus,
@@ -72,6 +73,10 @@ pub struct TicketDetail {
     /// What the caller may do as staff; `null` in the requester view.
     #[schema(required = true)]
     pub staff_access: Option<StaffAccess>,
+    /// The ticket's single AI attempt, in the requester view only: `null` for
+    /// staff, and for tickets that never went through AI.
+    #[schema(required = true)]
+    pub ai: Option<TicketAi>,
 }
 
 /// Affordances for the staff view, from the same rules the write endpoints
@@ -363,6 +368,11 @@ pub async fn ticket_detail(
             created_at: r.created_at,
         })
         .collect();
+    let ai = if staff {
+        None
+    } else {
+        ai_attempts::view(&mut tx, id).await?
+    };
     let staff_access = if staff {
         let allow_reopen: bool =
             sqlx::query_scalar("SELECT allow_reopening FROM organization WHERE id")
@@ -445,6 +455,7 @@ pub async fn ticket_detail(
         priority_changes,
         assignment_changes,
         staff_access,
+        ai,
     }))
 }
 

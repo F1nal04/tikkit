@@ -237,7 +237,6 @@ async fn ai_is_off_by_default_and_only_admins_can_touch_its_configuration() {
     let defaults = get(&app, &admin).await;
     assert_eq!(defaults["enabled"], false);
     assert_eq!(defaults["status"], "disabled");
-    assert_eq!(defaults["active"], false);
     assert_eq!(defaults["allow_requester_skip"], false);
     assert!(defaults["provider"].is_null());
     assert_eq!(defaults["connection"]["status"], "untested");
@@ -381,17 +380,17 @@ async fn keys_are_encrypted_masked_replaceable_and_removable() {
     );
     assert_eq!(
         events[0].2,
-        json!({ "provider": "openai", "replaced": false })
+        json!({ "provider": "openai", "replaced": false, "attempts_handed_off": 0 })
     );
     assert_eq!(
         events[1].2,
-        json!({ "provider": "openai", "replaced": true })
+        json!({ "provider": "openai", "replaced": true, "attempts_handed_off": 0 })
     );
     assert_eq!(events[2].2["to"]["enabled"], true);
     assert_eq!(events[2].2["from"]["enabled"], false);
     assert_eq!(
         events[3].2,
-        json!({ "provider": "openai", "disabled_ai": true })
+        json!({ "provider": "openai", "disabled_ai": true, "attempts_handed_off": 0 })
     );
     for (_, _, metadata) in &events {
         assert_secret_absent(metadata);
@@ -510,7 +509,6 @@ async fn a_wrong_encryption_key_makes_ai_unavailable_but_not_the_portal() {
     );
     let view = get(&other, &admin).await;
     assert_eq!(view["status"], "credential_unreadable");
-    assert_eq!(view["active"], false);
     assert_eq!(credential(&view, "gemini")["readable"], false);
     assert_secret_absent(&view);
 
@@ -541,7 +539,7 @@ async fn a_wrong_encryption_key_makes_ai_unavailable_but_not_the_portal() {
 }
 
 #[tokio::test]
-async fn submissions_reach_the_operator_queue_whatever_the_ai_configuration() {
+async fn submissions_are_routed_by_the_current_ai_configuration() {
     let Some(db) = TestDb::new().await else {
         return;
     };
@@ -554,35 +552,45 @@ async fn submissions_reach_the_operator_queue_whatever_the_ai_configuration() {
         ("queued".into(), "ai_disabled".into())
     );
 
-    // Fully configured: the stored configuration is usable ...
+    // Fully configured: new tickets get an AI attempt first
+    // (tests/ai_attempts.rs covers what happens to it).
     assert_eq!(set_key(&app, &admin, "openai", SECRET).await.status, 200);
     let enabled = select(&app, &admin, "openai", true).await;
     assert_eq!(enabled.body["status"], "ready", "{}", enabled.body);
     let ready = active(&db, &KEY).await.unwrap();
     assert_eq!(ready.model, model("openai", 0));
-    // ... but until the attempt worker (#35) exists nothing may enter
-    // `ai_processing`, where no job would ever pick it up.
-    assert_eq!(enabled.body["active"], false);
     let mut conn = db.pool.acquire().await.unwrap();
-    assert!(!ai_config::ai_available(&mut conn, &KEY).await.unwrap());
+    assert!(ai_config::ai_available(&mut conn, &KEY).await.unwrap());
     drop(conn);
     let policy = call(&app, "GET", "/api/ai/policy", None, Some(&cookie)).await;
     assert_eq!(
         policy.body,
-        json!({ "ai_assistance": false, "requester_skip_allowed": false })
+        json!({ "ai_assistance": true, "requester_skip_allowed": false })
     );
     assert_eq!(
         submit(&db, &app, &cookie, &intake).await,
-        ("queued".into(), "ai_disabled".into())
+        ("ai_processing".into(), "ai".into())
     );
 
-    // Disabling and removing the key keep the same direct path.
+    // Disabling takes effect for the next submission, and the attempt that was
+    // pending is handed to operators with it.
     let disabled = select(&app, &admin, "openai", false).await;
     assert_eq!(disabled.body["status"], "disabled", "{}", disabled.body);
-    assert_eq!(
-        submit(&db, &app, &cookie, &intake).await,
-        ("queued".into(), "ai_disabled".into())
-    );
+    let policy = call(&app, "GET", "/api/ai/policy", None, Some(&cookie)).await;
+    assert_eq!(policy.body["ai_assistance"], false);
+    let (queued, attempts): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM tickets WHERE status = 'queued'),
+                (SELECT count(*) FROM ai_attempts WHERE state = 'handed_off')",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!((queued, attempts), (2, 1));
+    let body = json!({ "idempotency_key": Uuid::new_v4(), "intake": intake });
+    let reply = call(&app, "POST", "/api/tickets", Some(body), Some(&cookie)).await;
+    assert_eq!(reply.body["status"], "queued", "{}", reply.body);
+
+    // Removing the key keeps the same direct path.
     call(
         &app,
         "DELETE",
@@ -591,10 +599,9 @@ async fn submissions_reach_the_operator_queue_whatever_the_ai_configuration() {
         Some(&admin),
     )
     .await;
-    assert_eq!(
-        submit(&db, &app, &cookie, &intake).await,
-        ("queued".into(), "ai_disabled".into())
-    );
+    let body = json!({ "idempotency_key": Uuid::new_v4(), "intake": intake });
+    let reply = call(&app, "POST", "/api/tickets", Some(body), Some(&cookie)).await;
+    assert_eq!(reply.body["status"], "queued", "{}", reply.body);
     let stranded: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM tickets WHERE status IN ('ai_processing', 'awaiting_ai_decision')",
     )

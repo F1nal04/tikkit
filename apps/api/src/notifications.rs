@@ -42,6 +42,11 @@ pub fn stop_workers() {
     STOPPING.store(true, Ordering::Relaxed);
 }
 
+/// Whether [`stop_workers`] was called.
+pub fn is_stopping() -> bool {
+    STOPPING.load(Ordering::Relaxed)
+}
+
 /// Runs `step` until it reports no more work, then sleeps. Shared by background
 /// processors (the notification outbox and the auto-close worker);
 /// `step` returns whether it did something. Returns after [`stop_workers`].

@@ -18,6 +18,7 @@ use utoipa::{OpenApi, ToSchema};
 
 pub mod accounts;
 pub mod ai;
+pub mod ai_attempts;
 pub mod ai_config;
 pub mod ai_guard;
 pub mod ai_privacy;

@@ -498,7 +498,6 @@ export default {
         'AI assistance is enabled, but this version no longer supports the selected model. Select another model. New tickets go straight to the help desk.',
       ready: 'AI assistance is enabled and configured.',
     },
-    notActive: 'This version does not create AI suggestions yet, so new tickets still go straight to the help desk.',
     provider: 'Provider',
     providerHint: 'Each provider uses only its own API key. Changing the provider never sends a stored key to another vendor.',
     providers: { openai: 'OpenAI', gemini: 'Google Gemini', anthropic: 'Anthropic' },

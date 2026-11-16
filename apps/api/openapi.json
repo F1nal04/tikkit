@@ -5138,6 +5138,16 @@
           }
         }
       },
+      "AiAttemptState": {
+        "type": "string",
+        "description": "Where a ticket's single AI attempt stands.",
+        "enum": [
+          "processing",
+          "suggestion_ready",
+          "handed_off",
+          "cancelled"
+        ]
+      },
       "AiBudgetWindow": {
         "type": "object",
         "description": "The organization budgets in the current rolling window.",
@@ -5314,6 +5324,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "AiHandoffReason": {
+        "type": "string",
+        "description": "Why a ticket went to the help desk without a suggestion.",
+        "enum": [
+          "timeout",
+          "requester_skip",
+          "ai_unavailable",
+          "ai_failed"
+        ]
       },
       "AiLimits": {
         "type": "object",
@@ -5600,17 +5620,12 @@
           "provider",
           "model",
           "status",
-          "active",
           "allow_requester_skip",
           "providers",
           "connection",
           "updated_at"
         ],
         "properties": {
-          "active": {
-            "type": "boolean",
-            "description": "Whether new tickets are routed through AI right now. `false` with\n`status: ready` means this build does not process AI suggestions yet."
-          },
           "allow_requester_skip": {
             "type": "boolean",
             "description": "The organization toggle \"Allow requester to skip AI\" (`PUT /api/admin/settings`)."
@@ -5646,7 +5661,7 @@
           },
           "status": {
             "$ref": "#/components/schemas/AiStatus",
-            "description": "Whether the stored configuration is usable."
+            "description": "Whether the stored configuration is usable. With `ready`, new tickets\nin non-exempt categories get an AI suggestion before human support."
           },
           "updated_at": {
             "type": "string",
@@ -5694,6 +5709,26 @@
           "model_unsupported",
           "ready"
         ]
+      },
+      "AiSuggestion": {
+        "type": "object",
+        "description": "The single AI suggestion of a ticket.",
+        "required": [
+          "explanation",
+          "steps"
+        ],
+        "properties": {
+          "explanation": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered steps, 1 to 12."
+          }
+        }
       },
       "AiTestResult": {
         "type": "object",
@@ -9010,6 +9045,60 @@
           }
         }
       },
+      "TicketAi": {
+        "type": "object",
+        "description": "The AI attempt of a ticket, as its requester sees it.",
+        "required": [
+          "state",
+          "language",
+          "suggestion",
+          "reason",
+          "created_at",
+          "finished_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language",
+            "description": "The language the suggestion was requested in: the requester's language\nat submission. It never changes afterwards."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiHandoffReason",
+                "description": "Set when `state` is `handed_off`."
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/AiAttemptState"
+          },
+          "suggestion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiSuggestion",
+                "description": "Set once `state` was `suggestion_ready`. There is never a second one."
+              }
+            ]
+          }
+        }
+      },
       "TicketAssignmentView": {
         "type": "object",
         "description": "Public handling details shown to a ticket's requester. `team_name: null`\nmeans the shared general queue; `assignee_display_name: null` means unassigned.",
@@ -9058,9 +9147,21 @@
           "transitions",
           "priority_changes",
           "assignment_changes",
-          "staff_access"
+          "staff_access",
+          "ai"
         ],
         "properties": {
+          "ai": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketAi",
+                "description": "The ticket's single AI attempt, in the requester view only: `null` for\nstaff, and for tickets that never went through AI."
+              }
+            ]
+          },
           "assignment": {
             "$ref": "#/components/schemas/TicketAssignmentView"
           },

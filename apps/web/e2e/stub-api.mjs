@@ -264,7 +264,6 @@ createServer(async (req, res) => {
       provider: null,
       model: null,
       status: 'disabled',
-      active: false,
       allow_requester_skip: false,
       providers: [
         { provider: 'openai', models: [{ id: 'openai-vision', image_input: true }], credential },

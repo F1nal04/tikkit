@@ -2,7 +2,8 @@ use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use tikkit_api::{
-    AppState, ai_guard, app_with, auth, autoclose, config::Config, db, notifications, screenshots,
+    AppState, ai_attempts, ai_guard, app_with, auth, autoclose, config::Config, db, notifications,
+    screenshots,
 };
 use tokio::{net::TcpListener, sync::watch};
 
@@ -44,10 +45,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
-    let app = app_with(
-        AppState::new(pool.clone(), config.screenshot_dir.as_path().into()),
-        auth::Settings::from(&config),
-    );
+    let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
+    let settings = auth::Settings::from(&config);
+    // AI suggestion attempts. At shutdown the calls in flight are cancelled and
+    // their attempts released for the next start to take over.
+    let ai_worker = tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
+        &state,
+        settings.encryption_key,
+    )));
+    let app = app_with(state, settings);
     let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -70,10 +76,11 @@ async fn main() -> anyhow::Result<()> {
         result = server => result?,
         () = deadline => tracing::warn!("Drain timeout reached; aborting remaining requests"),
     }
-    // Let a notification already being sent record its outcome, and an auto-close
-    // already running commit, before the pool closes.
+    // Let a notification already being sent record its outcome, an auto-close
+    // already running commit, and cancelled AI calls free their provider slots
+    // and release their attempts, before the pool closes.
     if tokio::time::timeout(Duration::from_secs(5), async {
-        let _ = tokio::join!(notifier, auto_close, ai_retention);
+        let _ = tokio::join!(notifier, auto_close, ai_retention, ai_worker);
     })
     .await
     .is_err()

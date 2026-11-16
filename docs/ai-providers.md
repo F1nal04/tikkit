@@ -112,8 +112,9 @@ credential errors, model errors, timeouts, and bad output are returned at once.
 
 The model must answer with one JSON object, `{"explanation", "steps"}`. The
 schema is sent through each provider's structured-output feature and the answer
-is validated again locally. Unknown fields, missing fields, empty text, or no
-steps give `malformed_output`. Too many steps, too much text, a response body
+is validated again locally. Unknown fields, missing fields, empty text, no
+steps, or a NUL character in the text (it cannot be stored) give
+`malformed_output`. Too many steps, too much text, a response body
 over the limit, or a generation cut off by the token limit give
 `oversized_output`. Nothing is repaired or shortened, so output that fails the
 contract can never be shown as a solution.

@@ -80,12 +80,15 @@ edits. A stable ticket UUID/reference is inserted in the transaction before
 `lifecycle::submit(...)` (`Transition::Submit { requester_skip }`) runs. This is the only
 status mutation. The existing lifecycle rechecks the current account and
 server policy, writes the attributable transition, and chooses the route.
-With AI unavailable (disabled, no key, an unreadable key, or no attempt worker
-yet; see [ai-configuration.md](ai-configuration.md)), all submissions enter `queued` with
+With AI unavailable (disabled, no key, or an unreadable key; see
+[ai-configuration.md](ai-configuration.md)), all submissions enter `queued` with
 `payload.route = ai_disabled`, no team, no assignee, and zero provider calls.
 This global check precedes category exemption and requester-skip handling.
-When AI settings arrive, the lifecycle retains authority over mandatory AI,
-category exemption, and the separate requester-skip toggle. Client policy,
+With AI ready, the lifecycle decides mandatory AI, category exemption, and the
+separate requester-skip toggle. A ticket routed to AI enters `ai_processing`
+and, in the same transaction, gets its one AI attempt with the immutable input
+snapshot ([ai-attempts.md](ai-attempts.md)); the receipt status is
+`ai_processing`. Client policy,
 status, ownership, and assignment fields are rejected as unknown fields.
 
 `screenshot_ids` lists up to 10 distinct pending uploads of the signed-in
@@ -94,8 +97,8 @@ from expiring; submission attaches them to the new ticket in the same
 transaction. Another account's upload, an unknown, deleted, or already
 attached ID, or a duplicate returns `422 validation_failed`
 (`screenshot_ids: invalid`; over 10 is `too_many`); it can neither smuggle
-another account's image nor silently omit one. No provider integration is
-implemented here. Original intake has no requester PATCH/delete
+another account's image nor silently omit one. Submission itself never calls a
+provider. Original intake has no requester PATCH/delete
 API; draft endpoints remain restricted to unsubmitted drafts. Later replies and
 screenshots belong to separate append-only timeline endpoints.
 
