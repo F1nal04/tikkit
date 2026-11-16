@@ -38,3 +38,16 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
+
+-- Nothing is appended to an AI-solved record either. The one `ai_solved` event
+-- is inserted after the status change; the index above limits it to one.
+CREATE FUNCTION check_ticket_event_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.event_type <> 'ai_solved'
+        AND EXISTS (SELECT 1 FROM tickets WHERE id = NEW.ticket_id AND status = 'ai_solved') THEN
+        RAISE EXCEPTION 'ai_solved tickets are final' USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER ticket_events_ai_solved_final BEFORE INSERT ON ticket_events
+    FOR EACH ROW EXECUTE FUNCTION check_ticket_event_insert();

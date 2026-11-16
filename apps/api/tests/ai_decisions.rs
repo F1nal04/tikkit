@@ -1025,6 +1025,10 @@ async fn jobs_late_callbacks_and_direct_writes_cannot_reopen_an_ai_solved_record
          VALUES ($1, 'ai_not_solved', 'awaiting_ai_decision', 'queued')",
         "INSERT INTO ticket_events (ticket_id, event_type, from_status, to_status)
          VALUES ($1, 'ai_solved', 'awaiting_ai_decision', 'ai_solved')",
+        "INSERT INTO ticket_events (ticket_id, event_type, from_status, to_status)
+         VALUES ($1, 'cancel', 'awaiting_ai_decision', 'cancelled')",
+        "INSERT INTO ticket_events (ticket_id, event_type) VALUES ($1, 'public_reply_added')",
+        "INSERT INTO ticket_events (ticket_id, event_type) VALUES ($1, 'ai_failed')",
     ] {
         let r = sqlx::query(sql).bind(id).execute(w.pool()).await;
         assert!(r.is_err(), "{sql}");

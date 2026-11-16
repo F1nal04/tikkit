@@ -125,8 +125,10 @@ counts, and notifications do not move.
 
 The database enforces the same (migrations `0008`, `0022`, `0023`): an
 `ai_solved` ticket row cannot change in any column, the attempt cannot change
-or be deleted, events cannot be changed or deleted, and a second decision event
-cannot be inserted.
+or be deleted, events cannot be changed or deleted, a second decision event cannot be
+inserted, and no other event can be appended to an AI-solved record. A later
+migration that backfills a new `tickets` column must disable
+`tickets_lifecycle_guard` for AI-solved rows.
 
 ## Who sees what
 
