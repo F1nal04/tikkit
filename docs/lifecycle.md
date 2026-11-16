@@ -26,8 +26,8 @@ tx.commit().await?;
 | `ai_suggestion_ready` | `ai_processing` | system | `awaiting_ai_decision` |
 | `ai_failed` | `ai_processing` | system | `queued` |
 | `skip_ai` | `ai_processing` | requester, only if "Allow requester to skip AI" | `queued` |
-| `ai_solved` | `awaiting_ai_decision` | requester | `ai_solved` (final) |
-| `ai_not_solved` | `awaiting_ai_decision` | requester | `queued` |
+| `ai_solved` | `awaiting_ai_decision` | requester, a suggestion is stored | `ai_solved` (final) |
+| `ai_not_solved` | `awaiting_ai_decision` | requester, a suggestion is stored | `queued` |
 | `start_work` | `queued`, `waiting_for_requester` | staff writer (`reply_as_staff`) | `in_progress` |
 | `request_information` | `in_progress` | staff writer (`reply_as_staff`) | `waiting_for_requester` |
 | `requester_responded` | `waiting_for_requester` | requester | `in_progress` |
@@ -38,7 +38,10 @@ tx.commit().await?;
 | `reopen` | `closed` | requester or staff writer, only if reopening is enabled | `in_progress` |
 | `cancel` | `ai_processing` … `awaiting_confirmation` (submitted, open) | requester, under the cancellation policy | `cancelled` (final) |
 
-Nothing leaves `ai_solved` or `cancelled`. "Staff writer" is the ticket policy
+Nothing leaves `ai_solved` or `cancelled`. `ai_solved`, `ai_not_solved`, and
+`skip_ai` record the attempt they refer to in `payload.attempt_id`; the two
+decisions need the ticket's `suggestion_ready` attempt, read under the ticket
+lock (`409` without one). See [ai-decisions.md](ai-decisions.md). "Staff writer" is the ticket policy
 in [authorization.md](authorization.md): the actor sees the ticket as staff, it
 belongs to a team, and it is unclaimed or the actor is its assignee, the team's
 Lead, or an Admin. The requester never acts as staff on their own ticket, in any
@@ -165,8 +168,9 @@ while `awaiting_confirmation`; `resolution_source`/`closure_reason` match
 `closed`/`ai_solved` and are NULL otherwise; pre-triage and AI-solved tickets
 have no team. A trigger (`restrict_violation`, `23001`) rejects changing the
 requester, editing subject/description/category or returning to `draft` after
-submission, and any status/team/assignee change of an `ai_solved` or
-`cancelled` ticket. The one exception is clearing the assignee when that
+submission, any status/team/assignee change of an `ai_solved` or `cancelled`
+ticket, and (migration `0023_ai_decisions.sql`) any change at all to an
+`ai_solved` ticket row. The one exception is clearing the assignee when that
 account is deactivated or leaves the team: the assignee is a foreign key to
 the team membership, and the attributed `assignment_changed` event keeps the
 history.
@@ -184,18 +188,26 @@ AI-solved records are `404` for operators; Admins see everything but drafts.
 
 `POST /api/tickets/{id}/actions` accepts one explicit tagged decision:
 `{action: "accept_resolution" | "reject_resolution", proposal_version}`,
-`{action: "cancel", reason}`, or `{action: "reopen"}`. It calls the same
-transactional lifecycle and returns `{status}` only after commit. A duplicate,
-stale proposal, or finished state returns `409`; a policy denial returns `403`;
-invisible tickets return `404`. Reopen retains the lifecycle's requester-or-
-authorized-staff rule. No AI escalation, general state setter, or intake edit
-is exposed by this endpoint.
+`{action: "cancel", reason}`, `{action: "reopen"}`, or one of the AI decisions
+`{action: "ai_solved"}`, `{action: "ai_not_solved"}`, `{action: "skip_ai"}`. It
+calls the same transactional lifecycle and returns `{status}` only after
+commit. A duplicate, stale proposal, or finished state returns `409`; a policy
+denial returns `403`; invisible tickets return `404`. Reopen retains the
+lifecycle's requester-or-authorized-staff rule. No general state setter or
+intake edit is exposed by this endpoint, and actions without parameters accept
+no other field (`422`).
 
-The persisted AI suggestion belongs to the AI attempt record. The requester's
-own `TicketDetail.ai` carries its state, the stored suggestion with its
-language, and the handoff reason ([ai-attempts.md](ai-attempts.md#what-the-requester-sees));
-it is `null` in staff views. A `cancel` or `skip_ai` from `ai_processing` also
-ends the attempt in the same transaction, so late provider output is ignored.
+The AI decisions are idempotent ([ai-decisions.md](ai-decisions.md#repeats-and-races)):
+repeating the committed decision returns `200` with the current status and
+writes nothing; any other AI decision on a ticket past that stage is `409` with
+the committed status in `error.details.status`.
+
+The persisted AI suggestion belongs to the AI attempt record. `TicketDetail.ai`
+carries its state, the stored suggestion with its language, the handoff reason,
+and the requester's decision ([ai-decisions.md](ai-decisions.md#ai-context-in-ticketdetailai)),
+for the requester and for staff who may see the ticket. A `cancel` or `skip_ai`
+from `ai_processing` also ends the attempt in the same transaction, so late
+provider output is ignored.
 
 ## Staff HTTP actions
 

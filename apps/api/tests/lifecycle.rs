@@ -153,7 +153,12 @@ async fn seed(w: &World, status: TicketStatus) -> Uuid {
         S::Queued => (Some(w.team), None),
         _ => (Some(w.team), Some(w.op)),
     };
-    seed_as(w, w.requester, w.category, status, team, assignee).await
+    let id = seed_as(w, w.requester, w.category, status, team, assignee).await;
+    if status == S::AwaitingAiDecision {
+        // A decision applies to the stored suggestion.
+        fixtures::ai_attempt(w.pool(), id, "suggestion_ready").await;
+    }
+    id
 }
 
 fn code(result: &Result<TicketStatus, ApiError>) -> &'static str {

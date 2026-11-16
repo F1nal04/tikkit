@@ -465,10 +465,10 @@ async fn a_non_exempt_ticket_gets_exactly_one_stored_suggestion() {
     assert!(ai["finished_at"].is_string());
     assert_eq!(w.detail(ticket, &w.operator).await.status, 404);
     assert!(!w.in_queue(ticket).await);
-    // Staff views never carry the attempt, not even for Admins.
+    // An Admin inspecting the record sees the same stored suggestion.
     let admin = w.detail(ticket, &w.admin).await;
     assert_eq!(admin.status, 200);
-    assert_eq!(admin.body["ai"], Value::Null);
+    assert_eq!(admin.body["ai"]["suggestion"], ai["suggestion"]);
 
     // The request held the frozen intake and nothing about the requester.
     let seen = w.mock.only();
@@ -1658,4 +1658,79 @@ async fn later_replies_and_screenshots_never_reach_the_provider() {
         .unwrap();
     assert_eq!(before, after);
     w.assert_handed_off(ticket, "upstream_unavailable").await;
+}
+
+/// The whole AI branch over HTTP with the real worker (docs/ai-decisions.md):
+/// one provider call, one stored suggestion, one decision. Retries, a second
+/// worker pass, and the sweep call no provider and change nothing.
+#[tokio::test]
+async fn the_requester_decides_on_the_one_stored_suggestion() {
+    let Some(w) = world(vec![success(), success()]).await else {
+        return;
+    };
+    let decide = async |ticket: Uuid, action: &str| {
+        let path = format!("/api/tickets/{ticket}/actions");
+        let body = json!({ "action": action });
+        call(&w.app, "POST", &path, Some(body), Some(&w.requester)).await
+    };
+    let solved = w.submit("ai_processing").await;
+    let escalated = w.submit("ai_processing").await;
+    // Mandatory AI: no decision and no skip before the suggestion exists.
+    for action in ["ai_solved", "ai_not_solved", "skip_ai"] {
+        let r = decide(solved, action).await;
+        assert!(
+            [403, 409].contains(&r.status.as_u16()),
+            "{action}: {}",
+            r.body
+        );
+    }
+    assert_eq!(w.status(solved).await, "ai_processing");
+    let worker = w.worker();
+    while ai_attempts::process_one(&worker).await.unwrap() {}
+    assert_eq!(w.mock.count(), 2);
+
+    assert_eq!(
+        decide(solved, "ai_solved").await.body["status"],
+        "ai_solved"
+    );
+    assert_eq!(
+        decide(escalated, "ai_not_solved").await.body["status"],
+        "queued"
+    );
+    for _ in 0..2 {
+        assert_eq!(decide(solved, "ai_solved").await.status, 200);
+        assert_eq!(decide(escalated, "ai_not_solved").await.status, 200);
+        assert_eq!(decide(solved, "ai_not_solved").await.status, 409);
+        assert_eq!(decide(escalated, "ai_solved").await.status, 409);
+    }
+    // Later worker passes and sweeps find nothing to do.
+    assert!(!ai_attempts::process_one(&worker).await.unwrap());
+    assert!(!ai_attempts::sweep_one(&worker).await.unwrap());
+    assert_eq!(w.mock.count(), 2, "a decision never calls the provider");
+
+    assert_eq!(w.status(solved).await, "ai_solved");
+    assert_eq!(w.queued(solved).await, 0);
+    assert!(!w.in_queue(solved).await);
+    assert_eq!(w.detail(solved, &w.operator).await.status, 404);
+    assert_eq!(w.ai(solved).await["decision"], "solved");
+    assert_eq!(w.events(solved, "ai_solved").await, 1);
+
+    assert_eq!(w.queued(escalated).await, 1);
+    assert_eq!(w.events(escalated, "ai_not_solved").await, 1);
+    assert!(w.in_queue(escalated).await);
+    // The operator gets the frozen intake and the stored suggestion.
+    let staff = w.detail(escalated, &w.operator).await.body;
+    assert_eq!(staff["subject"], "Word crashes");
+    assert_eq!(staff["intake_snapshot"]["subject"], "Word crashes");
+    assert_eq!(
+        staff["ai"]["suggestion"]["explanation"],
+        "The profile is damaged."
+    );
+    assert_eq!(staff["ai"]["decision"], "not_solved");
+    for ticket in [solved, escalated] {
+        assert_eq!(
+            w.attempt(ticket).await,
+            Some(("suggestion_ready".into(), None, true))
+        );
+    }
 }

@@ -31,6 +31,9 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 - `details.fields` maps dotted field paths to stable field codes such as
   `required`, `invalid`, `unknown_field`, `invalid_cursor`. More specific codes
   are added per feature.
+- `details.status` appears only on a `conflict` about an AI decision: the
+  ticket's committed status ([ai-decisions.md](ai-decisions.md#repeats-and-races)).
+  `details.fields` is then an empty object.
 - `request_id` equals the `x-request-id` response header. Clients may send their
   own `x-request-id`; otherwise the API generates a UUID. Logs carry it.
 

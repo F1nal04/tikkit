@@ -22,6 +22,7 @@ pub mod ai_attempts;
 pub mod ai_config;
 pub mod ai_guard;
 pub mod ai_privacy;
+pub mod ai_records;
 pub mod ai_usage;
 pub mod api;
 pub mod assignment;
@@ -122,6 +123,8 @@ impl AppState {
         ai_usage::get_limits,
         ai_usage::put_limits,
         ai_usage::usage,
+        ai_records::records,
+        ai_records::outcomes,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -340,6 +343,8 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             get(ai_usage::get_limits).put(ai_usage::put_limits),
         )
         .route("/api/settings/ai/usage", get(ai_usage::usage))
+        .route("/api/admin/ai/records", get(ai_records::records))
+        .route("/api/admin/ai/outcomes", get(ai_records::outcomes))
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))

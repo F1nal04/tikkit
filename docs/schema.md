@@ -338,3 +338,21 @@ Migration `0022_ai_attempts.sql`. Behavior: [ai-attempts.md](ai-attempts.md).
 - Indexes: a partial index on `processing` attempts by `created_at`, and
   `tickets_ai_processing_idx` on `tickets (created_at)` for status
   `ai_processing` (the deadline sweep).
+
+## AI decisions
+
+Migration `0023_ai_decisions.sql`. Behavior: [ai-decisions.md](ai-decisions.md).
+
+- No new table. The requester's decision is the `ai_solved` or `ai_not_solved`
+  row in `ticket_events`: actor = requester, `created_at` = decision time,
+  `payload.attempt_id` = the `ai_attempts` row it answered. `skip_ai` events
+  carry `payload.attempt_id` too.
+- `ticket_events_one_ai_decision`: unique partial index on `ticket_id` for
+  `event_type IN ('ai_solved', 'ai_not_solved')`. A ticket has at most one
+  decision.
+- `ticket_events_ai_outcome_idx`: partial index on `created_at` for the AI
+  outcome events (`ai_solved`, `ai_not_solved`, `skip_ai`, `ai_failed`), for
+  the Admin statistics.
+- `check_ticket_update()` (the `tickets_lifecycle_guard` trigger of migration
+  `0008`) is replaced with one more rule: a row whose status is `ai_solved`
+  cannot change in any column (`restrict_violation`).

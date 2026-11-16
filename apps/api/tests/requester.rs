@@ -344,12 +344,21 @@ async fn ai_history_is_private_final_and_cannot_change_counts_or_resolution_prov
     ] {
         assert_eq!(w.action(id, action, &w.cookie).await.status, 409);
     }
-    assert_eq!(
-        w.action(id, json!({"action":"ai_not_solved"}), &w.cookie)
-            .await
-            .status,
-        422
-    );
+    // No escalation of a final AI record, and no chat or regenerate action exists.
+    let escalate = w
+        .action(id, json!({"action":"ai_not_solved"}), &w.cookie)
+        .await;
+    assert_eq!(escalate.status, 409);
+    assert_eq!(escalate.body["error"]["details"]["status"], "ai_solved");
+    for action in ["regenerate", "ai_regenerate", "ai_chat", "ai_retry"] {
+        assert_eq!(
+            w.action(id, json!({ "action": action }), &w.cookie)
+                .await
+                .status,
+            422,
+            "{action}"
+        );
+    }
     let reply = call(
         &w.app,
         "POST",
@@ -371,15 +380,19 @@ async fn ai_history_is_private_final_and_cannot_change_counts_or_resolution_prov
 #[tokio::test]
 async fn history_filters_apply_ownership_dates_and_bounded_pagination_in_sql() {
     let Some(w) = world().await else { return };
-    let a = w.seed(w.owner, "ai_solved").await;
+    // Backdated before it becomes AI-solved: a final record never changes again.
+    let a = w.seed(w.owner, "awaiting_ai_decision").await;
     w.seed(w.owner, "queued").await;
     w.seed(w.owner, "ai_solved").await;
     w.seed(w.other, "ai_solved").await;
-    sqlx::query("UPDATE tickets SET created_at = '2020-01-01T00:00:00Z' WHERE id = $1")
-        .bind(a)
-        .execute(&w.db.pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE tickets SET created_at = '2020-01-01T00:00:00Z', status = 'ai_solved',
+                 resolution_source = 'ai', closure_reason = 'requester_confirmed' WHERE id = $1",
+    )
+    .bind(a)
+    .execute(&w.db.pool)
+    .await
+    .unwrap();
     let page = call(
         &w.app,
         "GET",

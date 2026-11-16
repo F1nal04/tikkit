@@ -276,6 +276,150 @@
         }
       }
     },
+    "/api/admin/ai/outcomes": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "AI outcome statistics (Admin only): solved, escalated after a suggestion,\nskipped, and failed. No ticket content.",
+        "operationId": "outcomes",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Reporting period in days, 1-3650 (default 30).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiOutcomeStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`days`: `out_of_range`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/ai/records": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "AI attempts and their outcomes, newest first (Admin only). This is the only\nlist that contains AI-solved records and tickets still in an AI stage.",
+        "operationId": "records",
+        "parameters": [
+          {
+            "name": "outcome",
+            "in": "query",
+            "description": "Only records with this outcome.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AiRecordOutcome"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AiRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/notifications": {
       "get": {
         "tags": [
@@ -4413,6 +4557,7 @@
           "tickets"
         ],
         "summary": "Apply one lifecycle decision atomically. Stale/duplicate proposal decisions\nreturn 409; policy is read again by the lifecycle inside the transaction.",
+        "description": "The AI decisions (`ai_solved`, `ai_not_solved`, `skip_ai`) are idempotent:\nrepeating the decision that was committed for the ticket returns `200` with\nthe ticket's current status and writes nothing. Any other AI decision on a\nticket that already left that stage is `409 conflict` with the committed\nstatus in `error.details.status`. See docs/ai-decisions.md.",
         "operationId": "requester_action",
         "parameters": [
           {
@@ -4457,7 +4602,7 @@
             }
           },
           "403": {
-            "description": "Current policy or actor denies the action",
+            "description": "Current policy or actor denies the action (including `skip_ai`, or `ai_not_solved` before a suggestion exists, while requesters may not skip AI)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4477,7 +4622,7 @@
             }
           },
           "409": {
-            "description": "Stale state or proposal version",
+            "description": "Stale state or proposal version. For AI decisions `error.details.status` is the committed ticket status",
             "content": {
               "application/json": {
                 "schema": {
@@ -5325,6 +5470,31 @@
         },
         "additionalProperties": false
       },
+      "AiDecision": {
+        "type": "string",
+        "description": "The requester's explicit decision on the stored suggestion.",
+        "enum": [
+          "solved",
+          "not_solved"
+        ]
+      },
+      "AiFailureCount": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Stable attempt outcome code (docs/ai-attempts.md)."
+          }
+        }
+      },
       "AiHandoffReason": {
         "type": "string",
         "description": "Why a ticket went to the help desk without a suggestion.",
@@ -5529,6 +5699,75 @@
           }
         }
       },
+      "AiOutcomeStats": {
+        "type": "object",
+        "description": "AI outcome counts. Period counts come from the immutable ticket events, so a\ndenied or repeated request never moves them.",
+        "required": [
+          "days",
+          "solved",
+          "not_solved",
+          "skipped",
+          "failed",
+          "category_exempt",
+          "cancelled",
+          "processing",
+          "awaiting_decision",
+          "failures"
+        ],
+        "properties": {
+          "awaiting_decision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tickets with an undecided suggestion right now (not bound to the period)."
+          },
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cancelled by the requester during an AI stage."
+          },
+          "category_exempt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Submissions that bypassed AI because their category is exempt."
+          },
+          "days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Handed off without a suggestion (`ai_failed` events)."
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiFailureCount"
+            },
+            "description": "`failed` by attempt outcome code, most frequent first."
+          },
+          "not_solved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Escalated after a suggestion (`ai_not_solved` events)."
+          },
+          "processing": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tickets waiting for a suggestion right now (not bound to the period)."
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requester skips: while processing (`skip_ai`) or at submission."
+          },
+          "solved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requester-confirmed AI resolutions (`ai_solved` events)."
+          }
+        }
+      },
       "AiOutcomeStatus": {
         "type": "string",
         "enum": [
@@ -5611,6 +5850,95 @@
             "$ref": "#/components/schemas/AiUsageCounts"
           }
         }
+      },
+      "AiRecord": {
+        "type": "object",
+        "description": "One ticket that went through AI, for Admins.",
+        "required": [
+          "id",
+          "ticket_id",
+          "reference",
+          "subject",
+          "status",
+          "requester",
+          "outcome",
+          "attempt_state",
+          "outcome_code",
+          "provider",
+          "model",
+          "created_at",
+          "decided_at"
+        ],
+        "properties": {
+          "attempt_state": {
+            "$ref": "#/components/schemas/AiAttemptState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the attempt was created (submission)."
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the requester decided (`solved`: the confirmation time)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The attempt."
+          },
+          "model": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AiRecordOutcome"
+          },
+          "outcome_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Internal stable code of why there is no suggestion (docs/ai-attempts.md)."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "requester": {
+            "$ref": "#/components/schemas/TicketRequester"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "ticket_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion."
+          }
+        }
+      },
+      "AiRecordOutcome": {
+        "type": "string",
+        "description": "What became of a ticket's AI attempt.",
+        "enum": [
+          "processing",
+          "awaiting_decision",
+          "solved",
+          "not_solved",
+          "skipped",
+          "failed",
+          "cancelled"
+        ]
       },
       "AiSettings": {
         "type": "object",
@@ -6816,6 +7144,17 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus",
+                "description": "On a `conflict` about an AI decision: the ticket's committed status."
+              }
+            ]
           }
         }
       },
@@ -7491,6 +7830,101 @@
                 },
                 "username": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_AiRecord": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One ticket that went through AI, for Admins.",
+              "required": [
+                "id",
+                "ticket_id",
+                "reference",
+                "subject",
+                "status",
+                "requester",
+                "outcome",
+                "attempt_state",
+                "outcome_code",
+                "provider",
+                "model",
+                "created_at",
+                "decided_at"
+              ],
+              "properties": {
+                "attempt_state": {
+                  "$ref": "#/components/schemas/AiAttemptState"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "When the attempt was created (submission)."
+                },
+                "decided_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "When the requester decided (`solved`: the confirmation time)."
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "The attempt."
+                },
+                "model": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "$ref": "#/components/schemas/AiRecordOutcome"
+                },
+                "outcome_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Internal stable code of why there is no suggestion (docs/ai-attempts.md)."
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "requester": {
+                  "$ref": "#/components/schemas/TicketRequester"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "ticket_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion."
                 }
               }
             }
@@ -8368,9 +8802,54 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The stored AI suggestion solved it: `awaiting_ai_decision` → `ai_solved`\n(final, never operator work). Repeating it returns the committed state.",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "ai_solved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Still need help after the stored suggestion: `awaiting_ai_decision` →\n`queued` in the shared general queue, once. Repeating it returns the\ncommitted state.",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "ai_not_solved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Skip AI while the suggestion is being prepared: `ai_processing` →\n`queued`. Only while the Admin allows requesters to skip AI.",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "skip_ai"
+                ]
+              }
+            }
           }
         ],
-        "description": "Explicit decisions only: replies and views never implicitly accept a proposal."
+        "description": "Explicit decisions only: replies and views never implicitly accept a proposal\nor an AI suggestion."
       },
       "ResetPasswordRequest": {
         "type": "object",
@@ -9047,19 +9526,40 @@
       },
       "TicketAi": {
         "type": "object",
-        "description": "The AI attempt of a ticket, as its requester sees it.",
+        "description": "The AI attempt of a ticket, as its requester sees it. Staff who may see the\nticket get the same data as context.",
         "required": [
           "state",
           "language",
           "suggestion",
           "reason",
           "created_at",
-          "finished_at"
+          "finished_at",
+          "decision",
+          "decided_at"
         ],
         "properties": {
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the decision was committed: the confirmation time of `solved`."
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiDecision",
+                "description": "The requester's decision on the suggestion; `null` while undecided (and\nforever if the ticket was cancelled instead, or never got a suggestion)."
+              }
+            ]
           },
           "finished_at": {
             "type": [
@@ -9158,7 +9658,7 @@
               },
               {
                 "$ref": "#/components/schemas/TicketAi",
-                "description": "The ticket's single AI attempt, in the requester view only: `null` for\nstaff, and for tickets that never went through AI."
+                "description": "The ticket's single AI attempt with its stored suggestion and the\nrequester's decision; `null` for tickets that never went through AI.\nStaff see it on the tickets they may see (escalated tickets; Admins also\nAI-stage and AI-solved records)."
               }
             ]
           },

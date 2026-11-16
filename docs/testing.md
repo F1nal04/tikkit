@@ -88,6 +88,15 @@ is built with `Worker::with(&test_state(&pool), guard, key)` and short
 (`Reply::after`) keeps a provider call in flight while the test changes
 configuration, cancels, or aborts the worker task.
 
+`apps/api/tests/ai_decisions.rs` covers the requester's decisions
+([ai-decisions.md](ai-decisions.md)) without a provider: tickets are put into
+`ai_processing` or `awaiting_ai_decision` through the lifecycle with
+`fixtures::ai_attempt(db, ticket, state)`, which inserts the attempt row a
+submission and the worker would have stored. Use the same fixture in any test
+that applies `AiSolved` or `AiNotSolved`: both need a `suggestion_ready`
+attempt. Concurrency tests send real concurrent HTTP requests on a
+multi-threaded runtime and assert the stored result, not which request won.
+
 ## Browser tests
 
 ```sh

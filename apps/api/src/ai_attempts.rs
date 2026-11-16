@@ -369,7 +369,18 @@ pub struct AiSuggestion {
     pub steps: Vec<String>,
 }
 
-/// The AI attempt of a ticket, as its requester sees it.
+/// The requester's explicit decision on the stored suggestion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AiDecision {
+    /// Confirmed as solved: the ticket is `ai_solved`, final.
+    Solved,
+    /// Still needed help: the ticket went to the help desk.
+    NotSolved,
+}
+
+/// The AI attempt of a ticket, as its requester sees it. Staff who may see the
+/// ticket get the same data as context.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TicketAi {
     pub state: AiAttemptState,
@@ -388,6 +399,14 @@ pub struct TicketAi {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(value_type = Option<String>, format = DateTime, required = true)]
     pub finished_at: Option<OffsetDateTime>,
+    /// The requester's decision on the suggestion; `null` while undecided (and
+    /// forever if the ticket was cancelled instead, or never got a suggestion).
+    #[schema(required = true)]
+    pub decision: Option<AiDecision>,
+    /// When the decision was committed: the confirmation time of `solved`.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(value_type = Option<String>, format = DateTime, required = true)]
+    pub decided_at: Option<OffsetDateTime>,
 }
 
 /// The public reason for a stored outcome code. Requesters do not learn budget,
@@ -415,22 +434,43 @@ type ViewRow = (
     Option<sqlx::types::Json<Vec<String>>>,
     OffsetDateTime,
     Option<OffsetDateTime>,
+    Option<String>,
+    Option<OffsetDateTime>,
 );
 
-/// The ticket's attempt for its requester, or `None` if the ticket never went
-/// through AI. The caller has already decided the ticket is the caller's own.
+/// The ticket's attempt, or `None` if the ticket never went through AI. The
+/// caller has already decided the caller may see the ticket.
 pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<TicketAi>, ApiError> {
     let row: Option<ViewRow> = sqlx::query_as(
-        "SELECT state, outcome, language, explanation, steps, created_at, finished_at
-         FROM ai_attempts WHERE ticket_id = $1",
+        "SELECT a.state, a.outcome, a.language, a.explanation, a.steps, a.created_at,
+                a.finished_at, d.event_type, d.created_at
+         FROM ai_attempts a
+         LEFT JOIN ticket_events d ON d.ticket_id = a.ticket_id
+              AND d.event_type IN ('ai_solved', 'ai_not_solved')
+         WHERE a.ticket_id = $1",
     )
     .bind(ticket_id)
     .fetch_optional(db)
     .await?;
-    let Some((state, outcome, language, explanation, steps, created_at, finished_at)) = row else {
+    let Some((
+        state,
+        outcome,
+        language,
+        explanation,
+        steps,
+        created_at,
+        finished_at,
+        decision,
+        decided_at,
+    )) = row
+    else {
         return Ok(None);
     };
     let state: AiAttemptState = ident(state)?;
+    let decision = decision.map(|event| match event.as_str() {
+        "ai_solved" => AiDecision::Solved,
+        _ => AiDecision::NotSolved,
+    });
     Ok(Some(TicketAi {
         state,
         language: ident(language)?,
@@ -444,6 +484,8 @@ pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<Ticke
             .then(|| public_reason(outcome.as_deref().unwrap_or_default())),
         created_at,
         finished_at,
+        decision,
+        decided_at,
     }))
 }
 

@@ -258,6 +258,10 @@ async fn every_intake_route_enters_general_intake_once_and_dispatches_manually()
         .unwrap();
         for (by, t) in steps {
             let mut tx = w.db.pool.begin().await.unwrap();
+            if t == Transition::AiNotSolved {
+                // The decision applies to the stored suggestion.
+                support::fixtures::ai_attempt(&mut *tx, id, "suggestion_ready").await;
+            }
             transition_with(&mut tx, id, by, &t, Some(policy))
                 .await
                 .unwrap();

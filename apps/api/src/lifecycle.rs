@@ -322,7 +322,10 @@ pub fn decide(
             resolution = Some((ResolutionSource::Ai, ClosureReason::RequesterConfirmed));
             (
                 S::AiSolved,
-                json!({ "resolution_source": ResolutionSource::Ai }),
+                json!({
+                    "resolution_source": ResolutionSource::Ai,
+                    "closure_reason": ClosureReason::RequesterConfirmed,
+                }),
             )
         }
         Transition::AiNotSolved => queue("not_solved"),
@@ -526,7 +529,28 @@ async fn run(
         work_started,
         category_skip_ai: row.skip_ai,
     };
-    let out = decide(&state, actor.as_ref(), t, &policy, now)?;
+    let mut out = decide(&state, actor.as_ref(), t, &policy, now)?;
+    // A decision applies to the ticket's one stored suggestion and records which
+    // attempt it answered. Without a stored suggestion there is nothing to decide.
+    // A skip names the attempt it ended, if there is one.
+    let attempt_state = match t {
+        Transition::AiSolved | Transition::AiNotSolved => Some("suggestion_ready"),
+        Transition::SkipAi => Some("processing"),
+        _ => None,
+    };
+    if let Some(attempt_state) = attempt_state {
+        let attempt: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM ai_attempts WHERE ticket_id = $1 AND state = $2")
+                .bind(ticket_id)
+                .bind(attempt_state)
+                .fetch_optional(&mut *conn)
+                .await?;
+        match attempt {
+            Some(id) => out.payload["attempt_id"] = json!(id),
+            None if matches!(t, Transition::SkipAi) => {}
+            None => return Err(ApiError::Conflict),
+        }
+    }
     sqlx::query(
         "UPDATE tickets SET status = $2, proposal_version = proposal_version + $3,
                 confirmation_deadline = $4, resolution_source = $5, closure_reason = $6,
