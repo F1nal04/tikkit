@@ -494,6 +494,8 @@ export default {
       credential_missing: 'AI assistance is enabled, but the selected provider has no API key. New tickets go straight to the help desk.',
       credential_unreadable:
         'AI assistance is enabled, but the stored API key cannot be read with this server\'s encryption key. Enter the key again. New tickets go straight to the help desk.',
+      model_unsupported:
+        'AI assistance is enabled, but this version no longer supports the selected model. Select another model. New tickets go straight to the help desk.',
       ready: 'AI assistance is enabled and configured.',
     },
     notActive: 'This version does not create AI suggestions yet, so new tickets still go straight to the help desk.',
@@ -518,6 +520,7 @@ export default {
     keySaved: 'The API key was stored.',
     keyRemoved: 'The API key was removed.',
     test: 'Test connection',
+    testUnsaved: 'Save the provider and model first: the test uses the saved selection.',
     testIntro: 'Checks that the stored key works with the selected provider and that the model can analyze screenshots.',
     testOk: 'The provider accepted the key and the model supports images.',
     untested: 'Not tested since the provider, model, or key last changed.',

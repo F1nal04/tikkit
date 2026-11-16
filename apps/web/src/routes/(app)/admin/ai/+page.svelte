@@ -25,6 +25,9 @@
   let error = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
 
+  // The connection test and its last result describe the saved selection, not the selectors.
+  let unsaved = $derived(form.provider !== ai.provider || form.model !== ai.model)
+
   // Only models from the API's supported table that accept screenshots are offered.
   let models = $derived((ai.providers.find((p) => p.provider === form.provider)?.models ?? []).filter((m) => m.image_input))
   // Each provider has its own models: keep the selection inside the current list.
@@ -166,7 +169,8 @@
   {:else}{t.ai.untested}{/if}
   {#if ai.connection.tested_at}({date.format(new Date(ai.connection.tested_at))} UTC){/if}
 </p>
-<div class="actions"><button type="button" onclick={test} disabled={busy}>{t.ai.test}</button></div>
+{#if unsaved}<p>{t.ai.testUnsaved}</p>{/if}
+<div class="actions"><button type="button" onclick={test} disabled={busy || unsaved}>{t.ai.test}</button></div>
 
 <h2>{t.ai.skip}</h2>
 <p>{ai.allow_requester_skip ? t.ai.skipOn : t.ai.skipOff} <a href="/admin/settings">{t.nav.settings}</a></p>

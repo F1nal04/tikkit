@@ -496,6 +496,8 @@ export default {
         'Die KI-Unterstützung ist aktiviert, aber für den gewählten Anbieter ist kein API-Schlüssel gespeichert. Neue Tickets gehen direkt an den Helpdesk.',
       credential_unreadable:
         'Die KI-Unterstützung ist aktiviert, aber der gespeicherte API-Schlüssel lässt sich mit dem Verschlüsselungsschlüssel dieses Servers nicht lesen. Geben Sie den Schlüssel erneut ein. Neue Tickets gehen direkt an den Helpdesk.',
+      model_unsupported:
+        'Die KI-Unterstützung ist aktiviert, aber diese Version unterstützt das gewählte Modell nicht mehr. Wählen Sie ein anderes Modell. Neue Tickets gehen direkt an den Helpdesk.',
       ready: 'Die KI-Unterstützung ist aktiviert und eingerichtet.',
     },
     notActive: 'Diese Version erstellt noch keine KI-Vorschläge. Neue Tickets gehen daher weiterhin direkt an den Helpdesk.',
@@ -520,6 +522,7 @@ export default {
     keySaved: 'Der API-Schlüssel wurde gespeichert.',
     keyRemoved: 'Der API-Schlüssel wurde entfernt.',
     test: 'Verbindung testen',
+    testUnsaved: 'Speichern Sie zuerst Anbieter und Modell: Der Test verwendet die gespeicherte Auswahl.',
     testIntro: 'Prüft, ob der gespeicherte Schlüssel beim gewählten Anbieter funktioniert und das Modell Screenshots analysieren kann.',
     testOk: 'Der Anbieter hat den Schlüssel akzeptiert und das Modell unterstützt Bilder.',
     untested: 'Seit der letzten Änderung von Anbieter, Modell oder Schlüssel nicht getestet.',
