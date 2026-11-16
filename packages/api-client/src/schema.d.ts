@@ -1426,7 +1426,7 @@ export interface components {
          * @description Why AI can or cannot run with the stored configuration.
          * @enum {string}
          */
-        AiStatus: "disabled" | "credential_missing" | "credential_unreadable" | "ready";
+        AiStatus: "disabled" | "credential_missing" | "credential_unreadable" | "model_unsupported" | "ready";
         AiTestResult: {
             /** @description The key authenticated and the model accepts image input. */
             ok: boolean;

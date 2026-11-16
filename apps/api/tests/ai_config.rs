@@ -418,8 +418,19 @@ async fn a_key_is_bound_to_its_provider_and_never_follows_the_selection() {
     let still = active(&db, &KEY).await.unwrap();
     assert_eq!(still.provider, Provider::OpenAi);
 
-    // Even a selection forced past the API finds no key for the other vendor.
+    // A stored model this version does not support is not usable.
     sqlx::query("UPDATE ai_settings SET provider = 'anthropic', enabled = true")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        active(&db, &KEY).await.unwrap_err(),
+        AiStatus::ModelUnsupported
+    );
+    assert_eq!(get(&app, &admin).await["status"], "model_unsupported");
+
+    // Even a selection forced past the API finds no key for the other vendor.
+    sqlx::query("UPDATE ai_settings SET model = 'claude-opus-5-5'")
         .execute(&db.pool)
         .await
         .unwrap();

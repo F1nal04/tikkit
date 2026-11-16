@@ -81,7 +81,8 @@ Rules:
 | `disabled` | Not enabled (default). |
 | `credential_missing` | Enabled, but the selected provider has no key. |
 | `credential_unreadable` | Enabled, but the key does not decrypt with the current `ENCRYPTION_KEY`. |
-| `ready` | Enabled with a provider, a model, and a readable key. |
+| `model_unsupported` | Enabled, but the stored model is no longer in this version's supported table (or takes no image input). Select another model. |
+| `ready` | Enabled with a provider, a supported model, and a readable key. |
 
 Anything but `ready` routes new tickets directly to operators. `active` says
 whether new tickets are really routed through AI right now.

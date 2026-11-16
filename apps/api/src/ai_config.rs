@@ -47,7 +47,10 @@ pub enum AiStatus {
     CredentialMissing,
     /// Enabled, but the stored key does not decrypt with this deployment's `ENCRYPTION_KEY`.
     CredentialUnreadable,
-    /// Enabled with a provider, a model, and a readable key.
+    /// Enabled, but this version does not support the stored model (or the
+    /// model takes no image input). An Admin must select another model.
+    ModelUnsupported,
+    /// Enabled with a provider, a supported model, and a readable key.
     Ready,
 }
 
@@ -81,14 +84,40 @@ pub async fn load_active(
     db: &mut PgConnection,
     encryption_key: &[u8; 32],
 ) -> Result<Result<ActiveAi, AiStatus>, sqlx::Error> {
+    load(db, encryption_key, true).await
+}
+
+/// [`load_active`] without the row lock, for read-only answers (status pages,
+/// the requester policy) that nothing in the same transaction relies on.
+async fn peek_active(
+    db: &mut PgConnection,
+    encryption_key: &[u8; 32],
+) -> Result<Result<ActiveAi, AiStatus>, sqlx::Error> {
+    load(db, encryption_key, false).await
+}
+
+async fn load(
+    db: &mut PgConnection,
+    encryption_key: &[u8; 32],
+    lock: bool,
+) -> Result<Result<ActiveAi, AiStatus>, sqlx::Error> {
     let (enabled, provider, model): (bool, Option<String>, Option<String>) =
-        sqlx::query_as("SELECT enabled, provider, model FROM ai_settings FOR SHARE")
-            .fetch_one(&mut *db)
-            .await?;
+        sqlx::query_as(if lock {
+            "SELECT enabled, provider, model FROM ai_settings FOR SHARE"
+        } else {
+            "SELECT enabled, provider, model FROM ai_settings"
+        })
+        .fetch_one(&mut *db)
+        .await?;
     let (true, Some(provider), Some(model)) = (enabled, provider.and_then(provider_of), model)
     else {
         return Ok(Err(AiStatus::Disabled));
     };
+    // The supported table can change between releases; a stored model that
+    // dropped out of it must not look usable.
+    if model_problem(ai::model_info(provider, &model)).is_some() {
+        return Ok(Err(AiStatus::ModelUnsupported));
+    }
     let sealed: Option<Vec<u8>> =
         sqlx::query_scalar("SELECT key_ciphertext FROM ai_credentials WHERE provider = $1")
             .bind(provider.as_str())
@@ -358,7 +387,7 @@ async fn view(db: &mut PgConnection, encryption_key: &[u8; 32]) -> Result<AiSett
         sqlx::query_scalar("SELECT allow_requester_ai_skip FROM organization WHERE id")
             .fetch_one(&mut *db)
             .await?;
-    let status = match load_active(db, encryption_key).await? {
+    let status = match peek_active(db, encryption_key).await? {
         Ok(_) => AiStatus::Ready,
         Err(status) => status,
     };
@@ -384,7 +413,7 @@ async fn view(db: &mut PgConnection, encryption_key: &[u8; 32]) -> Result<AiSett
         provider: row.provider.map(ident).transpose()?,
         model: row.model,
         status,
-        active: ai_available(db, encryption_key).await?,
+        active: status == AiStatus::Ready && ATTEMPT_WORKER_WIRED,
         allow_requester_skip,
         providers,
         connection: AiConnection {
@@ -494,17 +523,19 @@ pub async fn put_ai(
     .bind(user.account_id())
     .execute(&mut *tx)
     .await?;
-    audit(
-        &mut *tx,
-        "ai_settings_updated",
-        Some(user.account_id()),
-        None,
-        json!({
-            "from": { "enabled": old.enabled, "provider": old.provider, "model": old.model },
-            "to": { "enabled": body.enabled, "provider": provider, "model": model },
-        }),
-    )
-    .await?;
+    if retested || old.enabled != body.enabled {
+        audit(
+            &mut *tx,
+            "ai_settings_updated",
+            Some(user.account_id()),
+            None,
+            json!({
+                "from": { "enabled": old.enabled, "provider": old.provider, "model": old.model },
+                "to": { "enabled": body.enabled, "provider": provider, "model": model },
+            }),
+        )
+        .await?;
+    }
     let settings = view(&mut tx, key).await?;
     tx.commit().await?;
     Ok(Json(settings))
@@ -668,7 +699,9 @@ pub async fn test_ai(
     // No transaction or lock is held across the provider call.
     let result = check_provider(&state.ai_client, &state.ai_endpoint, &active).await;
     let code = result.err().map(ProviderCheckError::code);
-    // Record the outcome only if it still describes the stored selection and key.
+    // Record the outcome only if it still describes the stored selection and
+    // key. The audit event is written either way: the test did happen.
+    let mut tx = state.pool.begin().await?;
     sqlx::query(
         "UPDATE ai_settings SET connection_status = $1, connection_error = $2,
                 connection_tested_at = now()
@@ -684,16 +717,17 @@ pub async fn test_ai(
     .bind(provider.as_str())
     .bind(&active.model)
     .bind(&sealed)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
     audit(
-        &state.pool,
+        &mut *tx,
         "ai_connection_tested",
         Some(user.account_id()),
         None,
         json!({ "provider": provider, "model": active.model, "result": code.unwrap_or("ok") }),
     )
     .await?;
+    tx.commit().await?;
     result.map_err(ProviderCheckError::api)?;
     Ok(Json(AiTestResult { ok: true }))
 }
@@ -713,7 +747,10 @@ pub async fn policy(
     _user: CurrentUser,
 ) -> Result<Json<AiPolicy>, ApiError> {
     let mut db = state.pool.acquire().await?;
-    let ai_assistance = ai_available(&mut db, &auth.settings.encryption_key).await?;
+    let ai_assistance = peek_active(&mut db, &auth.settings.encryption_key)
+        .await?
+        .is_ok()
+        && ATTEMPT_WORKER_WIRED;
     let allow_skip: bool =
         sqlx::query_scalar("SELECT allow_requester_ai_skip FROM organization WHERE id")
             .fetch_one(&mut *db)

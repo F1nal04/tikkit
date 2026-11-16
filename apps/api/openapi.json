@@ -5235,6 +5235,7 @@
           "disabled",
           "credential_missing",
           "credential_unreadable",
+          "model_unsupported",
           "ready"
         ]
       },
