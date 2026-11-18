@@ -1646,7 +1646,7 @@ export interface components {
          *     outcome and the recorded submission route.
          * @enum {string}
          */
-        AiDisposition: "solved" | "not_solved" | "provider_failed" | "failed" | "processing" | "awaiting_decision" | "cancelled" | "category_exempt" | "ai_disabled" | "requester_skip" | "unknown";
+        AiDisposition: "solved" | "not_solved" | "provider_failed" | "failed" | "missing_attempt" | "policy_withdrawn" | "processing" | "awaiting_decision" | "cancelled" | "category_exempt" | "ai_disabled" | "requester_skip" | "unknown";
         AiFailureCount: {
             /** Format: int64 */
             count: number;
@@ -2523,6 +2523,10 @@ export interface components {
             first_response_samples: number;
             /** Format: int64 */
             initial_closures: number;
+            /** Format: int64 */
+            initial_confirmation_timeout: number;
+            /** Format: int64 */
+            initial_requester_confirmed: number;
             /** Format: double */
             mean_first_response_seconds: number | null;
             /** Format: double */
@@ -2949,9 +2953,14 @@ export interface components {
             ai_outcomes: components["schemas"]["AiVolume"][];
             /**
              * Format: int64
-             * @description Confirmed, not-solved, or failed AI attempts on non-cancelled submissions.
+             * @description Solved, not-solved, and recorded failures. Null with a team filter.
              */
-            ai_rate_denominator: number;
+            ai_rate_denominator: number | null;
+            /**
+             * Format: int64
+             * @description Explicit AI confirmations. Null with a team filter.
+             */
+            ai_rate_numerator: number | null;
             /** Format: int64 */
             awaiting_confirmation: number;
             categories: components["schemas"]["NamedVolume"][];
@@ -2959,9 +2968,14 @@ export interface components {
             daily: components["schemas"]["DailyVolume"][];
             /**
              * Format: int64
-             * @description All non-cancelled submissions, including pending and bypassed AI paths.
+             * @description Submissions excluding cancellations and policy withdrawals. Null with a team filter.
              */
-            deflection_rate_denominator: number;
+            deflection_rate_denominator: number | null;
+            /**
+             * Format: int64
+             * @description Explicit AI confirmations. Null with a team filter.
+             */
+            deflection_rate_numerator: number | null;
             operator: components["schemas"]["OperatorTotals"];
             priorities: components["schemas"]["NamedVolume"][];
             /** Format: int64 */
@@ -4136,11 +4150,11 @@ export interface operations {
     };
     get_report: {
         parameters: {
-            query?: {
-                /** @description Inclusive submission time, RFC 3339. Required for CSV. */
-                created_from?: string;
-                /** @description Exclusive submission time, RFC 3339. Required for CSV. */
-                created_before?: string;
+            query: {
+                /** @description Inclusive submission time, RFC 3339. */
+                created_from: string;
+                /** @description Exclusive submission time, RFC 3339. */
+                created_before: string;
                 /** @description Frozen category ID. */
                 category_id?: string;
                 /** @description Current destination team ID. */
@@ -4160,6 +4174,7 @@ export interface operations {
                     "application/json": components["schemas"]["Report"];
                 };
             };
+            /** @description Missing, reversed, or over-366-day range */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4188,11 +4203,11 @@ export interface operations {
     };
     export_report: {
         parameters: {
-            query?: {
-                /** @description Inclusive submission time, RFC 3339. Required for CSV. */
-                created_from?: string;
-                /** @description Exclusive submission time, RFC 3339. Required for CSV. */
-                created_before?: string;
+            query: {
+                /** @description Inclusive submission time, RFC 3339. */
+                created_from: string;
+                /** @description Exclusive submission time, RFC 3339. */
+                created_before: string;
                 /** @description Frozen category ID. */
                 category_id?: string;
                 /** @description Current destination team ID. */
@@ -4337,6 +4352,10 @@ export interface operations {
                 category_id?: string;
                 /** @description Current destination team, including archived teams. */
                 team_id?: string;
+                /** @description Current assignee account. */
+                assignee_id?: string;
+                /** @description Whether a recorded transition entered the shared queue. */
+                entered_queue?: boolean;
                 /** @description Current effective priority. */
                 priority_id?: string;
                 /** @description Current closure classification used in Admin reports. */

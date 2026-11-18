@@ -886,20 +886,113 @@ async fn non_admins_get_neither_the_dataset_nor_counts() {
     assert_eq!(r.body["view"], "requester");
 }
 
+const REPORT_DAY: &str = "created_from=2026-01-15T00:00:00Z&created_before=2026-01-16T00:00:00Z";
+
+async fn failed_attempt(w: &World, code: &str, usage_id: Option<Uuid>) -> Uuid {
+    let id = w.submit(w.software, code, true).await;
+    let mut tx = w.pool().begin().await.unwrap();
+    lifecycle::transition(&mut tx, id, By::System, &Transition::AiFailed)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE ai_attempts SET state = 'handed_off', outcome = $2, usage_id = $3,
+                      finished_at = clock_timestamp() WHERE ticket_id = $1",
+    )
+    .bind(id)
+    .bind(code)
+    .bind(usage_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    id
+}
+
 #[tokio::test]
 async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
     let Some(w) = world().await else { return };
     let m = mixed(&w).await;
-    let path = "/api/admin/reports";
-    let report = w.get(path, "admin").await;
+    let provider = failed_attempt(&w, "rate_limited", None).await;
+    failed_attempt(&w, "invalid_input", None).await;
+
+    let orphan = w.insert(w.software, "missing attempt").await;
+    let mut tx = w.pool().begin().await.unwrap();
+    lifecycle::transition_with(
+        &mut tx,
+        orphan,
+        By::Account(w.ids["owner"]),
+        &Transition::Submit {
+            requester_skip: false,
+        },
+        Some(Policy {
+            ai_available: true,
+            ..Policy::default()
+        }),
+    )
+    .await
+    .unwrap();
+    lifecycle::transition(&mut tx, orphan, By::System, &Transition::AiFailed)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    for id in [m.ids["not_solved"], provider] {
+        let r = w
+            .action(
+                id,
+                json!({"action": "cancel", "reason": "No longer needed"}),
+                "owner",
+            )
+            .await;
+        assert_eq!(r.status, 200, "{}", r.body);
+    }
+    let (first, last): (String, String) = sqlx::query_as(
+        "SELECT to_char(min(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
+                to_char((max(created_at) AT TIME ZONE 'UTC') + interval '1 day', 'YYYY-MM-DD')
+         FROM tickets",
+    )
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    let range = format!("created_from={first}T00:00:00Z&created_before={last}T00:00:00Z");
+
+    // 14 submissions = 11 mixed (draft excluded) + rate limit + invalid input + orphan.
+    // One solved, one not solved, two recorded failures, two pending, and one
+    // abandoned = seven attempts. Confirmation is 1 / (1 + 1 + 2) = 1/4 even
+    // after the not-solved and rate-limited tickets were cancelled in queue.
+    // Deflection is 1 / (14 - 3 cancellations - 1 policy withdrawal) = 1/10.
+    // Ten reached the queue: three disabled, one exempt, one skipped, one
+    // withdrawal, one not solved, two recorded failures, and the orphan.
+    // Current resolution: one AI, one human confirmed, one timed out, three
+    // cancelled, and eight open. The two human closures were both first closures.
+    let path = format!("/api/admin/reports?{range}");
+    let report = w.get(&path, "admin").await;
     assert_eq!(report.status, 200, "{}", report.body);
-    assert_eq!(report.body["submissions"], 11);
-    assert_eq!(report.body["ai_attempts"], 6);
-    assert_eq!(report.body["ai_rate_denominator"], 3);
+    assert_eq!(report.body["submissions"], 14);
+    assert_eq!(report.body["ai_attempts"], 7);
+    assert_eq!(report.body["ai_rate_numerator"], 1);
+    assert_eq!(report.body["ai_rate_denominator"], 4);
+    assert_eq!(report.body["deflection_rate_numerator"], 1);
+    assert_eq!(report.body["deflection_rate_denominator"], 10);
+    let outcomes = report.body["ai_outcomes"].as_array().unwrap();
+    let rate_rows = outcomes
+        .iter()
+        .filter(|row| {
+            matches!(
+                row["outcome"].as_str().unwrap(),
+                "solved" | "not_solved" | "provider_failed" | "failed"
+            )
+        })
+        .map(|row| row["count"].as_i64().unwrap())
+        .sum::<i64>();
+    assert_eq!(report.body["ai_rate_denominator"], rate_rows);
     for (outcome, count) in [
         ("solved", 1),
         ("not_solved", 1),
+        ("provider_failed", 1),
         ("failed", 1),
+        ("missing_attempt", 1),
+        ("policy_withdrawn", 1),
         ("category_exempt", 1),
         ("ai_disabled", 3),
         ("requester_skip", 1),
@@ -907,28 +1000,51 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
         ("awaiting_decision", 1),
         ("cancelled", 1),
     ] {
-        let counted = report.body["ai_outcomes"]
-            .as_array()
-            .unwrap()
+        let counted = outcomes
             .iter()
             .find(|row| row["outcome"] == outcome)
             .unwrap();
         assert_eq!(counted["count"], count, "{outcome}");
         assert_eq!(
-            w.list(&format!("ai_disposition={outcome}")).await.len(),
+            w.list(&format!("{range}&ai_disposition={outcome}"))
+                .await
+                .len(),
             count
         );
     }
-    assert_eq!(report.body["operator"]["queued"], 7);
-    assert_eq!(report.body["operator"]["initial_closures"], 2);
-    assert_eq!(report.body["operator"]["reopens"], 0);
-    assert_eq!(report.body["deflection_rate_denominator"], 10);
+    assert_eq!(w.list("ai_outcome=failed").await.len(), 3);
+    let operator = &report.body["operator"];
+    assert_eq!(operator["queued"], 10);
+    assert_eq!(operator["initial_closures"], 2);
+    assert_eq!(operator["initial_requester_confirmed"], 1);
+    assert_eq!(operator["initial_confirmation_timeout"], 1);
+    assert_eq!(operator["reopens"], 0);
+    assert_eq!(w.list("entered_queue=true").await.len(), 10);
+    assert_eq!(w.list("entered_queue=true&status=cancelled").await.len(), 2);
+    assert_eq!(
+        w.list(&format!(
+            "entered_queue=true&resolution=open&team_id={}&assignee_id={}",
+            w.desk, w.ids["op"]
+        ))
+        .await
+        .len(),
+        0
+    );
+    assert_eq!(
+        w.list(&format!(
+            "entered_queue=true&status=closed&team_id={}&assignee_id={}",
+            w.desk, w.ids["op"]
+        ))
+        .await
+        .len(),
+        2
+    );
     for (resolution, count) in [
         ("ai_confirmed", 1),
         ("requester_confirmed", 1),
         ("confirmation_timeout", 1),
-        ("cancelled", 1),
-        ("open", 7),
+        ("cancelled", 3),
+        ("open", 8),
     ] {
         let counted = report.body["closures"]
             .as_array()
@@ -938,7 +1054,9 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
             .unwrap();
         assert_eq!(counted["count"], count);
         assert_eq!(
-            w.list(&format!("resolution={resolution}")).await.len(),
+            w.list(&format!("{range}&resolution={resolution}"))
+                .await
+                .len(),
             count
         );
     }
@@ -954,32 +1072,10 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
         .action(m.ids["solved"], json!({ "action": "reopen" }), "admin")
         .await;
     assert_eq!(denied.status, 403);
-    assert_eq!(w.get(path, "admin").await.body, report.body);
-
-    let provider_failure = w.submit(w.software, "provider failure", true).await;
-    let mut tx = w.pool().begin().await.unwrap();
-    lifecycle::transition(&mut tx, provider_failure, By::System, &Transition::AiFailed)
-        .await
-        .unwrap();
-    sqlx::query(
-        "UPDATE ai_attempts SET state = 'handed_off', outcome = 'rate_limited',
-                      finished_at = clock_timestamp() WHERE ticket_id = $1",
-    )
-    .bind(provider_failure)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-    let failed = w.get(path, "admin").await.body;
-    assert!(failed["ai_outcomes"].as_array().unwrap().contains(&json!({
-        "outcome": "provider_failed", "count": 1,
-    })));
-    assert_eq!(failed["ai_rate_denominator"], 4);
-    assert_eq!(w.list("ai_disposition=provider_failed").await.len(), 1);
-    assert_eq!(w.list("ai_outcome=failed").await.len(), 2);
+    assert_eq!(w.get(&path, "admin").await.body, report.body);
 
     for who in NON_ADMINS {
-        assert_eq!(w.get(path, who).await.status, 403, "{who}");
+        assert_eq!(w.get(&path, who).await.status, 403, "{who}");
         assert_eq!(
             call(
                 &w.app,
@@ -994,11 +1090,24 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
             "{who}",
         );
     }
-    assert_eq!(call(&w.app, "GET", path, None, None).await.status, 401);
+    assert_eq!(call(&w.app, "GET", &path, None, None).await.status, 401);
+    assert_eq!(
+        call(
+            &w.app,
+            "POST",
+            &format!("/api/admin/reports/export?{range}"),
+            None,
+            None
+        )
+        .await
+        .status,
+        401
+    );
 }
 
 /// Event fixture with a fixed clock. A rejected proposal precedes the first
-/// accepted one. A reply by the requester and a staff note precede staff's reply.
+/// accepted one. A requester reply and a staff note precede the staff's
+/// information request, which comes before the first public staff reply.
 async fn timed_ticket(w: &World) -> (Uuid, i64) {
     let (id, reference) = sqlx::query_as(
         "INSERT INTO tickets (requester_account_id, category_id, priority_id,
@@ -1032,6 +1141,22 @@ async fn timed_ticket(w: &World) -> (Uuid, i64) {
             w.ids["op"],
             json!({}),
             "00:05",
+        ),
+        (
+            "request_information",
+            "in_progress",
+            "waiting_for_requester",
+            w.ids["op"],
+            json!({}),
+            "00:20",
+        ),
+        (
+            "requester_responded",
+            "waiting_for_requester",
+            "in_progress",
+            w.ids["owner"],
+            json!({}),
+            "00:25",
         ),
         (
             "propose_resolution",
@@ -1138,11 +1263,19 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
     );
     assert_eq!(report.body["workload"][0]["queued"], 1);
     assert_eq!(report.body["workload"][0]["assignee_role"], "operator");
+    for field in [
+        "ai_rate_numerator",
+        "ai_rate_denominator",
+        "deflection_rate_numerator",
+        "deflection_rate_denominator",
+    ] {
+        assert_eq!(report.body.get(field), Some(&Value::Null), "{field}");
+    }
     assert_eq!(w.list(&query).await.len(), 1);
     for (key, value) in [
         ("queued", json!(1)),
         ("first_response_samples", json!(1)),
-        ("mean_first_response_seconds", json!(1800.0)),
+        ("mean_first_response_seconds", json!(1200.0)),
         ("initial_closures", json!(1)),
         ("subsequent_closures", json!(0)),
         ("reopens", json!(0)),
@@ -1186,6 +1319,7 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
     assert_eq!(r["closures"], json!([{"resolution": "open", "count": 1}]));
     assert_eq!(r["operator"]["reopens"], 1);
     assert_eq!(r["operator"]["initial_closures"], 1);
+    assert_eq!(r["operator"]["initial_requester_confirmed"], 1);
     assert_eq!(r["operator"]["mean_queue_to_closure_seconds"], 10800.0);
 
     sqlx::query("UPDATE categories SET name = $1 WHERE id = $2")
@@ -1210,7 +1344,7 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
         .unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     let expected = format!(
-        "\"{reference}\",\"2026-01-15T00:00:00Z\",\"'  =\"\"calc\"\",next\",\"Normal\",\"Desk\",\"in_progress\",\"ai_disabled\",\"open\",\"\",\"\",\"2026-01-15T00:00:00Z\",\"2026-01-15T00:30:00Z\",\"2026-01-15T01:00:00Z\",\"2026-01-15T03:00:00Z\",\"requester_confirmed\",\"2026-01-15T01:00:00Z\",\"\",\"\",\"\",\"1\",\"1\",\"1\"\r\n",
+        "\"{reference}\",\"2026-01-15T00:00:00Z\",\"'  =\"\"calc\"\",next\",\"Normal\",\"Desk\",\"in_progress\",\"ai_disabled\",\"open\",\"\",\"\",\"2026-01-15T00:00:00Z\",\"2026-01-15T00:20:00Z\",\"2026-01-15T01:00:00Z\",\"2026-01-15T03:00:00Z\",\"requester_confirmed\",\"2026-01-15T01:00:00Z\",\"\",\"\",\"\",\"1\",\"1\",\"1\"\r\n",
     );
     let (header, data) = text.split_once("\r\n").unwrap();
     assert!(header.contains("\"closure_reason\""));
@@ -1268,7 +1402,7 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
 }
 
 #[tokio::test]
-async fn export_rejects_unbounded_ranges_and_excess_rows_without_auditing() {
+async fn reports_and_exports_require_bounded_dates_and_exports_reject_excess_rows() {
     let Some(w) = world().await else { return };
     for query in [
         "",
@@ -1277,6 +1411,9 @@ async fn export_rejects_unbounded_ranges_and_excess_rows_without_auditing() {
         "created_from=2026-01-01T00:00:00Z&created_before=2027-01-03T00:00:00Z",
     ] {
         assert_eq!(csv(&w, query).await.status(), 400, "{query}");
+        let report = w.get(&format!("/api/admin/reports?{query}"), "admin").await;
+        assert_eq!(report.status, 400, "{query}");
+        assert_eq!(report.code(), "invalid_query");
     }
     sqlx::query("INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description, status, created_at)
         SELECT $1, $2, $3, 'Volume', 'Fixture', 'queued', '2026-01-01T00:00:00Z' FROM generate_series(1, 10001)")
@@ -1297,4 +1434,77 @@ async fn export_rejects_unbounded_ranges_and_excess_rows_without_auditing() {
     .await
     .unwrap();
     assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn report_failure_buckets_distinguish_policy_provider_and_local_outcomes() {
+    let Some(w) = world().await else { return };
+    for (code, disposition) in [
+        ("ai_disabled", "policy_withdrawn"),
+        ("category_exempt", "policy_withdrawn"),
+        ("configuration_changed", "policy_withdrawn"),
+        ("credential_changed", "policy_withdrawn"),
+        ("credential_missing", "policy_withdrawn"),
+        ("model_error", "provider_failed"),
+        ("vision_failed", "provider_failed"),
+        ("invalid_input", "failed"),
+        ("destination_blocked", "failed"),
+        ("timeout", "failed"),
+    ] {
+        let id = failed_attempt(&w, code, None).await;
+        let list = w.list(&format!("ai_disposition={disposition}")).await;
+        assert!(list.iter().any(|item| item["id"] == json!(id)), "{code}");
+    }
+
+    // The worker also uses "timeout" for expiry before a provider call.
+    // Only the guarded call's failed usage row establishes provider provenance.
+    for (code, status) in [("timeout", None), ("destination_blocked", Some(302))] {
+        let usage_id = sqlx::query_scalar(
+            "INSERT INTO ai_usage (account_id, provider, model, image_count, status,
+                                  outcome, http_status, budget_tokens, budget_basis, finished_at)
+             VALUES ($1, 'openai', 'mock-model', 0, 'failed', $2, $3, 0, 'none', now()) RETURNING id",
+        ).bind(w.ids["owner"]).bind(code).bind(status).fetch_one(w.pool()).await.unwrap();
+        let id = failed_attempt(&w, code, Some(usage_id)).await;
+        let list = w.list("ai_disposition=provider_failed").await;
+        assert!(list.iter().any(|item| item["id"] == json!(id)), "{code}");
+    }
+}
+
+#[tokio::test]
+async fn csv_neutralizes_dangerous_prefixes_in_all_three_name_columns() {
+    let Some(w) = world().await else { return };
+    timed_ticket(&w).await;
+    for lead in ["", "  ", "  \"  ", "  '  "] {
+        for trigger in ['=', '+', '-', '@', '\t', '\r'] {
+            let name = format!("{lead}{trigger}text");
+            for (query, id) in [
+                ("UPDATE categories SET name = $1 WHERE id = $2", w.software),
+                ("UPDATE priorities SET name = $1 WHERE id = $2", w.priority),
+                ("UPDATE teams SET name = $1 WHERE id = $2", w.desk),
+            ] {
+                sqlx::query(query)
+                    .bind(&name)
+                    .bind(id)
+                    .execute(w.pool())
+                    .await
+                    .unwrap();
+            }
+            let r = csv(&w, REPORT_DAY).await;
+            assert_eq!(r.status(), 200);
+            let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let (_, row) = std::str::from_utf8(&bytes)
+                .unwrap()
+                .split_once("\r\n")
+                .unwrap();
+            let name_cells = row.splitn(3, ',').nth(2).unwrap();
+            let escaped = name.replace('"', "\"\"");
+            let expected = format!("\"'{escaped}\",").repeat(3);
+            assert!(
+                name_cells.starts_with(&expected),
+                "{lead:?}{trigger:?}: {name_cells:?}"
+            );
+        }
+    }
 }

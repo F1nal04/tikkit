@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    ai_attempts::{AiAttemptState, AiDecision, AiSuggestion},
+    ai::AiErrorKind,
+    ai_attempts::{self, AiAttemptState, AiDecision, AiSuggestion},
     ai_records::{AiRecordOutcome, OUTCOME_SQL},
     api::{ApiError, Cursor, Json, Language, Page, Pagination, Path, Query, TicketStatus},
     auth::{CurrentUser, ident, ident_str},
@@ -83,13 +84,15 @@ pub enum AiOutcomeFilter {
 
 /// Mutually exclusive AI reporting buckets, derived from the Admin attempt
 /// outcome and the recorded submission route.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AiDisposition {
     Solved,
     NotSolved,
     ProviderFailed,
     Failed,
+    MissingAttempt,
+    PolicyWithdrawn,
     Processing,
     AwaitingDecision,
     Cancelled,
@@ -99,15 +102,78 @@ pub enum AiDisposition {
     Unknown,
 }
 
-const AI_DISPOSITION_SQL: &str = "CASE
-    WHEN x.ai_outcome = 'failed' AND x.provider_failed THEN 'provider_failed'
-    WHEN x.ai_outcome = 'skipped' THEN 'requester_skip'
-    WHEN x.ai_outcome IS NOT NULL THEN x.ai_outcome
-    WHEN x.route = 'ai' AND EXISTS (
-         SELECT 1 FROM ticket_events e WHERE e.ticket_id = x.id AND e.event_type = 'ai_failed'
-    ) THEN 'failed'
-    WHEN x.route IN ('category_exempt', 'ai_disabled', 'requester_skip') THEN x.route
-    ELSE 'unknown' END";
+impl AiDisposition {
+    pub(crate) fn completed_attempt(self) -> bool {
+        matches!(
+            self,
+            Self::Solved | Self::NotSolved | Self::ProviderFailed | Self::Failed
+        )
+    }
+
+    pub(crate) fn attempted(self) -> bool {
+        self.completed_attempt()
+            || matches!(
+                self,
+                Self::Processing | Self::AwaitingDecision | Self::Cancelled
+            )
+    }
+}
+
+// Queue participation is historical and can differ from the current status.
+pub(crate) const ENTERED_QUEUE_SQL: &str =
+    "EXISTS (SELECT 1 FROM ticket_events e WHERE e.ticket_id = x.id AND e.to_status = 'queued')";
+
+fn ai_disposition_sql() -> String {
+    let provider_cases = AiErrorKind::ALL
+        .iter()
+        .filter_map(|kind| {
+            let evidence = match kind {
+                AiErrorKind::InvalidInput | AiErrorKind::Cancelled => return None,
+                AiErrorKind::Timeout => "AND x.failed_usage",
+                AiErrorKind::DestinationBlocked => {
+                    "AND x.failed_usage AND x.usage_http_status BETWEEN 300 AND 399"
+                }
+                AiErrorKind::InvalidCredentials
+                | AiErrorKind::RateLimited
+                | AiErrorKind::ModelError
+                | AiErrorKind::UpstreamUnavailable
+                | AiErrorKind::MalformedOutput
+                | AiErrorKind::OversizedOutput
+                | AiErrorKind::Vision => "",
+            };
+            Some(format!(
+                "WHEN x.attempt_outcome = '{}' {evidence} THEN 'provider_failed'",
+                kind.as_str()
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let withdrawals = [
+        ai_attempts::AI_DISABLED,
+        ai_attempts::CATEGORY_EXEMPT,
+        ai_attempts::CONFIGURATION_CHANGED,
+        ai_attempts::CREDENTIAL_CHANGED,
+        ai_attempts::CREDENTIAL_MISSING,
+        "credential_unreadable",
+        "model_unsupported",
+    ]
+    .join("','");
+
+    format!(
+        "CASE
+        WHEN x.ai_outcome = 'failed' THEN CASE
+            WHEN x.attempt_outcome IN ('{withdrawals}') THEN 'policy_withdrawn'
+            {provider_cases}
+            ELSE 'failed' END
+        WHEN x.ai_outcome = 'skipped' THEN 'requester_skip'
+        WHEN x.ai_outcome IS NOT NULL THEN x.ai_outcome
+        WHEN x.route = 'ai' AND EXISTS (
+             SELECT 1 FROM ticket_events e WHERE e.ticket_id = x.id AND e.event_type = 'ai_failed'
+        ) THEN 'missing_attempt'
+        WHEN x.route IN ('category_exempt', 'ai_disabled', 'requester_skip') THEN x.route
+        ELSE 'unknown' END"
+    )
+}
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -116,6 +182,10 @@ pub struct SubmissionsQuery {
     pub category_id: Option<Uuid>,
     /// Current destination team, including archived teams.
     pub team_id: Option<Uuid>,
+    /// Current assignee account.
+    pub assignee_id: Option<Uuid>,
+    /// Whether a recorded transition entered the shared queue.
+    pub entered_queue: Option<bool>,
     /// Current effective priority.
     pub priority_id: Option<Uuid>,
     /// Current closure classification used in Admin reports.
@@ -265,7 +335,8 @@ const RESOLUTION_SQL: &str = "CASE
 /// rest of the query (conditions on `x`, order, limit).
 pub(crate) fn summaries(filter: &str) -> String {
     format!(
-        "SELECT * FROM (SELECT x.*, {AI_DISPOSITION_SQL} AS ai_disposition FROM (
+        "SELECT * FROM (SELECT x.*, {ai_disposition} AS ai_disposition,
+                           {ENTERED_QUEUE_SQL} AS entered_queue FROM (
              SELECT t.id, t.reference, t.subject, t.status::text AS status, t.category_id,
                     COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
                     p.id AS priority_id, p.name AS priority_name, r.id AS requester_id,
@@ -274,8 +345,9 @@ pub(crate) fn summaries(filter: &str) -> String {
                     asg.display_name AS assignee_display_name, asg.role::text AS assignee_role,
                     t.resolution_source, t.closure_reason, {RESOLUTION_SQL} AS resolution,
                     s.route, CASE WHEN a.id IS NOT NULL THEN {OUTCOME_SQL} END AS ai_outcome,
-                    (a.outcome IN ('invalid_credentials', 'rate_limited', 'upstream_unavailable',
-                                   'malformed_output', 'oversized_output')) AS provider_failed,
+                    a.outcome AS attempt_outcome,
+                    (u.status = 'failed' AND u.outcome = a.outcome) AS failed_usage,
+                    u.http_status AS usage_http_status,
                     t.created_at, t.updated_at
              FROM tickets t
              JOIN categories c ON c.id = t.category_id
@@ -284,6 +356,7 @@ pub(crate) fn summaries(filter: &str) -> String {
              LEFT JOIN teams tm ON tm.id = t.team_id
              LEFT JOIN accounts asg ON asg.id = t.assignee_account_id
              LEFT JOIN ai_attempts a ON a.ticket_id = t.id
+             LEFT JOIN ai_usage u ON u.id = a.usage_id
              LEFT JOIN ticket_events d ON d.ticket_id = t.id
                   AND d.event_type IN ('ai_solved', 'ai_not_solved')
              LEFT JOIN LATERAL (
@@ -291,7 +364,8 @@ pub(crate) fn summaries(filter: &str) -> String {
                  WHERE e.ticket_id = t.id AND e.event_type = 'submit' ORDER BY e.id LIMIT 1
              ) s ON true
              WHERE t.status <> 'draft'
-         ) x) x {filter}"
+         ) x) x {filter}",
+        ai_disposition = ai_disposition_sql(),
     )
 }
 
@@ -411,6 +485,8 @@ pub async fn list_submissions(
            AND ($11::uuid IS NULL OR x.priority_id = $11)
            AND ($12::text IS NULL OR x.resolution = $12)
            AND ($13::text IS NULL OR x.ai_disposition = $13)
+           AND ($14::uuid IS NULL OR x.assignee_id = $14)
+           AND ($15::boolean IS NULL OR x.entered_queue = $15)
          ORDER BY x.created_at DESC, x.id DESC LIMIT $9",
     ))
     .bind(query.category_id)
@@ -426,6 +502,8 @@ pub async fn list_submissions(
     .bind(query.priority_id)
     .bind(query.resolution.map(ident_str))
     .bind(query.ai_disposition.map(ident_str))
+    .bind(query.assignee_id)
+    .bind(query.entered_queue)
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;

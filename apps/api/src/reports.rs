@@ -16,15 +16,17 @@ use crate::{
     submissions::{self, AiDisposition, SubmissionResolution},
 };
 
-const MAX_EXPORT_DAYS: i64 = 366;
+const MAX_REPORT_DAYS: i64 = 366;
 const MAX_EXPORT_ROWS: i64 = 10_000;
 
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ReportQuery {
-    /// Inclusive submission time, RFC 3339. Required for CSV.
+    /// Inclusive submission time, RFC 3339.
+    #[param(required = true)]
     pub created_from: Option<String>,
-    /// Exclusive submission time, RFC 3339. Required for CSV.
+    /// Exclusive submission time, RFC 3339.
+    #[param(required = true)]
     pub created_before: Option<String>,
     /// Frozen category ID.
     pub category_id: Option<Uuid>,
@@ -33,8 +35,8 @@ pub struct ReportQuery {
 }
 
 struct Scope {
-    from: Option<OffsetDateTime>,
-    before: Option<OffsetDateTime>,
+    from: OffsetDateTime,
+    before: OffsetDateTime,
     category_id: Option<Uuid>,
     team_id: Option<Uuid>,
 }
@@ -43,9 +45,9 @@ impl TryFrom<ReportQuery> for Scope {
     type Error = ApiError;
 
     fn try_from(query: ReportQuery) -> Result<Self, ApiError> {
-        let from = submissions::instant(query.created_from)?;
-        let before = submissions::instant(query.created_before)?;
-        if from.zip(before).is_some_and(|(a, b)| a >= b) {
+        let from = submissions::instant(query.created_from)?.ok_or(ApiError::InvalidQuery)?;
+        let before = submissions::instant(query.created_before)?.ok_or(ApiError::InvalidQuery)?;
+        if from >= before || before - from > Duration::days(MAX_REPORT_DAYS) {
             return Err(ApiError::InvalidQuery);
         }
         Ok(Self {
@@ -104,6 +106,8 @@ pub struct OperatorTotals {
     #[schema(required = true)]
     pub mean_first_response_seconds: Option<f64>,
     pub initial_closures: i64,
+    pub initial_requester_confirmed: i64,
+    pub initial_confirmation_timeout: i64,
     pub subsequent_closures: i64,
     pub reopens: i64,
     pub rejected_proposals: i64,
@@ -143,10 +147,18 @@ pub struct Report {
     pub priorities: Vec<NamedVolume>,
     pub ai_outcomes: Vec<AiVolume>,
     pub ai_attempts: i64,
-    /// Confirmed, not-solved, or failed AI attempts on non-cancelled submissions.
-    pub ai_rate_denominator: i64,
-    /// All non-cancelled submissions, including pending and bypassed AI paths.
-    pub deflection_rate_denominator: i64,
+    /// Explicit AI confirmations. Null with a team filter.
+    #[schema(required = true)]
+    pub ai_rate_numerator: Option<i64>,
+    /// Solved, not-solved, and recorded failures. Null with a team filter.
+    #[schema(required = true)]
+    pub ai_rate_denominator: Option<i64>,
+    /// Explicit AI confirmations. Null with a team filter.
+    #[schema(required = true)]
+    pub deflection_rate_numerator: Option<i64>,
+    /// Submissions excluding cancellations and policy withdrawals. Null with a team filter.
+    #[schema(required = true)]
+    pub deflection_rate_denominator: Option<i64>,
     pub closures: Vec<ClosureVolume>,
     pub awaiting_confirmation: i64,
     pub operator: OperatorTotals,
@@ -155,8 +167,7 @@ pub struct Report {
 
 fn cohort(limit: &str) -> String {
     submissions::summaries(&format!(
-        "WHERE ($1::timestamptz IS NULL OR x.created_at >= $1)
-           AND ($2::timestamptz IS NULL OR x.created_at < $2)
+        "WHERE x.created_at >= $1 AND x.created_at < $2
            AND ($3::uuid IS NULL OR x.category_id = $3)
            AND ($4::uuid IS NULL OR x.team_id = $4)
          {limit}"
@@ -212,11 +223,10 @@ fn facts(cohort: &str) -> String {
 
 async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError> {
     let cohort = cohort("");
-    let grouped: Vec<(String, String, String, bool, i64)> = scope
+    let grouped: Vec<(String, String, String, i64)> = scope
         .bind(sqlx::query_as(&format!(
-            "SELECT ai_disposition, resolution, status,
-                (ai_outcome IS NOT NULL AND ai_outcome <> 'skipped') AS attempted, count(*)
-         FROM ({cohort}) c GROUP BY 1, 2, 3, 4"
+            "SELECT ai_disposition, resolution, status, count(*)
+         FROM ({cohort}) c GROUP BY 1, 2, 3"
         )))
         .fetch_all(&mut *db)
         .await?;
@@ -230,21 +240,17 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
         mut deflection_rate_denominator,
         mut awaiting_confirmation,
     ) = (0, 0, 0, 0, 0);
-    for (ai, resolution, status, attempted, count) in grouped {
+    for (ai, resolution, status, count) in grouped {
+        let ai: AiDisposition = ident(ai)?;
         submissions += count;
-        if attempted {
+        if ai.attempted() {
             ai_attempts += count;
         }
-        if resolution != "cancelled" {
+        if ai.completed_attempt() {
+            ai_rate_denominator += count;
+        }
+        if resolution != "cancelled" && ai != AiDisposition::PolicyWithdrawn {
             deflection_rate_denominator += count;
-            if attempted
-                && matches!(
-                    ai.as_str(),
-                    "solved" | "not_solved" | "failed" | "provider_failed"
-                )
-            {
-                ai_rate_denominator += count;
-            }
         }
         if status == "awaiting_confirmation" {
             awaiting_confirmation += count;
@@ -252,15 +258,11 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
         *ai_counts.entry(ai).or_insert(0) += count;
         *closure_counts.entry(resolution).or_insert(0) += count;
     }
+    let solved = ai_counts.get(&AiDisposition::Solved).copied().unwrap_or(0);
     let ai_outcomes = ai_counts
         .into_iter()
-        .map(|(key, count)| {
-            Ok(AiVolume {
-                outcome: ident(key)?,
-                count,
-            })
-        })
-        .collect::<Result<_, ApiError>>()?;
+        .map(|(outcome, count)| AiVolume { outcome, count })
+        .collect();
     let closures = closure_counts
         .into_iter()
         .map(|(key, count)| {
@@ -295,6 +297,8 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
             count(first_response_at) FILTER (WHERE first_response_at >= queued_at) AS first_response_samples,
             avg(extract(epoch FROM first_response_at - queued_at)) FILTER (WHERE first_response_at >= queued_at)::float8 AS mean_first_response_seconds,
             count(first_closed_at) AS initial_closures,
+            count(*) FILTER (WHERE first_closure_reason = 'requester_confirmed') AS initial_requester_confirmed,
+            count(*) FILTER (WHERE first_closure_reason = 'confirmation_timeout') AS initial_confirmation_timeout,
             coalesce(sum(greatest(closure_events - 1, 0)), 0)::bigint AS subsequent_closures,
             coalesce(sum(reopens), 0)::bigint AS reopens,
             coalesce(sum(rejected_proposals), 0)::bigint AS rejected_proposals,
@@ -317,10 +321,11 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
                 count(*) FILTER (WHERE resolution = 'open') AS active,
                 count(*) FILTER (WHERE status = 'awaiting_confirmation') AS awaiting_confirmation
          FROM ({cohort}) c
-         WHERE EXISTS (SELECT 1 FROM ticket_events e WHERE e.ticket_id = c.id AND e.to_status = 'queued')
+         WHERE entered_queue
          GROUP BY 1, 2, 3, 4, 5 ORDER BY team_name NULLS FIRST, assignee_name NULLS FIRST, team_id, assignee_id"
     ))).fetch_all(db).await?;
 
+    let rates_available = scope.team_id.is_none();
     Ok(Report {
         submissions,
         daily,
@@ -328,8 +333,10 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
         priorities,
         ai_outcomes,
         ai_attempts,
-        ai_rate_denominator,
-        deflection_rate_denominator,
+        ai_rate_numerator: rates_available.then_some(solved),
+        ai_rate_denominator: rates_available.then_some(ai_rate_denominator),
+        deflection_rate_numerator: rates_available.then_some(solved),
+        deflection_rate_denominator: rates_available.then_some(deflection_rate_denominator),
         closures,
         awaiting_confirmation,
         operator,
@@ -339,7 +346,7 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
 
 #[utoipa::path(get, path = "/api/admin/reports", tag = "admin", params(ReportQuery),
     responses((status = 200, body = Report),
-        (status = 400, body = crate::api::ErrorEnvelope),
+        (status = 400, description = "Missing, reversed, or over-366-day range", body = crate::api::ErrorEnvelope),
         (status = 401, body = crate::api::ErrorEnvelope),
         (status = 403, body = crate::api::ErrorEnvelope)))]
 pub async fn get_report(
@@ -432,10 +439,13 @@ fn csv_row<const N: usize>(csv: &mut String, cells: [&str; N]) {
             csv.push(',');
         }
         csv.push('"');
-        let formula = cell
-            .trim_start_matches(|c: char| c.is_whitespace() || c.is_control() || c == '\u{feff}')
-            .starts_with(['=', '+', '-', '@', '＝', '＋', '－', '＠']);
-        if formula || cell.starts_with(['\t', '\r', '\n']) {
+        let leading = cell.trim_start_matches(|c: char| {
+            // Tab and line breaks are dangerous prefixes themselves, even
+            // after a space or quote. Preserve them for the prefix check.
+            !matches!(c, '\t' | '\r' | '\n')
+                && (c.is_whitespace() || c.is_control() || matches!(c, '"' | '\'' | '\u{feff}'))
+        });
+        if leading.starts_with(['=', '+', '-', '@', '\t', '\r', '\n', '＝', '＋', '－', '＠']) {
             csv.push('\'');
         }
         for c in cell.chars() {
@@ -462,8 +472,8 @@ async fn audit_export(
         Some(actor),
         None,
         json!({
-            "created_from": timestamp(scope.from)?,
-            "created_before": timestamp(scope.before)?,
+            "created_from": timestamp(Some(scope.from))?,
+            "created_before": timestamp(Some(scope.before))?,
             "category_id": scope.category_id,
             "team_id": scope.team_id,
             "row_count": rows,
@@ -486,13 +496,6 @@ pub async fn export_report(
 ) -> Result<impl IntoResponse, ApiError> {
     require_permission(&user, Permission::ViewAllSubmissions)?;
     let scope = Scope::try_from(query)?;
-    if scope
-        .from
-        .zip(scope.before)
-        .is_none_or(|(from, before)| before - from > Duration::days(MAX_EXPORT_DAYS))
-    {
-        return Err(ApiError::InvalidQuery);
-    }
 
     let mut tx = state.pool.begin().await?;
     let cohort = cohort("ORDER BY x.created_at, x.id LIMIT $5");

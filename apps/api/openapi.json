@@ -856,8 +856,8 @@
           {
             "name": "created_from",
             "in": "query",
-            "description": "Inclusive submission time, RFC 3339. Required for CSV.",
-            "required": false,
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -865,8 +865,8 @@
           {
             "name": "created_before",
             "in": "query",
-            "description": "Exclusive submission time, RFC 3339. Required for CSV.",
-            "required": false,
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -904,7 +904,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "Missing, reversed, or over-366-day range",
             "content": {
               "application/json": {
                 "schema": {
@@ -946,8 +946,8 @@
           {
             "name": "created_from",
             "in": "query",
-            "description": "Inclusive submission time, RFC 3339. Required for CSV.",
-            "required": false,
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -955,8 +955,8 @@
           {
             "name": "created_before",
             "in": "query",
-            "description": "Exclusive submission time, RFC 3339. Required for CSV.",
-            "required": false,
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1160,6 +1160,25 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "assignee_id",
+            "in": "query",
+            "description": "Current assignee account.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "entered_queue",
+            "in": "query",
+            "description": "Whether a recorded transition entered the shared queue.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -6256,6 +6275,8 @@
           "not_solved",
           "provider_failed",
           "failed",
+          "missing_attempt",
+          "policy_withdrawn",
           "processing",
           "awaiting_decision",
           "cancelled",
@@ -8781,6 +8802,8 @@
           "first_response_samples",
           "mean_first_response_seconds",
           "initial_closures",
+          "initial_requester_confirmed",
+          "initial_confirmation_timeout",
           "subsequent_closures",
           "reopens",
           "rejected_proposals",
@@ -8801,6 +8824,14 @@
             "format": "int64"
           },
           "initial_closures": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_confirmation_timeout": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_requester_confirmed": {
             "type": "integer",
             "format": "int64"
           },
@@ -10136,7 +10167,9 @@
           "priorities",
           "ai_outcomes",
           "ai_attempts",
+          "ai_rate_numerator",
           "ai_rate_denominator",
+          "deflection_rate_numerator",
           "deflection_rate_denominator",
           "closures",
           "awaiting_confirmation",
@@ -10155,9 +10188,20 @@
             }
           },
           "ai_rate_denominator": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Confirmed, not-solved, or failed AI attempts on non-cancelled submissions."
+            "description": "Solved, not-solved, and recorded failures. Null with a team filter."
+          },
+          "ai_rate_numerator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Explicit AI confirmations. Null with a team filter."
           },
           "awaiting_confirmation": {
             "type": "integer",
@@ -10182,9 +10226,20 @@
             }
           },
           "deflection_rate_denominator": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "All non-cancelled submissions, including pending and bypassed AI paths."
+            "description": "Submissions excluding cancellations and policy withdrawals. Null with a team filter."
+          },
+          "deflection_rate_numerator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Explicit AI confirmations. Null with a team filter."
           },
           "operator": {
             "$ref": "#/components/schemas/OperatorTotals"

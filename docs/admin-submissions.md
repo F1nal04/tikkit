@@ -45,6 +45,8 @@ limit:
 | --- | --- |
 | `category_id` | The ticket's category (frozen at submission; archived ones included) |
 | `team_id` | Current destination team, including archived teams |
+| `assignee_id` | Current assignee account |
+| `entered_queue` | `true` for a recorded transition into the shared queue, `false` for its absence |
 | `priority_id` | Current effective priority |
 | `resolution` | A current closure bucket listed below |
 | `ai_disposition` | An AI breakdown bucket from [Admin reports](admin-reports.md#ai-outcomes-and-rates) |

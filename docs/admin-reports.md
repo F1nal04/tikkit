@@ -8,12 +8,15 @@ from that list.
 
 ## Cohort and time
 
-`GET /api/admin/reports` accepts optional `created_from`, `created_before`,
-`category_id`, and `team_id`. Bounds are RFC 3339 instants, inclusive at the
-start and exclusive at the end. Offsets are interpreted as instants. Daily
-buckets, the date picker, and CSV timestamps use UTC. The page initially
-selects the last 30 UTC calendar dates, including today. Its end date is
-inclusive on the screen.
+`GET /api/admin/reports` requires `created_from` and `created_before` and
+accepts optional `category_id` and `team_id`. Bounds are RFC 3339 instants,
+inclusive at the start and exclusive at the end, with a maximum span of
+366 elapsed days. Missing, reversed, empty, or overlong ranges return
+`400 invalid_query`. Offsets are interpreted as instants. Buckets, date pickers,
+and CSV timestamps use UTC. The page initially selects the last 30 UTC calendar
+dates, including today. Its end date is inclusive. A single valid date selects
+one day. For a range longer than 366 calendar dates, the page keeps the last
+366 dates through the later bound.
 
 Each submitted ticket counts once on the date its ticket row was created
 (`tickets.created_at`, set when the submission is persisted), including tickets
@@ -40,32 +43,51 @@ no attempt, and the same reporting bucket is available via the
 - **Solved** requires the persisted requester `ai_solved` decision. A generated
   suggestion, visit to history, cancellation, or denied reopen adds no success.
 - **Not solved** records the explicit requester decision that led to the shared
-  queue, regardless of whether the help desk has since resolved the ticket.
-- **Provider failed** identifies failures with a provider-specific outcome
-  code (`invalid_credentials`, `rate_limited`, `upstream_unavailable`,
-  `malformed_output`, or `oversized_output`). **Other AI failures** include
-  ambiguous timeouts, guard refusals, invalidation, and orphan recovery. Both
-  groups went to the shared queue without a suggestion. The split uses the
-  retained attempt outcome and remains stable when usage metadata expires.
+  queue. The decision stays in the cohort even after a subsequent closure or
+  cancellation.
+- **Provider or adapter failure** covers rejected credentials, rate limits,
+  model and vision errors, upstream unavailability, and malformed or oversized
+  output. A timeout belongs here when a linked failed usage record identifies
+  the guarded call. A blocked destination belongs here when a linked failed
+  usage record identifies a provider redirect. Model and vision codes also cover
+  adapter-side preparation failures.
+- **Other AI failures** cover invalid input, locally blocked destinations,
+  timeouts without provider evidence, guard refusals, worker failures, and any
+  recorded adapter cancellation that handed off as a failure. A requester
+  cancellation before decision has its own abandoned outcome. Usage retention
+  can move a timeout or redirect into the other-failures row. Both rows still
+  contribute to the completed-attempt denominator.
 - **Category exempt**, **AI disabled or unconfigured**, and **authorized
   requester skip** are distinct recorded routes. The last also includes a
-  requester skip while AI was processing. None contributes an attempt or
-  success to the reporting rates. Skipping a processing session can still
-  incur provider usage if a call had already started.
+  requester skip while AI was processing. These rows add submission volume
+  and zero report attempts or successes. Skipping a processing session can
+  still incur provider usage if a call had already started.
+- **AI withdrawn by policy or configuration** covers in-flight handoffs when a
+  category becomes exempt, AI is disabled, configuration or credentials
+  change, credentials become missing or unreadable, or the model becomes
+  unsupported. Withdrawals add submission volume and are excluded from
+  attempts and both rate denominators.
+- **Missing attempt** covers a recorded AI failure handoff without a stored
+  attempt. It adds submission volume and is outside the confirmation-rate
+  denominator. Legacy records without a classifiable event, route, or attempt
+  are reported as **unknown**.
 - **Processing** and **awaiting decision** are pending. **Abandoned** is a
-  cancelled AI session without a recorded decision. They count in submission
-  volume and in the displayed attempt count when an attempt exists, and are
-  excluded from the completed-attempt denominator. Legacy records without a
-  classifiable route or attempt are reported as **unknown**.
-- **AI confirmation rate** is explicit AI confirmations divided by completed
-  attempts on non-cancelled submissions. The denominator includes recorded
-  solved, not-solved, and failed attempts, including provider failures. An
-  orphaned handoff without an attempt row adds no attempt.
-- **AI deflection rate** is explicit AI confirmations divided by all
-  non-cancelled submissions in the cohort, including pending and bypassed
-  submissions. Cancelled submissions are excluded from both rate denominators
-  and never count as successful AI or operator resolutions. A rate with a zero
-  denominator is displayed without a value.
+  cancelled AI session without a recorded decision. They contribute to
+  submission volume and the displayed attempt count when an attempt exists.
+  The completed-attempt denominator excludes these rows.
+- **AI confirmation rate** is explicit AI confirmations divided by the sum of
+  the **Solved**, **Not solved**, **Provider or adapter failure**, and
+  **Other AI failures** rows. A later cancellation preserves a completed
+  decision or failure in this denominator.
+- **AI deflection rate** is explicit AI confirmations divided by the number of
+  submissions after excluding cancelled submissions and policy withdrawals.
+  Pending submissions and bypasses recorded at submission remain in the
+  denominator. Cancellations add zero successes.
+
+A rate with a zero denominator is displayed without a value. With a team
+filter, both rates are unavailable and the API returns `null` for each
+numerator and denominator. A team cohort excludes AI-solved tickets by design.
+The AI outcome table continues to show the selected team's outcomes.
 
 ## Help desk workload, closures, and observed times
 
@@ -76,20 +98,29 @@ team and assignee IDs, so duplicate display names stay distinct. Workload
 does not assign historical credit to a current assignee.
 
 The current resolution buckets use the same `RESOLUTION_SQL` classification as
-the Admin list. Help desk closures are broken down into explicit requester
-confirmation and automatic timeout without confirmation. Cancellation is its
-own terminal outcome. Rejected proposals count as events, never as closures.
-A ticket can have several rejections and still be open or eventually closed.
-Reopens count authorized `closed` transitions with event type `reopen`, and
-later closures are counted separately from the first closure per ticket. A
-reopened ticket appears open in the current breakdown and retains its first
-closure history and observation. AI confirmations are outside the operator
-statistics.
+the Admin list. Current and first help desk closures each break down into
+explicit requester confirmation and automatic confirmation timeout. The first
+closure reason comes from the historical closure event and survives a reopen.
+Cancellation is its own terminal outcome. Rejected proposals count as events,
+and a ticket can have several rejections. Reopens count authorized transitions
+from `closed` with event type `reopen`. Later closures are counted separately
+from the first closure per ticket. A reopened ticket appears open in the current
+breakdown and retains its first closure history and observation. AI confirmations
+are outside the operator statistics.
+
+Drill-down links reproduce the current closure counts, the overall count that
+entered the queue, and the queued, open, and awaiting-confirmation counts for
+workload rows with a named assignee. They use the same queue-entry event plus
+current team, assignee, and status filters where applicable. The submission list
+has no null-assignee filter, so unassigned rows have no per-row link. First and
+later closure, reopen, rejection, and duration sample counts have no direct
+list filter. Their underlying lifecycle events are available in each submission's
+detail.
 
 Each timing row shows the number of observed samples and their arithmetic mean.
 The API returns elapsed seconds, or `null` with no samples.
 
-- **First response** measures from first queue entry to the first public staff
+- **First staff response** measures from first queue entry to the first public staff
   reply, request-for-information transition, or staff resolution proposal,
   whichever comes first. Requester messages, assignment, start-work actions,
   and internal notes add no response sample.
@@ -121,7 +152,7 @@ populated only for a currently requester-confirmed operator closure. AI
 confirmation has its own timestamp. The export omits ticket text, AI
 suggestions, cancellation reasons, user identity, secrets, and provider
 diagnostics. Cells are quoted and quote-escaped, with formula-like prefixes
-neutralized even when preceded by whitespace.
+neutralized even when preceded by whitespace or quotes.
 
 After generating a successful export, `reports::audit_export` appends
 `report_exported` through the existing audit facility. The audit row records
