@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "tag-separator": "-",
+  "plugins": ["cargo-workspace"],
+  "packages": {
+    "apps/web": {
+      "component": "web",
+      "release-type": "node"
+    },
+    "apps/api": {
+      "component": "api",
+      "release-type": "rust"
+    }
+  }
+}
