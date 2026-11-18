@@ -94,7 +94,7 @@ const SUMMARY_SQL: &str = "SELECT a.id AS account_id, a.username, a.display_name
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`: no account has that username", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn summary(
+pub async fn personal_data_summary(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(query): Query<PersonalDataQuery>,
@@ -269,7 +269,7 @@ const SECTIONS: [(&str, &str); 12] = [
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`username`: `mismatch`)", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn export(
+pub async fn export_personal_data(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
@@ -395,7 +395,7 @@ async fn deleted(db: &mut PgConnection, sql: &str, account: Uuid) -> Result<i64,
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`)", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn anonymize(
+pub async fn anonymize_account(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<Uuid>,

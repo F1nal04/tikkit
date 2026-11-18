@@ -4,7 +4,7 @@ import type { AccountSummary, Schemas } from '@tikkit/api-client'
 import AccountEditor from './AccountEditor.svelte'
 import TeamEditor from '../teams/TeamEditor.svelte'
 vi.mock('$app/navigation', () => ({ invalidateAll: vi.fn() }))
-const account: AccountSummary = { id: 'account-1', username: 'operator.one', display_name: 'One', email: 'shared@example.com', role: 'operator', language: 'en', is_active: true, expertise: null, team_id: 'team-1', is_team_lead: false, created_at: '2026-01-01T00:00:00Z' }
+const account: AccountSummary = { id: 'account-1', username: 'operator.one', display_name: 'One', email: 'shared@example.com', role: 'operator', language: 'en', is_active: true, anonymized: false, expertise: null, team_id: 'team-1', is_team_lead: false, created_at: '2026-01-01T00:00:00Z' }
 const teams: Schemas['Team'][] = [{ id: 'team-1', name: 'Support', lead_account_id: 'lead', archived: false, created_at: account.created_at }]
 afterEach(() => vi.unstubAllGlobals())
 

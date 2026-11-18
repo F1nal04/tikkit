@@ -97,9 +97,11 @@
       <p class="hint">{t.leadProtection}</p>
       <div class="actions">
         <button type="submit" disabled={busy}>{busy ? t.saving : t.save}</button>
-        <button type="button" class="secondary" disabled={busy} onclick={setActive}>
-          {account.is_active ? t.deactivate : t.reactivate}
-        </button>
+        {#if !account.anonymized}
+          <button type="button" class="secondary" disabled={busy} onclick={setActive}>
+            {account.is_active ? t.deactivate : t.reactivate}
+          </button>
+        {/if}
       </div>
     </form>
   </details>

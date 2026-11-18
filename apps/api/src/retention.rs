@@ -145,18 +145,23 @@ struct Cutoffs {
 pub struct RetentionCounts {
     /// Drafts deleted.
     #[serde(default)]
+    #[schema(required = true)]
     pub drafts: i64,
     /// Screenshot records deleted (their files follow).
     #[serde(default)]
+    #[schema(required = true)]
     pub screenshots: i64,
     /// AI attempts whose input and suggestion were removed.
     #[serde(default)]
+    #[schema(required = true)]
     pub ai_content: i64,
     /// Tickets whose text was removed.
     #[serde(default)]
+    #[schema(required = true)]
     pub ticket_content: i64,
     /// Audit events deleted.
     #[serde(default)]
+    #[schema(required = true)]
     pub audit_events: i64,
 }
 
@@ -687,7 +692,7 @@ pub struct RetentionOverview {
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn overview(
+pub async fn get_retention(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Json<RetentionOverview>, ApiError> {
@@ -755,7 +760,7 @@ fn confirmed(confirm: Option<&str>) -> bool {
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (a period: `out_of_range`; `confirm`: `invalid`)", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn update(
+pub async fn put_retention(
     State(state): State<AppState>,
     user: CurrentUser,
     Json(body): Json<RetentionSettingsWrite>,
@@ -821,7 +826,7 @@ pub struct RetentionPreview {
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (a period: `out_of_range`)", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn preview_policy(
+pub async fn preview_retention(
     State(state): State<AppState>,
     user: CurrentUser,
     Json(policy): Json<RetentionPolicy>,
@@ -861,7 +866,7 @@ pub struct StartRetentionRun {
         (status = 409, description = "`conflict`: a run is already pending", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`)", body = crate::api::ErrorEnvelope),
     ))]
-pub async fn start(
+pub async fn start_retention_run(
     State(state): State<AppState>,
     user: CurrentUser,
     Json(body): Json<StartRetentionRun>,

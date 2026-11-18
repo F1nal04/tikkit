@@ -91,7 +91,7 @@ export interface paths {
          *     deactivated first, so the last active Admin and an active team's lead can
          *     never be anonymized. Irreversible. Writes `account_anonymized`.
          */
-        post: operations["anonymize"];
+        post: operations["anonymize_account"];
         delete?: never;
         options?: never;
         head?: never;
@@ -114,7 +114,7 @@ export interface paths {
          *     contains credentials, hashes, internal notes, or other people's data; see
          *     docs/retention.md for the exact contents. Writes `personal_data_exported`.
          */
-        post: operations["export"];
+        post: operations["export_personal_data"];
         delete?: never;
         options?: never;
         head?: never;
@@ -268,7 +268,7 @@ export interface paths {
          * Finds one account by username and counts what is stored about it (Admin
          *     only). Read-only; the preview before an export or anonymization.
          */
-        get: operations["summary"];
+        get: operations["personal_data_summary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -317,12 +317,12 @@ export interface paths {
             cookie?: never;
         };
         /** The retention policy and the latest runs (Admin only). */
-        get: operations["overview"];
+        get: operations["get_retention"];
         /**
          * Replaces the retention policy (Admin only). Saving deletes nothing unless
          *     `automatic` is on; then the worker applies the policy within a day.
          */
-        put: operations["update"];
+        put: operations["put_retention"];
         post?: never;
         delete?: never;
         options?: never;
@@ -343,7 +343,7 @@ export interface paths {
          * Dry run (Admin only): exact counts per category for the given periods,
          *     saved or not. Changes nothing and writes no audit event.
          */
-        post: operations["preview_policy"];
+        post: operations["preview_retention"];
         delete?: never;
         options?: never;
         head?: never;
@@ -363,7 +363,7 @@ export interface paths {
          * Starts applying the saved policy now (Admin only). The retention worker
          *     does the work in batches; `GET /api/admin/retention` shows its progress.
          */
-        post: operations["start"];
+        post: operations["start_retention_run"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3244,27 +3244,27 @@ export interface components {
              * Format: int64
              * @description AI attempts whose input and suggestion were removed.
              */
-            ai_content?: number;
+            ai_content: number;
             /**
              * Format: int64
              * @description Audit events deleted.
              */
-            audit_events?: number;
+            audit_events: number;
             /**
              * Format: int64
              * @description Drafts deleted.
              */
-            drafts?: number;
+            drafts: number;
             /**
              * Format: int64
              * @description Screenshot records deleted (their files follow).
              */
-            screenshots?: number;
+            screenshots: number;
             /**
              * Format: int64
              * @description Tickets whose text was removed.
              */
-            ticket_content?: number;
+            ticket_content: number;
         };
         /** @description Bounds of the retention periods, in days. */
         RetentionLimits: {
@@ -4167,7 +4167,7 @@ export interface operations {
             };
         };
     };
-    anonymize: {
+    anonymize_account: {
         parameters: {
             query?: never;
             header?: never;
@@ -4228,7 +4228,7 @@ export interface operations {
             };
         };
     };
-    export: {
+    export_personal_data: {
         parameters: {
             query?: never;
             header?: never;
@@ -4647,7 +4647,7 @@ export interface operations {
             };
         };
     };
-    summary: {
+    personal_data_summary: {
         parameters: {
             query: {
                 /** @description Exact username (case-insensitive). Resolves to one account ID. */
@@ -4811,7 +4811,7 @@ export interface operations {
             };
         };
     };
-    overview: {
+    get_retention: {
         parameters: {
             query?: never;
             header?: never;
@@ -4848,7 +4848,7 @@ export interface operations {
             };
         };
     };
-    update: {
+    put_retention: {
         parameters: {
             query?: never;
             header?: never;
@@ -4898,7 +4898,7 @@ export interface operations {
             };
         };
     };
-    preview_policy: {
+    preview_retention: {
         parameters: {
             query?: never;
             header?: never;
@@ -4948,7 +4948,7 @@ export interface operations {
             };
         };
     };
-    start: {
+    start_retention_run: {
         parameters: {
             query?: never;
             header?: never;

@@ -27,6 +27,7 @@
 
 <p><a href="/admin/submissions">{s.back}</a></p>
 <h1>#{summary.reference} · {summary.subject}</h1>
+{#if d.content_removed_at}<Alert kind="info">{t.retention.contentRemoved}</Alert>{:else if d.ai?.content_removed}<Alert kind="info">{t.retention.aiContentRemoved}</Alert>{/if}
 <div class="badges">
   <StatusBadge status={summary.status} label={t.statuses[summary.status]} />
   <span data-testid="resolution" data-resolution={summary.resolution}>{s.resolutions[summary.resolution]}</span>

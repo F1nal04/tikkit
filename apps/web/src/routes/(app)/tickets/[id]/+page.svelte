@@ -130,6 +130,7 @@
   <button onclick={refresh}>{h.refresh}</button>
 {:else}
   <h1>#{ticket.reference} · {ticket.subject}</h1>
+  {#if ticket.content_removed_at}<Alert kind="info">{t.retention.contentRemoved}</Alert>{:else if ticket.ai?.content_removed}<Alert kind="info">{t.retention.aiContentRemoved}</Alert>{/if}
   <div class="actions"><StatusBadge status={ticket.status} label={t.ticketStatuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy || deciding}>{h.refresh}</button></div>
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? h.replySent : h.actionSaved}</Alert>{/if}
   {#if changed}<Alert>{h.changed}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}

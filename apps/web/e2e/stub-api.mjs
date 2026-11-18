@@ -281,6 +281,7 @@ const auditMatches = (q) => (e) =>
   (!q.get('created_from') || e.created_at >= q.get('created_from')) &&
   (!q.get('created_before') || e.created_at < q.get('created_before'))
 const auditExports = new Map()
+const retention = {}
 const csvCell = (value) => `"${/^[=+\-@\t\r]/.test(value) ? "'" : ''}${String(value).replaceAll('"', '""')}"`
 
 
@@ -443,6 +444,86 @@ createServer(async (req, res) => {
     })
   }
   if (route === 'GET /api/catalog/all') return ROLES[user] === 'admin' ? reply(res, 200, CATALOG) : fail(res, 403, 'forbidden')
+  // Data retention (docs/retention.md): Admin only. State is per session, so parallel tests stay apart.
+  if (pathname.startsWith('/api/admin/retention') || pathname === '/api/admin/personal-data' || /^\/api\/admin\/accounts\/[^/]+\/(personal-data\/export|anonymize)$/.test(pathname)) {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const invalid = (fields) => reply(res, 422, { error: { code: 'validation_failed', message: 'invalid', details: { fields } }, request_id: 'stub' })
+    const keep = { draft_days: null, screenshot_days: null, ai_content_days: null, ticket_content_days: null, audit_days: null }
+    const r = (retention[tokenOf(req)] ??= {
+      settings: { policy: keep, automatic: false, updated_at: '2026-11-01T00:00:00Z' },
+      runs: [],
+      accounts: [
+        { account_id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'Requester', role: 'user', is_active: true, anonymized_at: null, tickets: 3, open_tickets: 1, final_tickets_with_content: 2, drafts: 1, pending_screenshots: 0, sessions: 2, audit_events: 14 },
+        { account_id: '40000000-0000-4000-8000-000000000009', username: 'former.user', display_name: 'Former User', role: 'operator', is_active: false, anonymized_at: null, tickets: 5, open_tickets: 0, final_tickets_with_content: 5, drafts: 2, pending_screenshots: 1, sessions: 0, audit_events: 31 },
+      ],
+    })
+    // What the sample data holds beyond each period.
+    const affected = (p) => ({
+      drafts: p.draft_days ? 4 : 0,
+      screenshots: p.screenshot_days || p.ticket_content_days ? 7 : 0,
+      ai_content: p.ai_content_days || p.ticket_content_days ? 2 : 0,
+      ticket_content: p.ticket_content_days ? 5 : 0,
+      audit_events: p.audit_days ? 120 : 0,
+    })
+    const range = (p) => {
+      const fields = {}
+      for (const key of Object.keys(keep)) {
+        const min = key === 'audit_days' ? 30 : 1
+        if (p[key] !== null && !(Number.isInteger(p[key]) && p[key] >= min && p[key] <= 3650)) fields[key] = ['out_of_range']
+      }
+      return fields
+    }
+    if (route === 'GET /api/admin/retention') {
+      // The worker finishes a run between two reads.
+      for (const run of r.runs) {
+        if (run.state === 'pending' && run.seen) Object.assign(run, { state: 'completed', finished_at: '2026-11-18T09:01:00Z', deleted: affected(run.policy) })
+        run.seen = true
+      }
+      return reply(res, 200, { settings: r.settings, limits: { min_days: 1, max_days: 3650, audit_min_days: 30 }, runs: r.runs.map(({ seen, ...run }) => run) })
+    }
+    if (route === 'PUT /api/admin/retention') {
+      const { automatic, confirm, ...policy } = await readBody(req)
+      const fields = range(policy)
+      if (automatic && Object.values(policy).some((d) => d !== null) && confirm !== 'DELETE') fields.confirm = ['invalid']
+      if (Object.keys(fields).length) return invalid(fields)
+      r.settings = { policy, automatic, updated_at: '2026-11-18T09:00:00Z' }
+      return reply(res, 200, r.settings)
+    }
+    if (route === 'POST /api/admin/retention/preview') {
+      const policy = await readBody(req)
+      const fields = range(policy)
+      if (Object.keys(fields).length) return invalid(fields)
+      return reply(res, 200, { as_of: '2026-11-18T09:00:00Z', policy, affected: affected(policy) })
+    }
+    if (route === 'POST /api/admin/retention/runs') {
+      const { confirm } = await readBody(req)
+      if (confirm !== 'DELETE') return invalid({ confirm: ['invalid'] })
+      if (Object.values(r.settings.policy).every((d) => d === null)) return invalid({ policy: ['not_configured'] })
+      if (r.runs.some((run) => run.state === 'pending')) return fail(res, 409, 'conflict')
+      const run = { id: randomUUID(), state: 'pending', requested_by: '40000000-0000-4000-8000-000000000006', requested_by_username: 'admin', created_at: '2026-11-18T09:00:00Z', as_of: '2026-11-18T09:00:00Z', finished_at: null, policy: r.settings.policy, deleted: affected(keep) }
+      r.runs.unshift(run)
+      return reply(res, 202, run)
+    }
+    if (route === 'GET /api/admin/personal-data') {
+      const wanted = (new URL(req.url, 'http://stub').searchParams.get('username') ?? '').trim().toLowerCase()
+      const found = r.accounts.find((a) => a.username.toLowerCase() === wanted)
+      return found ? reply(res, 200, found) : fail(res, 404, 'not_found')
+    }
+    const [, id, action] = /^\/api\/admin\/accounts\/([^/]+)\/(.+)$/.exec(pathname) ?? []
+    const account = r.accounts.find((a) => a.account_id === id)
+    if (req.method !== 'POST' || !account) return fail(res, 404, 'not_found')
+    const body = await readBody(req)
+    if (String(body.username ?? '').trim().toLowerCase() !== account.username.toLowerCase()) return invalid({ username: ['mismatch'] })
+    if (action === 'personal-data/export') {
+      const document = { format: 'tikkit.personal_data.v1', generated_at: '2026-11-18T09:00:00Z', account: { id, username: account.username, email: 'shared@example.com' }, tickets: [{ reference: 301, subject: 'Printer' }], truncated: [] }
+      return reply(res, 200, document, { 'content-disposition': `attachment; filename="personal-data-${id}.json"`, 'cache-control': 'private, no-store' })
+    }
+    if (account.anonymized_at) return invalid({ account: ['already_anonymized'] })
+    if (account.is_active) return invalid({ account: ['active'] })
+    const username = `anonymized-${id.replaceAll('-', '')}`
+    Object.assign(account, { username, display_name: username, anonymized_at: '2026-11-18T09:00:00Z', drafts: 0, pending_screenshots: 0, sessions: 0, final_tickets_with_content: body.purge_ticket_content ? 0 : account.final_tickets_with_content })
+    return reply(res, 200, { account_id: id, username, sessions: 0, drafts: 2, pending_screenshots: 1, saved_views: 0, notifications: 3, audit_events: 31, ticket_content: { drafts: 0, screenshots: body.purge_ticket_content ? 4 : 0, ai_content: 0, ticket_content: body.purge_ticket_content ? 5 : 0, audit_events: 0 } })
+  }
   if (pathname.startsWith('/api/admin/audit')) {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
     const q = new URL(req.url, 'http://stub').searchParams

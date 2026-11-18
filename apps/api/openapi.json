@@ -292,7 +292,7 @@
           "admin"
         ],
         "summary": "Removes the identity of a deactivated account for good (Admin only). The\naccount ID, role, and every ticket, event, and statistic that refers to it\nstay; see docs/retention.md for the exact policy. The account must be\ndeactivated first, so the last active Admin and an active team's lead can\nnever be anonymized. Irreversible. Writes `account_anonymized`.",
-        "operationId": "anonymize",
+        "operationId": "anonymize_account",
         "parameters": [
           {
             "name": "id",
@@ -374,7 +374,7 @@
           "admin"
         ],
         "summary": "Exports the personal data of one account as a JSON document (Admin only).\nThe typed `username` must be the account's. Bounded: each section holds at\nmost 10,000 rows and `truncated` names the sections that were cut. Never\ncontains credentials, hashes, internal notes, or other people's data; see\ndocs/retention.md for the exact contents. Writes `personal_data_exported`.",
-        "operationId": "export",
+        "operationId": "export_personal_data",
         "parameters": [
           {
             "name": "id",
@@ -1026,7 +1026,7 @@
           "admin"
         ],
         "summary": "Finds one account by username and counts what is stored about it (Admin\nonly). Read-only; the preview before an export or anonymization.",
-        "operationId": "summary",
+        "operationId": "personal_data_summary",
         "parameters": [
           {
             "name": "username",
@@ -1278,7 +1278,7 @@
           "admin"
         ],
         "summary": "The retention policy and the latest runs (Admin only).",
-        "operationId": "overview",
+        "operationId": "get_retention",
         "responses": {
           "200": {
             "description": "",
@@ -1317,7 +1317,7 @@
           "admin"
         ],
         "summary": "Replaces the retention policy (Admin only). Saving deletes nothing unless\n`automatic` is on; then the worker applies the policy within a day.",
-        "operationId": "update",
+        "operationId": "put_retention",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1378,7 +1378,7 @@
           "admin"
         ],
         "summary": "Dry run (Admin only): exact counts per category for the given periods,\nsaved or not. Changes nothing and writes no audit event.",
-        "operationId": "preview_policy",
+        "operationId": "preview_retention",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1439,7 +1439,7 @@
           "admin"
         ],
         "summary": "Starts applying the saved policy now (Admin only). The retention worker\ndoes the work in batches; `GET /api/admin/retention` shows its progress.",
-        "operationId": "start",
+        "operationId": "start_retention_run",
         "requestBody": {
           "content": {
             "application/json": {
@@ -11058,6 +11058,13 @@
       "RetentionCounts": {
         "type": "object",
         "description": "Records per category. In a preview: what a run started now would remove.\nIn a run: what it has removed so far.",
+        "required": [
+          "drafts",
+          "screenshots",
+          "ai_content",
+          "ticket_content",
+          "audit_events"
+        ],
         "properties": {
           "ai_content": {
             "type": "integer",
