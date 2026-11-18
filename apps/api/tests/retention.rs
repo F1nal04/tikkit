@@ -1874,3 +1874,319 @@ async fn anonymization_removes_the_identity_and_keeps_relationships_and_reports(
         .clone();
     assert_eq!(listed["anonymized"], true);
 }
+
+/// The interleaving behind the early purge: the worker has scanned a ticket as
+/// expired; before it locks the ticket, the ticket is reopened and closed
+/// again. Its newest closure is inside the keep period, so it must stay.
+#[tokio::test]
+async fn a_ticket_closed_again_after_the_scan_is_judged_by_its_newest_closure() {
+    let Some(w) = world().await else { return };
+    let closed = w.closed("Printer").await;
+    w.age(&[closed], "40 days").await;
+    let policy = only_tickets(30);
+    let as_of = w.now().await;
+    let run = retention::start_run(w.pool(), &policy, Some(w.ids["admin"]), as_of)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Another transaction reopens the ticket and closes it again. It holds
+    // the ticket's row lock and has not committed yet.
+    let mut other = w.pool().begin().await.unwrap();
+    let (owner, op) = (By::Account(w.ids["owner"]), By::Account(w.ids["op"]));
+    lifecycle::transition(&mut other, closed, owner, &Transition::Reopen)
+        .await
+        .unwrap();
+    let propose = Transition::ProposeResolution {
+        summary: "Replaced it again.".into(),
+    };
+    lifecycle::transition(&mut other, closed, op, &propose)
+        .await
+        .unwrap();
+
+    // The worker claims the run and scans: by everything committed, the
+    // ticket expired forty days ago.
+    let mut worker = w.pool().begin().await.unwrap();
+    let claimed = retention::claim(&mut worker).await.unwrap().unwrap();
+    assert_eq!(
+        retention::preview(&mut worker, &policy, as_of)
+            .await
+            .unwrap()
+            .ticket_content,
+        1
+    );
+
+    // The other transaction closes the ticket and commits.
+    let accept = Transition::AcceptResolution {
+        proposal_version: 2,
+    };
+    lifecycle::transition(&mut other, closed, owner, &accept)
+        .await
+        .unwrap();
+    other.commit().await.unwrap();
+
+    // Now the worker, still in the transaction that scanned, takes the ticket
+    // from its list. The row it locks is the re-closed one; the routine reads
+    // the closure again after locking and leaves the ticket alone.
+    for sql in [
+        "SELECT retention_delete_screenshots($1, $2, NULL)::text",
+        "SELECT retention_purge_ai($1, $2, NULL)::text",
+        "SELECT retention_purge_ticket($1, $2, NULL)::text",
+    ] {
+        let done: Vec<String> = sqlx::query_scalar(sql)
+            .bind(closed)
+            .bind(run)
+            .fetch_all(&mut *worker)
+            .await
+            .unwrap();
+        assert!(
+            done.iter().all(|d| d == "false" || d == "0"),
+            "{sql}: {done:?}"
+        );
+    }
+    let advance = retention::process(&mut worker, &claimed, 10, 1_000)
+        .await
+        .unwrap();
+    assert!(advance.completed, "nothing is expired any more");
+    worker.commit().await.unwrap();
+
+    assert_eq!(w.run_counts(run).await, RetentionCounts::default());
+    let ticket = w.ticket(closed).await;
+    assert_eq!(ticket["subject"], "Printer");
+    assert_eq!(ticket["content_purged_at"], Value::Null);
+    assert_eq!(ticket["status"], "closed");
+    let bodies: Vec<String> = sqlx::query_scalar(
+        "SELECT body FROM ticket_messages WHERE ticket_id = $1 ORDER BY sequence",
+    )
+    .bind(closed)
+    .fetch_all(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(bodies, ["Please reseat the tray.", "User sounded annoyed."]);
+
+    // The same race seen from a whole worker step: while the other
+    // transaction holds the ticket, the step skips it and the run waits.
+    let second = w.closed("Scanner").await;
+    w.age(&[second], "40 days").await;
+    let run = retention::start_run(w.pool(), &policy, None, w.now().await)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut other = w.pool().begin().await.unwrap();
+    lifecycle::transition(&mut other, second, owner, &Transition::Reopen)
+        .await
+        .unwrap();
+    assert!(!w.step(10).await, "the run waits for the held ticket");
+    assert_eq!(w.pending().await, 1);
+    lifecycle::transition(&mut other, second, op, &propose)
+        .await
+        .unwrap();
+    lifecycle::transition(&mut other, second, owner, &accept)
+        .await
+        .unwrap();
+    other.commit().await.unwrap();
+    w.skip_backoff().await;
+    while w.pending().await > 0 {
+        w.step(10).await;
+    }
+    assert_eq!(w.run_counts(run).await, RetentionCounts::default());
+    assert_eq!(w.ticket(second).await["subject"], "Scanner");
+}
+
+#[tokio::test]
+async fn a_run_is_not_completed_past_a_candidate_someone_else_holds() {
+    let Some(w) = world().await else { return };
+    let closed = w.closed("Printer").await;
+    w.age(&[closed], "40 days").await;
+    let run = retention::start_run(w.pool(), &only_tickets(1), None, w.now().await)
+        .await
+        .unwrap()
+        .unwrap();
+    let state = support::test_state(w.pool());
+    let step = || retention::step(w.pool(), &w.dir, &state.metrics, 10);
+
+    // Another transaction briefly holds the only expired ticket.
+    let mut holder = w.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(closed)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    assert!(!step().await.unwrap(), "nothing could be taken");
+    let (run_state, attempts, waits): (String, i32, bool) = sqlx::query_as(
+        "SELECT state, attempts, next_attempt_at > clock_timestamp() FROM retention_runs WHERE id = $1",
+    )
+    .bind(run)
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    assert_eq!((run_state.as_str(), attempts, waits), ("pending", 1, true));
+    assert_eq!(w.audit("retention_run_completed").await.len(), 0);
+    let text = support::metrics_text(&state).await;
+    assert!(
+        text.contains("tikkit_worker_retries_total{worker=\"retention\"} 1\n"),
+        "{text}"
+    );
+    assert!(text.contains("tikkit_worker_pending_jobs{worker=\"retention\"} 1\n"));
+    // During the backoff the worker leaves the run alone.
+    assert!(!step().await.unwrap());
+    let attempts: i32 = w
+        .scalar("SELECT attempts FROM retention_runs WHERE id = $1", run)
+        .await;
+    assert_eq!(attempts, 1);
+
+    holder.rollback().await.unwrap();
+    w.skip_backoff().await;
+    assert!(step().await.unwrap(), "the ticket is taken now");
+    let attempts: i32 = w
+        .scalar("SELECT attempts FROM retention_runs WHERE id = $1", run)
+        .await;
+    assert_eq!(attempts, 0, "progress resets the backoff");
+    while w.pending().await > 0 {
+        step().await.unwrap();
+    }
+    assert_eq!(w.run_counts(run).await.ticket_content, 1);
+    assert_eq!(w.ticket(closed).await["subject"], REMOVED);
+}
+
+#[tokio::test]
+async fn a_backup_holding_the_file_lock_defers_file_deletion_not_database_work() {
+    let Some(w) = world().await else { return };
+    let closed = w.closed("Printer").await;
+    let open = w.open("Still open").await;
+    let expired = w.screenshot(closed, None).await;
+    let live = w.screenshot(open, None).await;
+    w.age(&[closed, open], "40 days").await;
+    let old = SystemTime::now() - std::time::Duration::from_secs(48 * 3600);
+    for id in [expired, live] {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(w.dir.join(id.to_string()))
+            .unwrap();
+        file.set_modified(old).unwrap();
+    }
+    let policy = RetentionPolicy {
+        screenshot_days: Some(1),
+        ..Default::default()
+    };
+
+    // The backup's session: the documented contract.
+    let mut backup = w.pool().acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(screenshot_files_lock_key())")
+        .execute(&mut *backup)
+        .await
+        .unwrap();
+
+    // The run does all its database work and completes; only the file stays.
+    let done = w.run(&policy, w.now().await).await;
+    assert_eq!(done.screenshots, 1);
+    assert_eq!(w.count("SELECT count(*) FROM screenshots").await, 1);
+    assert!(w.file(expired), "file deletion is deferred during a backup");
+    assert!(!screenshots::remove_files(w.pool(), &w.dir, &[expired]).await);
+    // The stray-file sweep respects the lock too.
+    screenshots::cleanup(w.pool(), &w.dir).await.unwrap();
+    assert!(w.file(expired));
+
+    // A second holder in shared mode is not blocked by the first deleter:
+    // only the backup's exclusive lock defers.
+    sqlx::query("SELECT pg_advisory_unlock(screenshot_files_lock_key())")
+        .execute(&mut *backup)
+        .await
+        .unwrap();
+    drop(backup);
+    screenshots::cleanup(w.pool(), &w.dir).await.unwrap();
+    assert!(!w.file(expired), "deletion resumes after the backup");
+    assert!(w.file(live), "a live ticket's screenshot is never removed");
+    assert!(screenshots::remove_files(w.pool(), &w.dir, &[Uuid::new_v4()]).await);
+}
+
+#[tokio::test]
+async fn work_is_bounded_per_transaction() {
+    let Some(w) = world().await else { return };
+    let old_events = |n: i32| {
+        sqlx::query(
+            "INSERT INTO audit_events (event_type, actor_service, created_at)
+             SELECT 'old_event', 'system', now() - interval '40 days' FROM generate_series(1, $1)",
+        )
+        .bind(n)
+        .execute(w.pool())
+    };
+    // The audit purge deletes at most the limit per call, oldest first, and
+    // writes one purge record per call that deleted something.
+    old_events(5).await.unwrap();
+    let cutoff = w.now().await - Duration::days(30);
+    let mut deleted = Vec::new();
+    for _ in 0..4 {
+        let mut tx = w.pool().begin().await.unwrap();
+        deleted.push(
+            audit::purge_batch(&mut tx, cutoff, Who::Service(audit::RETENTION), 2)
+                .await
+                .unwrap(),
+        );
+        tx.commit().await.unwrap();
+    }
+    assert_eq!(deleted, [2, 2, 1, 0]);
+    let records = w.audit("audit_retention_purged").await;
+    let counts: Vec<i64> = records
+        .iter()
+        .map(|r| r["metadata"]["deleted"].as_i64().unwrap())
+        .collect();
+    assert_eq!(counts, [2, 2, 1]);
+    // The floor and the actor rule hold for the batched form as well.
+    let mut tx = w.pool().begin().await.unwrap();
+    let young = w.now().await - Duration::days(29);
+    assert!(
+        audit::purge_batch(&mut tx, young, Who::Service(audit::RETENTION), 2)
+            .await
+            .is_err()
+    );
+    drop(tx);
+    let mut tx = w.pool().begin().await.unwrap();
+    assert!(
+        audit::purge_batch(&mut tx, cutoff, Who::Account(w.ids["op"]), 2)
+            .await
+            .is_err()
+    );
+    drop(tx);
+
+    // A run stops a batch once the row budget is used, and keeps its progress.
+    let mut tickets = Vec::new();
+    for n in 0..3 {
+        tickets.push(w.closed(&format!("Printer {n}")).await);
+    }
+    w.age(&tickets, "40 days").await;
+    old_events(3).await.unwrap();
+    let policy = RetentionPolicy {
+        ticket_content_days: Some(1),
+        audit_days: Some(30),
+        ..Default::default()
+    };
+    let run = retention::start_run(w.pool(), &policy, None, w.now().await)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let mut tx = w.pool().begin().await.unwrap();
+        let claimed = retention::claim(&mut tx).await.unwrap().unwrap();
+        // Budget of one row: each ticket (itself, two messages, one event) is
+        // more than that, so every transaction takes exactly one ticket.
+        let advance = retention::process(&mut tx, &claimed, 100, 1).await.unwrap();
+        assert!(!advance.completed);
+        tx.commit().await.unwrap();
+        let counts: sqlx::types::Json<RetentionCounts> = w
+            .scalar("SELECT counts FROM retention_runs WHERE id = $1", run)
+            .await;
+        seen.push(counts.0.ticket_content);
+    }
+    assert_eq!(
+        seen,
+        [1, 2, 3],
+        "durable progress, one ticket per transaction"
+    );
+    while w.pending().await > 0 {
+        w.step(100).await;
+    }
+    let done = w.run_counts(run).await;
+    assert_eq!((done.ticket_content, done.audit_events), (3, 3));
+}
