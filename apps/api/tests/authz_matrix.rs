@@ -947,19 +947,85 @@ fn documented() -> BTreeSet<String> {
     ops
 }
 
-/// Paths registered with `.route("...")` in the router source.
-fn routed_paths() -> BTreeSet<String> {
-    let source = include_str!("../src/lib.rs");
-    let source = &source[..source.find("#[cfg(test)]").unwrap_or(source.len())];
-    let mut paths = BTreeSet::new();
-    let mut rest = source;
-    while let Some(at) = rest.find(".route(") {
-        rest = &rest[at + ".route(".len()..];
-        let quoted = rest.trim_start();
-        if let Some(stripped) = quoted.strip_prefix('"') {
-            paths.insert(stripped[..stripped.find('"').unwrap()].to_owned());
+/// Every Rust source file of the API crate (`src/**/*.rs`), without its
+/// `#[cfg(test)]` module, as `(path relative to src, text)`.
+fn api_sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                let text = match text.find("#[cfg(test)]") {
+                    Some(at) => text[..at].to_owned(),
+                    None => text,
+                };
+                let name = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                out.push((name, text));
+            }
         }
     }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut out = Vec::new();
+    walk(&root, &root, &mut out);
+    assert!(out.iter().any(|(name, _)| name == "lib.rs"));
+    out
+}
+
+/// The private metrics listener's router: not public, not under `/api`, and
+/// checked by `observability::public_routes_do_not_expose_metrics_and_scrape_reports_an_outage`.
+const PRIVATE_ROUTES: &[(&str, &str)] = &[("metrics.rs", "/metrics")];
+
+/// Paths registered with `.route("...")` anywhere in the API source. Any way
+/// of adding routes that this scan cannot see is refused outright, so the
+/// scan, the OpenAPI document and the matrix cannot drift apart silently.
+fn routed_paths() -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    let mut refused = Vec::new();
+    for (file, source) in api_sources() {
+        for call in [
+            ".nest(",
+            ".nest_service(",
+            ".route_service(",
+            ".merge(",
+            ".fallback(",
+            ".fallback_service(",
+        ] {
+            if source.contains(call) {
+                refused.push(format!("{file}: `{call}` adds routes the matrix cannot see; use `.route(\"/api/...\", ...)` in lib.rs"));
+            }
+        }
+        if source.contains("Router::new()")
+            && file != "lib.rs"
+            && !PRIVATE_ROUTES.iter().any(|(f, _)| *f == file)
+        {
+            refused.push(format!("{file}: a router outside lib.rs"));
+        }
+        let mut rest = source.as_str();
+        while let Some(at) = rest.find(".route(") {
+            rest = &rest[at + ".route(".len()..];
+            let Some(quoted) = rest.trim_start().strip_prefix('"') else {
+                refused.push(format!("{file}: `.route(` with a non-literal path"));
+                continue;
+            };
+            let path = &quoted[..quoted.find('"').unwrap()];
+            if PRIVATE_ROUTES.contains(&(file.as_str(), path)) {
+                continue;
+            }
+            if file != "lib.rs" || !path.starts_with("/api/") {
+                refused.push(format!(
+                    "{file}: route {path} outside the public /api router in lib.rs"
+                ));
+            }
+            paths.insert(path.to_owned());
+        }
+    }
+    assert!(refused.is_empty(), "\n{}", refused.join("\n"));
     paths
 }
 

@@ -299,6 +299,7 @@ pub fn app(state: AppState) -> Router {
 }
 
 pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
+    use axum::handler::Handler;
     use security::Throttle;
     let throttle = |t: Throttle| axum::middleware::from_fn_with_state(t, security::throttle);
     let metrics = state.metrics.clone();
@@ -454,17 +455,17 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route(
             "/api/tickets",
             get(tickets::list_own_tickets)
-                .merge(post(submission::submit_ticket).route_layer(throttle(Throttle::Submission))),
+                .post(submission::submit_ticket.layer(throttle(Throttle::Submission))),
         )
         .route(
             "/api/ticket-drafts",
             get(submission::list_drafts)
-                .merge(post(submission::create_draft).route_layer(throttle(Throttle::Draft))),
+                .post(submission::create_draft.layer(throttle(Throttle::Draft))),
         )
         .route(
             "/api/ticket-drafts/{id}",
             get(submission::get_draft)
-                .merge(patch(submission::update_draft).route_layer(throttle(Throttle::Draft)))
+                .patch(submission::update_draft.layer(throttle(Throttle::Draft)))
                 .delete(submission::delete_draft),
         )
         .route(
