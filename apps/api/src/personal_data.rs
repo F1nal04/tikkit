@@ -393,6 +393,7 @@ async fn deleted(db: &mut PgConnection, sql: &str, account: Uuid) -> Result<i64,
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`conflict`: a ticket of the account is being changed right now; try again", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn anonymize_account(
@@ -458,31 +459,63 @@ pub async fn anonymize_account(
         id,
     )
     .await?;
-    if body.purge_ticket_content {
-        let tickets: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT t.id FROM tickets t
-             WHERE t.requester_account_id = $1 AND t.status IN ('closed', 'cancelled', 'ai_solved')
-             ORDER BY t.id FOR UPDATE OF t",
-        )
-        .bind(id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let (removed, counts) = retention::purge_content(&mut tx, &tickets).await?;
-        files.extend(removed);
-        result.ticket_content = counts;
-    }
-    // The account row first: new audit events snapshot the username as it is then.
+    // The account row before anything that is audited: new audit events
+    // snapshot the username as it is then. The placeholder is in a namespace
+    // no other account can register; if a name from before that rule is in the
+    // way, the next free suffix is taken, so this never fails on a collision.
     result.username = sqlx::query_scalar(
-        "UPDATE accounts
-         SET username = 'anonymized-' || replace(id::text, '-', ''),
-             display_name = 'anonymized-' || replace(id::text, '-', ''),
+        "WITH free AS (
+             SELECT c.name FROM (
+                 SELECT 'anonymized-' || replace($1::text, '-', '')
+                        || CASE WHEN n = 0 THEN '' ELSE '-' || n END AS name, n
+                 FROM generate_series(0, 10000) n) c
+             WHERE NOT EXISTS (SELECT 1 FROM accounts o
+                               WHERE o.username_normalized = c.name AND o.id <> $1)
+             ORDER BY c.n LIMIT 1)
+         UPDATE accounts a
+         SET username = free.name, display_name = free.name,
              email = '', password_hash = '!', expertise = NULL,
              notify_email = false, notify_in_app = false, anonymized_at = now()
-         WHERE id = $1 RETURNING username",
+         FROM free WHERE a.id = $1 RETURNING a.username",
     )
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;
+    if body.purge_ticket_content {
+        // The database verifies, per ticket, that this account is anonymized
+        // and submitted it, and audits each removal.
+        let tickets: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT t.id FROM tickets t
+             WHERE t.requester_account_id = $1 AND t.status IN ('closed', 'cancelled', 'ai_solved')
+             ORDER BY t.id",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let by = retention::Authority::Account(id);
+        for ticket in tickets {
+            let (removed, counts, _) = retention::purge_content(&mut tx, ticket, by).await?;
+            files.extend(removed);
+            result.ticket_content.screenshots += counts.screenshots;
+            result.ticket_content.ai_content += counts.ai_content;
+            result.ticket_content.ticket_content += counts.ticket_content;
+        }
+        // A ticket someone else holds right now was skipped: nothing is
+        // committed and the Admin tries again.
+        let left: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM tickets t
+                 WHERE t.requester_account_id = $1
+                   AND t.status IN ('closed', 'cancelled', 'ai_solved')
+                   AND (t.content_purged_at IS NULL
+                        OR EXISTS (SELECT 1 FROM screenshots s WHERE s.ticket_id = t.id)))",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if left {
+            return Err(ApiError::Conflict);
+        }
+    }
     result.audit_events =
         audit::anonymize_account(&mut tx, id, Who::Account(user.account_id())).await?;
     audit::record(
@@ -506,6 +539,6 @@ pub async fn anonymize_account(
     )
     .await?;
     tx.commit().await?;
-    retention::remove_files(&state.screenshot_dir, &files).await;
+    crate::screenshots::remove_files(&state.pool, &state.screenshot_dir, &files).await;
     Ok(Json(result))
 }

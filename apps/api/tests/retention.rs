@@ -325,6 +325,58 @@ impl World {
         retention::preview(&mut db, policy, as_of).await.unwrap()
     }
 
+    /// The database clock.
+    async fn now(&self) -> OffsetDateTime {
+        sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(self.pool())
+            .await
+            .unwrap()
+    }
+
+    /// Moves the whole history of these tickets `by` into the past, so they
+    /// reached their status that long ago. Only the owner of a (test) database
+    /// can do this: it switches the append-only guard off for the statement.
+    async fn age(&self, tickets: &[Uuid], by: &str) {
+        let mut tx = self.pool().begin().await.unwrap();
+        for sql in [
+            "ALTER TABLE ticket_events DISABLE TRIGGER ticket_events_append_only",
+            "UPDATE ticket_events SET created_at = created_at - $2::interval WHERE ticket_id = ANY($1)",
+            "ALTER TABLE ticket_events ENABLE TRIGGER ticket_events_append_only",
+        ] {
+            let query = sqlx::query(sql);
+            let query = if sql.starts_with("UPDATE") {
+                query.bind(tickets).bind(by)
+            } else {
+                query
+            };
+            query.execute(&mut *tx).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+
+    /// Lets a waiting run be claimed again at once.
+    async fn skip_backoff(&self) {
+        sqlx::query(
+            "UPDATE retention_runs SET next_attempt_at = clock_timestamp() WHERE state = 'pending'",
+        )
+        .execute(self.pool())
+        .await
+        .unwrap();
+    }
+
+    /// Previews the saved policy and starts a run from that preview.
+    async fn start(&self, who: &str) -> Reply {
+        let saved = self.get("/api/admin/retention", who).await;
+        let policy = saved.body["settings"]["policy"].clone();
+        let p = self
+            .send("POST", "/api/admin/retention/preview", policy, who)
+            .await;
+        assert_eq!(p.status, 200, "{}", p.body);
+        let body = json!({ "confirm": "DELETE", "preview_token": p.body["token"], "as_of": p.body["as_of"] });
+        self.send("POST", "/api/admin/retention/runs", body, who)
+            .await
+    }
+
     async fn step(&self, batch: i64) -> bool {
         retention::step(self.pool(), &self.dir, &Metrics::default(), batch)
             .await
@@ -342,6 +394,7 @@ impl World {
                 break;
             }
             self.step(2).await;
+            self.skip_backoff().await;
         }
         self.run_counts(id).await
     }
@@ -395,10 +448,6 @@ impl World {
     }
 }
 
-fn far() -> OffsetDateTime {
-    OffsetDateTime::now_utc() + Duration::days(400)
-}
-
 #[tokio::test]
 async fn nothing_is_deleted_until_an_admin_configures_a_policy() {
     let Some(w) = world().await else { return };
@@ -434,7 +483,7 @@ async fn nothing_is_deleted_until_an_admin_configures_a_policy() {
         .send(
             "POST",
             "/api/admin/retention/runs",
-            json!({ "confirm": "DELETE" }),
+            json!({ "confirm": "DELETE", "preview_token": "none", "as_of": "2026-01-01T00:00:00Z" }),
             "admin",
         )
         .await;
@@ -462,6 +511,7 @@ async fn expiry_is_strictly_older_than_the_period_for_tickets_and_drafts() {
     let Some(w) = world().await else { return };
     let closed = w.closed("Printer").await;
     let open = w.open("Still open").await;
+    w.age(&[closed, open], "40 days").await;
     let policy = only_tickets(30);
     let limit = w.final_at(closed).await + Duration::days(30);
 
@@ -473,8 +523,18 @@ async fn expiry_is_strictly_older_than_the_period_for_tickets_and_drafts() {
         assert_eq!(removed, expected == 1);
     }
     // An open ticket never expires, however old.
-    assert_eq!(w.run(&policy, far()).await, RetentionCounts::default());
+    assert_eq!(
+        w.run(&only_tickets(1), w.now().await).await,
+        RetentionCounts::default()
+    );
     assert_eq!(w.ticket(open).await["subject"], "Still open");
+    // The run's clock is never in the future: nothing can be made to expire early.
+    let tomorrow = w.now().await + Duration::days(1);
+    assert!(
+        retention::start_run(w.pool(), &policy, None, tomorrow)
+            .await
+            .is_err()
+    );
 
     let draft = w.draft("owner", "10 days").await;
     let saved: OffsetDateTime = w
@@ -522,18 +582,19 @@ async fn a_dry_run_counts_exactly_what_the_run_removes_and_reports_still_add_up(
     let live_shot = w.screenshot(open, None).await;
     w.draft("owner", "900 days").await;
     let fresh_draft = w.draft("owner", "1 hour").await;
+    w.age(&[closed, cancelled, solved, open, escalated], "40 days")
+        .await;
     let before = w.report().await;
     let events = w.count("SELECT count(*) FROM ticket_events").await;
     let statuses = w
         .count("SELECT count(*) FROM tickets WHERE status IN ('closed', 'cancelled', 'ai_solved')")
         .await;
 
-    let now = OffsetDateTime::now_utc();
     let policy = RetentionPolicy {
         draft_days: Some(30),
         ..all(1)
     };
-    let as_of = now + Duration::days(2);
+    let as_of = w.now().await;
     let expected = w.preview(&policy, as_of).await;
     assert_eq!(
         expected,
@@ -593,7 +654,54 @@ async fn a_dry_run_counts_exactly_what_the_run_removes_and_reports_still_add_up(
             cancelled,
         )
         .await;
-    assert_eq!(reason.get("reason"), None, "{reason}");
+    assert_eq!(reason["reason"], REMOVED, "the event stays, its text goes");
+    // So does the staff's resolution summary; version and deadline stay.
+    let proposal: Value = w
+        .scalar(
+            "SELECT payload FROM ticket_events WHERE ticket_id = $1 AND event_type = 'propose_resolution'",
+            closed,
+        )
+        .await;
+    assert_eq!(proposal["summary"], REMOVED);
+    assert_eq!(proposal["proposal_version"], 1);
+    assert!(proposal["deadline"].is_string(), "{proposal}");
+    // The audit mirror's copy of the reason goes through its own guarded path.
+    let mirrored: Value = w
+        .scalar(
+            "SELECT to_jsonb(e) FROM audit_events e WHERE e.ticket_id = $1 AND e.event_type = 'ticket_cancel'",
+            cancelled,
+        )
+        .await;
+    assert_eq!(mirrored["metadata"]["reason"], REMOVED);
+    assert_eq!(mirrored["metadata"]["to_status"], "cancelled");
+    assert_eq!(mirrored["actor_account_id"], json!(w.ids["owner"]));
+    let redacted = w.audit("audit_ticket_text_redacted").await;
+    assert_eq!(redacted.len(), 1);
+    assert_eq!(redacted[0]["metadata"]["ticket_id"], json!(cancelled));
+    assert_eq!(redacted[0]["metadata"]["events"], 1);
+    let everything: String = sqlx::query_scalar(
+        "SELECT (SELECT jsonb_agg(to_jsonb(t)) FROM tickets t WHERE t.id = ANY($1))::text
+             || (SELECT jsonb_agg(to_jsonb(e)) FROM ticket_events e WHERE e.ticket_id = ANY($1))::text
+             || (SELECT jsonb_agg(to_jsonb(m)) FROM ticket_messages m WHERE m.ticket_id = ANY($1))::text
+             || (SELECT jsonb_agg(to_jsonb(a)) FROM audit_events a WHERE a.ticket_id = ANY($1))::text
+             || (SELECT jsonb_agg(to_jsonb(a)) FROM ai_attempts a WHERE a.ticket_id = ANY($1))::text",
+    )
+    .bind([closed, cancelled, solved])
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    for text in [
+        "Printer",
+        "jams",
+        "Replaced the tray",
+        "reseat",
+        "annoyed",
+        "Found the cable",
+        "misaligned",
+        "Printer 4",
+    ] {
+        assert!(!everything.contains(text), "{text} survived retention");
+    }
     let attempt: Value = w
         .scalar(
             "SELECT to_jsonb(a) FROM ai_attempts a WHERE a.ticket_id = $1",
@@ -662,7 +770,9 @@ async fn a_dry_run_counts_exactly_what_the_run_removes_and_reports_still_add_up(
     assert_eq!(started[0]["actor_account_id"], json!(w.ids["admin"]));
     let completed = w.audit("retention_run_completed").await;
     assert_eq!(completed[0]["actor_service"], "retention");
-    assert_eq!(completed[0]["metadata"]["deleted"], json!(expected));
+    let recorded: RetentionCounts =
+        serde_json::from_value(completed[0]["metadata"]["deleted"].clone()).unwrap();
+    assert_eq!(recorded, expected);
     assert_eq!(
         completed[0]["metadata"]["requested_by"],
         json!(w.ids["admin"])
@@ -680,8 +790,9 @@ async fn a_crash_mid_batch_loses_nothing_and_two_workers_do_no_double_work() {
     for n in 0..5 {
         tickets.push(w.closed(&format!("Printer {n}")).await);
     }
+    w.age(&tickets, "40 days").await;
     let policy = only_tickets(1);
-    let as_of = far();
+    let as_of = w.now().await;
     assert_eq!(w.preview(&policy, as_of).await.ticket_content, 5);
     let run = retention::start_run(w.pool(), &policy, Some(w.ids["admin"]), as_of)
         .await
@@ -699,7 +810,9 @@ async fn a_crash_mid_batch_loses_nothing_and_two_workers_do_no_double_work() {
     // the removals and their counts.
     let mut tx = w.pool().begin().await.unwrap();
     let claimed = retention::claim(&mut tx).await.unwrap().unwrap();
-    let advance = retention::process(&mut tx, &claimed, 2).await.unwrap();
+    let advance = retention::process(&mut tx, &claimed, 2, 1_000)
+        .await
+        .unwrap();
     assert!(!advance.completed);
     // While it holds the run, another worker gets nothing to do.
     let mut other = w.pool().acquire().await.unwrap();
@@ -744,18 +857,19 @@ async fn a_crash_between_row_and_file_deletion_is_recovered_by_the_sweep() {
     let open = w.open("Still open").await;
     let expired = w.screenshot(closed, None).await;
     let live = w.screenshot(open, None).await;
+    w.age(&[closed, open], "40 days").await;
     let policy = RetentionPolicy {
         screenshot_days: Some(1),
         ..Default::default()
     };
-    retention::start_run(w.pool(), &policy, None, far())
+    retention::start_run(w.pool(), &policy, None, w.now().await)
         .await
         .unwrap()
         .unwrap();
     // The batch commits, then the process dies before touching the volume.
     let mut tx = w.pool().begin().await.unwrap();
     let run = retention::claim(&mut tx).await.unwrap().unwrap();
-    let advance = retention::process(&mut tx, &run, 10).await.unwrap();
+    let advance = retention::process(&mut tx, &run, 10, 1_000).await.unwrap();
     assert_eq!(advance.files, [expired]);
     tx.commit().await.unwrap();
     assert!(w.file(expired), "row gone, file still there");
@@ -830,28 +944,122 @@ async fn the_immutability_triggers_still_refuse_everything_but_the_retention_pat
         .unwrap_err();
     assert_eq!(error.as_database_error().unwrap().code().unwrap(), "23001");
 
-    // The functions themselves do nothing to a ticket that is not final.
-    let (files, counts) = {
-        let mut tx = w.pool().begin().await.unwrap();
-        let files: Vec<Uuid> = sqlx::query_scalar("SELECT retention_delete_screenshots($1)")
-            .bind(open)
-            .fetch_all(&mut *tx)
+    // The routines are not a way around that either. Without a run or an
+    // anonymized account they refuse, whatever the ticket: a ticket closed a
+    // minute ago with every period unset cannot be erased by calling them.
+    let call = |sql: &'static str, ticket: Uuid, run: Option<Uuid>, account: Option<Uuid>| async move {
+        sqlx::query(sql)
+            .bind(ticket)
+            .bind(run)
+            .bind(account)
+            .fetch_all(pool)
             .await
-            .unwrap();
-        let ai: bool = sqlx::query_scalar("SELECT retention_purge_ai($1)")
-            .bind(open)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-        let ticket: bool = sqlx::query_scalar("SELECT retention_purge_ticket($1)")
-            .bind(open)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-        (files, (ai, ticket))
     };
-    assert_eq!((files, counts), (vec![], (false, false)));
+    let code = |error: sqlx::Error| {
+        error
+            .as_database_error()
+            .unwrap()
+            .code()
+            .unwrap()
+            .into_owned()
+    };
+    const ROUTINES: [&str; 3] = [
+        "SELECT retention_delete_screenshots($1, $2, $3)",
+        "SELECT retention_purge_ai($1, $2, $3)",
+        "SELECT retention_purge_ticket($1, $2, $3)",
+    ];
+    let closed_shot = w.screenshot(closed, None).await;
+    for sql in ROUTINES {
+        for ticket in [closed, solved, open] {
+            // Neither authorization, both at once, a run that does not exist,
+            // an account that is not anonymized.
+            let owner = Some(w.ids["owner"]);
+            for (run, account) in [
+                (None, None),
+                (Some(Uuid::new_v4()), owner),
+                (Some(Uuid::new_v4()), None),
+                (None, owner),
+            ] {
+                let error = call(sql, ticket, run, account).await.unwrap_err();
+                assert_eq!(code(error), "42501", "{sql} {run:?} {account:?}");
+            }
+        }
+    }
+    // A pending run authorizes only the categories its snapshot has a period
+    // for, and only tickets that have expired for its clock.
+    let drafts_only = RetentionPolicy {
+        draft_days: Some(1),
+        ..Default::default()
+    };
+    let run = retention::start_run(pool, &drafts_only, None, w.now().await)
+        .await
+        .unwrap();
+    for sql in ROUTINES {
+        let error = call(sql, closed, run, None).await.unwrap_err();
+        assert_eq!(code(error), "42501", "no period for it: {sql}");
+    }
+    while w.pending().await > 0 {
+        w.step(10).await;
+    }
+    // A completed run authorizes nothing any more.
+    let error = call(ROUTINES[2], closed, run, None).await.unwrap_err();
+    assert_eq!(code(error), "42501");
+    let run = retention::start_run(pool, &all(30), None, w.now().await)
+        .await
+        .unwrap();
+    for ticket in [closed, solved, open] {
+        // Closed moments ago, or not final at all: inside the keep period.
+        let files: Vec<Uuid> = sqlx::query_scalar(ROUTINES[0])
+            .bind(ticket)
+            .bind(run)
+            .bind(None::<Uuid>)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        assert!(files.is_empty());
+        let ai: bool = sqlx::query_scalar(ROUTINES[1])
+            .bind(ticket)
+            .bind(run)
+            .bind(None::<Uuid>)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let rows: i32 = sqlx::query_scalar(ROUTINES[2])
+            .bind(ticket)
+            .bind(run)
+            .bind(None::<Uuid>)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!((ai, rows), (false, 0));
+    }
+    // The run's snapshot cannot be bent afterwards, and runs are not deleted.
+    for sql in [
+        "UPDATE retention_runs SET ticket_content_days = 1",
+        "UPDATE retention_runs SET as_of = as_of + interval '10 years'",
+        "DELETE FROM retention_runs",
+    ] {
+        let error = sqlx::query(sql).execute(pool).await.unwrap_err();
+        assert_eq!(code(error), "23001", "{sql}");
+    }
+    let error = sqlx::query(
+        "INSERT INTO retention_runs (as_of, ticket_content_days) VALUES (now() + interval '1 year', 1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap_err();
+    assert_eq!(code(error), "23514");
+    // The audit path refuses a ticket whose content is still stored.
+    let error = sqlx::query("SELECT audit_redact_ticket_text($1)")
+        .bind(closed)
+        .execute(pool)
+        .await
+        .unwrap_err();
+    assert_eq!(code(error), "42501");
+    assert!(w.file(closed_shot));
+    assert_eq!(w.ticket(closed).await["subject"], "Printer");
+    assert_eq!(w.ticket(solved).await["subject"], "Tray");
+    assert_eq!(w.count("SELECT count(*) FROM screenshots").await, 2);
     assert!(w.file(shot));
     assert_eq!(w.ticket(open).await["subject"], "Still open");
     assert_eq!(
@@ -922,14 +1130,7 @@ async fn audit_retention_honours_the_thirty_day_floor() {
     };
     let now = OffsetDateTime::now_utc();
     assert_eq!(w.preview(&policy, now).await.audit_events, 1);
-    let r = w
-        .send(
-            "POST",
-            "/api/admin/retention/runs",
-            json!({ "confirm": "DELETE" }),
-            "admin",
-        )
-        .await;
+    let r = w.start("admin").await;
     assert_eq!(r.status, 202, "{}", r.body);
     while w.pending().await > 0 {
         w.step(10).await;
@@ -1006,15 +1207,46 @@ async fn settings_are_validated_confirmed_and_audited() {
         .await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body["policy"]["draft_days"], 30);
+    assert_eq!(r.body["version"], 2);
+
+    // ...and the word alone is not enough: it must confirm a preview of
+    // exactly these periods.
+    let automatic = |token: Value| {
+        let mut b = body(json!(30), true, json!("DELETE"));
+        b["preview_token"] = token;
+        b
+    };
+    let periods = |draft: i64| {
+        json!({ "draft_days": draft, "screenshot_days": null, "ai_content_days": null,
+                "ticket_content_days": 365, "audit_days": null })
+    };
+    let preview = |days: i64| {
+        w.send(
+            "POST",
+            "/api/admin/retention/preview",
+            periods(days),
+            "admin",
+        )
+    };
+    let other = preview(31).await;
+    for token in [Value::Null, json!("0000"), other.body["token"].clone()] {
+        let r = w
+            .send("PUT", "/api/admin/retention", automatic(token), "admin")
+            .await;
+        assert_eq!(r.status, 409, "{}", r.body);
+        assert_eq!(r.code(), "retention_preview_stale");
+    }
+    let reviewed = preview(30).await;
     let r = w
         .send(
             "PUT",
             "/api/admin/retention",
-            body(json!(30), true, json!("DELETE")),
+            automatic(reviewed.body["token"].clone()),
             "admin",
         )
         .await;
     assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["automatic"], true);
     let events = w.audit("retention_settings_updated").await;
     assert_eq!(events.len(), 2);
     assert_eq!(events[0]["actor_account_id"], json!(w.ids["admin"]));
@@ -1027,37 +1259,138 @@ async fn settings_are_validated_confirmed_and_audited() {
     assert_eq!(events[1]["metadata"]["to"]["automatic"], true);
 
     // Starting a run needs the confirmation too, and only one runs at a time.
+    let current = preview(30).await;
+    let run = |confirm: &str, token: Value, as_of: Value| {
+        let body = json!({ "confirm": confirm, "preview_token": token, "as_of": as_of });
+        w.send("POST", "/api/admin/retention/runs", body, "admin")
+    };
+    let (token, as_of) = (current.body["token"].clone(), current.body["as_of"].clone());
     for confirm in ["", "delete", "DELETE "] {
-        let r = w
-            .send(
-                "POST",
-                "/api/admin/retention/runs",
-                json!({ "confirm": confirm }),
-                "admin",
-            )
-            .await;
+        let r = run(confirm, token.clone(), as_of.clone()).await;
         assert_eq!(r.status, 422, "{}", r.body);
     }
-    let r = w
-        .send(
-            "POST",
-            "/api/admin/retention/runs",
-            json!({ "confirm": "DELETE" }),
-            "admin",
+    // A preview of other periods, a made-up clock, or an old preview starts nothing.
+    let format = |t: OffsetDateTime| {
+        json!(
+            t.format(&time::format_description::well_known::Rfc3339)
+                .unwrap()
         )
-        .await;
+    };
+    let now = w.now().await;
+    for (token, as_of) in [
+        (other.body["token"].clone(), other.body["as_of"].clone()),
+        (
+            reviewed.body["token"].clone(),
+            reviewed.body["as_of"].clone(),
+        ),
+        (token.clone(), format(now + Duration::days(400))),
+        (token.clone(), format(now - Duration::hours(2))),
+    ] {
+        let r = run("DELETE", token, as_of).await;
+        assert_eq!(r.status, 409, "{}", r.body);
+        assert_eq!(r.code(), "retention_preview_stale");
+    }
+    assert_eq!(w.count("SELECT count(*) FROM retention_runs").await, 0);
+    let r = run("DELETE", token.clone(), as_of.clone()).await;
     assert_eq!(r.status, 202, "{}", r.body);
     assert_eq!(r.body["state"], "pending");
     assert_eq!(r.body["policy"]["ticket_content_days"], 365);
+    assert_eq!(r.body["as_of"], as_of, "the run's clock is the preview's");
+    let r = run("DELETE", token, as_of).await;
+    assert_eq!(r.status, 409, "{}", r.body);
+    assert_eq!(r.code(), "conflict");
+}
+
+/// The stale tab: Admin A reviews a 365-day policy, Admin B saves a 1-day
+/// policy, A confirms in the old tab. Nothing A did not review may run.
+#[tokio::test]
+async fn a_confirmation_never_applies_a_policy_nobody_previewed() {
+    let Some(w) = world().await else { return };
+    let second = fixtures::account(w.pool(), Role::Admin, "admin2").await;
+    let b = login(&w.app, "admin2", PASSWORD).await.session();
+    let closed = w.closed("Printer").await;
+    w.age(&[closed], "40 days").await;
+    let app = &w.app;
+    let save = |days: i64, cookie: String| async move {
+        let body = json!({ "draft_days": null, "screenshot_days": null, "ai_content_days": null,
+                           "ticket_content_days": days, "audit_days": null, "automatic": false });
+        let r = call(
+            app,
+            "PUT",
+            "/api/admin/retention",
+            Some(body),
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(r.status, 200, "{}", r.body);
+    };
+    let a = w.cookies["admin"].clone();
+    save(365, a.clone()).await;
+
+    // A previews the saved 365 days: nothing would go.
+    let saved = w.get("/api/admin/retention", "admin").await;
+    let policy = saved.body["settings"]["policy"].clone();
+    let seen = w
+        .send(
+            "POST",
+            "/api/admin/retention/preview",
+            policy.clone(),
+            "admin",
+        )
+        .await;
+    assert_eq!(seen.body["affected"]["ticket_content"], 0, "{}", seen.body);
+
+    // B shortens the period to one day.
+    save(1, b.clone()).await;
+
+    // A types DELETE in the old tab.
+    let confirm = json!({ "confirm": "DELETE", "preview_token": seen.body["token"], "as_of": seen.body["as_of"] });
     let r = w
         .send(
             "POST",
             "/api/admin/retention/runs",
-            json!({ "confirm": "DELETE" }),
+            confirm.clone(),
             "admin",
         )
         .await;
     assert_eq!(r.status, 409, "{}", r.body);
+    assert_eq!(r.code(), "retention_preview_stale");
+    assert_eq!(w.count("SELECT count(*) FROM retention_runs").await, 0);
+    assert!(!w.step(10).await);
+    assert_eq!(w.ticket(closed).await["subject"], "Printer");
+
+    // The same for switching automatic deletion on from the old tab: A's
+    // preview was made under settings that no longer exist.
+    let mut automatic = policy.clone();
+    automatic["automatic"] = json!(true);
+    automatic["confirm"] = json!("DELETE");
+    automatic["preview_token"] = seen.body["token"].clone();
+    let r = w
+        .send("PUT", "/api/admin/retention", automatic, "admin")
+        .await;
+    assert_eq!(r.status, 409, "{}", r.body);
+    assert_eq!(r.code(), "retention_preview_stale");
+    let now = w.get("/api/admin/retention", "admin").await;
+    assert_eq!(now.body["settings"]["policy"]["ticket_content_days"], 1);
+    assert_eq!(now.body["settings"]["automatic"], false);
+
+    // Even if B saves the old periods again, A's preview stays stale: it is
+    // bound to the settings version, not only to the numbers.
+    save(365, b.clone()).await;
+    let r = w
+        .send("POST", "/api/admin/retention/runs", confirm, "admin")
+        .await;
+    assert_eq!(r.status, 409, "{}", r.body);
+    // After a new preview of what is stored, A's confirmation works.
+    save(1, b).await;
+    let r = w.start("admin").await;
+    assert_eq!(r.status, 202, "{}", r.body);
+    assert_eq!(r.body["policy"]["ticket_content_days"], 1);
+    while w.pending().await > 0 {
+        w.step(10).await;
+    }
+    assert_eq!(w.ticket(closed).await["subject"], REMOVED);
+    let _ = second;
 }
 
 #[tokio::test]
@@ -1099,10 +1432,15 @@ async fn the_worker_applies_an_automatic_policy_once_a_day() {
         !text.contains("tikkit_worker_last_success_timestamp_seconds{worker=\"retention\"} 0\n")
     );
     assert!(text.contains("tikkit_worker_failures_total{worker=\"retention\"} 0\n"));
-    sqlx::query("UPDATE retention_runs SET created_at = now() - interval '25 hours'")
-        .execute(w.pool())
-        .await
-        .unwrap();
+    // A day later (the run's row is immutable for everyone but the test
+    // database's owner).
+    for sql in [
+        "ALTER TABLE retention_runs DISABLE TRIGGER retention_runs_guard",
+        "UPDATE retention_runs SET created_at = now() - interval '25 hours'",
+        "ALTER TABLE retention_runs ENABLE TRIGGER retention_runs_guard",
+    ] {
+        sqlx::query(sql).execute(w.pool()).await.unwrap();
+    }
     assert!(step().await.unwrap(), "the next day's run");
     let text = support::metrics_text(&state).await;
     assert!(
@@ -1134,7 +1472,9 @@ async fn every_non_admin_role_is_denied_everything() {
         (
             "POST",
             "/api/admin/retention/runs".to_owned(),
-            Some(json!({ "confirm": "DELETE" })),
+            Some(
+                json!({ "confirm": "DELETE", "preview_token": "x", "as_of": "2026-01-01T00:00:00Z" }),
+            ),
         ),
         (
             "GET",

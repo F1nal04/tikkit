@@ -910,7 +910,8 @@ async fn anonymizing_an_account_blanks_its_usernames_and_ips_only() {
             sqlx::query_scalar::<_, Value>(
                 "SELECT jsonb_agg(jsonb_build_array(a.id, a.event_type, a.created_at, a.actor_account_id,
                             a.subject_account_id, a.actor_role, a.actor_team_id, a.request_id,
-                            a.resource_type, a.resource_id, a.ticket_id, a.metadata - 'ip',
+                            a.resource_type, a.resource_id, a.ticket_id,
+                            a.metadata - ARRAY['ip', 'from_expertise', 'to_expertise'],
                             CASE WHEN a.actor_account_id IS DISTINCT FROM $1 THEN a.actor_username END,
                             CASE WHEN a.subject_account_id IS DISTINCT FROM $1 THEN a.subject_username END,
                             CASE WHEN a.actor_account_id IS DISTINCT FROM $1
@@ -963,6 +964,24 @@ async fn anonymizing_an_account_blanks_its_usernames_and_ips_only() {
     tx.commit().await.unwrap();
     assert_eq!(changed, named);
     assert_eq!(fixed(w.pool()).await, before);
+    // Free text about the account goes too: its expertise before and after the
+    // update. The role change itself stays.
+    let updated: Value = sqlx::query_scalar(
+        "SELECT metadata FROM audit_events WHERE event_type = 'account_updated' AND subject_account_id = $1",
+    )
+    .bind(op)
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(updated["to_role"], "specialist");
+    assert_eq!(updated.get("to_expertise"), None, "{updated}");
+    assert_eq!(updated.get("from_expertise"), None, "{updated}");
+    let text: String =
+        sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(a))::text FROM audit_events a")
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    assert!(!text.contains("Printers"), "expertise text survived");
 
     // The account's events are still found by its ID, without a name or an IP.
     let acted = w.events(&format!("actor={op}")).await;

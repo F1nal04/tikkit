@@ -21,6 +21,7 @@ use std::path::Path as FsPath;
 use axum::{extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgConnection, PgPool};
 use time::{Duration, OffsetDateTime};
 use utoipa::ToSchema;
@@ -45,8 +46,15 @@ pub const MAX_DAYS: i64 = 3650;
 pub const CONFIRM: &str = "DELETE";
 /// What replaces removed text (`retention_marker()` in SQL).
 pub const REMOVED: &str = "—";
-/// Tickets or drafts per transaction.
+/// Tickets or drafts examined per transaction.
 pub const BATCH: i64 = 100;
+/// Rows changed per transaction, after which a batch stops. A ticket is never
+/// split, so one ticket with more messages than this still goes in one step.
+pub const ROW_BUDGET: i64 = 1_000;
+/// Audit events deleted per transaction.
+pub const AUDIT_BATCH: i32 = 5_000;
+/// How old a preview may be when a run is started from it.
+const PREVIEW_MAX_AGE: Duration = Duration::hours(1);
 /// Runs listed on the Admin page.
 const RUNS_SHOWN: i64 = 10;
 
@@ -210,6 +218,8 @@ pub struct Run {
     pub requested_by: Option<Uuid>,
     pub request_id: Option<Uuid>,
     pub as_of: OffsetDateTime,
+    /// Consecutive steps that found expired rows but could not take them.
+    pub attempts: i32,
     #[sqlx(flatten)]
     pub policy: RetentionPolicy,
 }
@@ -219,6 +229,9 @@ pub struct Run {
 pub struct Advance {
     /// The run has nothing left and is recorded as completed.
     pub completed: bool,
+    /// Expired rows remain but other transactions hold them: the run stays
+    /// pending and is retried after a backoff.
+    pub waiting: bool,
     /// Deleted screenshot records whose files can go now.
     pub files: Vec<Uuid>,
 }
@@ -226,37 +239,34 @@ pub struct Advance {
 const POLICY_COLUMNS: &str = "draft_days::bigint, screenshot_days::bigint, ai_content_days::bigint,
     ticket_content_days::bigint, audit_days::bigint";
 
-/// Locks the pending run for this transaction, unless another worker has it.
+/// Locks the pending run for this transaction, unless another worker has it
+/// or it is waiting out a backoff.
 pub async fn claim(db: &mut PgConnection) -> Result<Option<Run>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "SELECT id, requested_by, request_id, as_of, {POLICY_COLUMNS}
-         FROM retention_runs WHERE state = 'pending'
+        "SELECT id, requested_by, request_id, as_of, attempts, {POLICY_COLUMNS}
+         FROM retention_runs
+         WHERE state = 'pending' AND next_attempt_at <= clock_timestamp()
          ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED"
     ))
     .fetch_optional(db)
     .await
 }
 
+/// Adds to a run's counts what the SQL routines do not count themselves.
 async fn add(db: &mut PgConnection, run: Uuid, key: &str, n: i64) -> Result<(), sqlx::Error> {
-    if n > 0 {
-        sqlx::query(
-            "UPDATE retention_runs
-             SET counts = counts || jsonb_build_object($2::text, COALESCE((counts->>$2)::bigint, 0) + $3)
-             WHERE id = $1",
-        )
+    sqlx::query("SELECT retention_done($1, NULL, NULL, $2, $3)")
         .bind(run)
         .bind(key)
         .bind(n)
         .execute(db)
-        .await?;
-    }
-    Ok(())
+        .await
+        .map(drop)
 }
 
-/// Tickets in a final status since before `cutoff` that still match `pending`,
-/// locked against a concurrent reopen. Rows another transaction holds are left
-/// for the next batch or run.
-async fn expired_tickets(
+/// Up to `batch` tickets that look expired for `cutoff` and still match
+/// `pending`. A plain read: the removal routines lock each ticket themselves
+/// and decide again on what is committed then.
+async fn candidates(
     db: &mut PgConnection,
     cutoff: OffsetDateTime,
     pending: &str,
@@ -265,7 +275,7 @@ async fn expired_tickets(
     sqlx::query_scalar(&format!(
         "SELECT t.id FROM tickets t
          WHERE {FINAL} AND ticket_final_at(t) < $1 AND {pending}
-         ORDER BY t.id LIMIT $2 FOR UPDATE OF t SKIP LOCKED"
+         ORDER BY t.id LIMIT $2"
     ))
     .bind(cutoff)
     .bind(batch)
@@ -273,115 +283,157 @@ async fn expired_tickets(
     .await
 }
 
+/// Who authorizes a removal: a pending run, or an anonymized account (the
+/// requester of the ticket). The SQL routines verify either.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Authority {
+    Run(Uuid),
+    Account(Uuid),
+}
+
+impl Authority {
+    fn ids(self) -> (Option<Uuid>, Option<Uuid>) {
+        match self {
+            Self::Run(id) => (Some(id), None),
+            Self::Account(id) => (None, Some(id)),
+        }
+    }
+}
+
 async fn delete_screenshots(
     db: &mut PgConnection,
-    tickets: &[Uuid],
+    ticket: Uuid,
+    by: Authority,
 ) -> Result<Vec<Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT retention_delete_screenshots(id) FROM unnest($1::uuid[]) AS ticket (id)",
-    )
-    .bind(tickets)
-    .fetch_all(db)
-    .await
+    let (run, account) = by.ids();
+    sqlx::query_scalar("SELECT retention_delete_screenshots($1, $2, $3)")
+        .bind(ticket)
+        .bind(run)
+        .bind(account)
+        .fetch_all(db)
+        .await
 }
 
-async fn purge_ai(db: &mut PgConnection, tickets: &[Uuid]) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT count(*) FILTER (WHERE done) FROM (
-             SELECT retention_purge_ai(id) AS done FROM unnest($1::uuid[]) AS ticket (id)) x",
-    )
-    .bind(tickets)
-    .fetch_one(db)
-    .await
+async fn purge_ai(db: &mut PgConnection, ticket: Uuid, by: Authority) -> Result<bool, sqlx::Error> {
+    let (run, account) = by.ids();
+    sqlx::query_scalar("SELECT retention_purge_ai($1, $2, $3)")
+        .bind(ticket)
+        .bind(run)
+        .bind(account)
+        .fetch_one(db)
+        .await
 }
 
-async fn purge_tickets(db: &mut PgConnection, tickets: &[Uuid]) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT count(*) FILTER (WHERE done) FROM (
-             SELECT retention_purge_ticket(id) AS done FROM unnest($1::uuid[]) AS ticket (id)) x",
-    )
-    .bind(tickets)
-    .fetch_one(db)
-    .await
+/// Rows changed: the ticket, its messages, and its events with free text.
+async fn purge_ticket(
+    db: &mut PgConnection,
+    ticket: Uuid,
+    by: Authority,
+) -> Result<i64, sqlx::Error> {
+    let (run, account) = by.ids();
+    let rows: i32 = sqlx::query_scalar("SELECT retention_purge_ticket($1, $2, $3)")
+        .bind(ticket)
+        .bind(run)
+        .bind(account)
+        .fetch_one(db)
+        .await?;
+    Ok(rows.into())
 }
 
-/// Removes all content of the given final-status tickets now: screenshots, AI
-/// content, then text. Returns the deleted screenshot IDs and the counts.
-/// Tickets not in a final status are left untouched by the SQL functions.
+/// Removes all content of one ticket: screenshots, AI content, then text.
+/// Returns the deleted screenshot IDs, the counts, and the rows changed. The
+/// SQL routines leave a ticket that is not eligible untouched.
 pub(crate) async fn purge_content(
     db: &mut PgConnection,
-    tickets: &[Uuid],
-) -> Result<(Vec<Uuid>, RetentionCounts), sqlx::Error> {
-    let files = delete_screenshots(db, tickets).await?;
+    ticket: Uuid,
+    by: Authority,
+) -> Result<(Vec<Uuid>, RetentionCounts, i64), sqlx::Error> {
+    let files = delete_screenshots(db, ticket, by).await?;
+    let ai = purge_ai(db, ticket, by).await?;
+    let text = purge_ticket(db, ticket, by).await?;
     let counts = RetentionCounts {
         screenshots: files.len() as i64,
-        ai_content: purge_ai(db, tickets).await?,
-        ticket_content: purge_tickets(db, tickets).await?,
+        ai_content: ai.into(),
+        ticket_content: (text > 0).into(),
         ..Default::default()
     };
-    Ok((files, counts))
+    let rows = files.len() as i64 + i64::from(ai) + text;
+    Ok((files, counts, rows))
 }
 
-/// One bounded batch of a claimed run, in the caller's transaction. The first
+/// One bounded batch of a claimed run, in the caller's transaction: at most
+/// `batch` tickets or drafts, and it stops once `rows` rows changed (one
+/// ticket is never split, so a single large ticket can exceed it). The first
 /// category that still has expired records gets the batch. When none has, the
-/// audit period is applied and the run is completed.
-pub async fn process(db: &mut PgConnection, run: &Run, batch: i64) -> Result<Advance, ApiError> {
+/// audit period is applied in batches of [`AUDIT_BATCH`], and the run is
+/// completed only once nothing expired is left; if other transactions hold
+/// what is left, the run waits and is retried.
+pub async fn process(
+    db: &mut PgConnection,
+    run: &Run,
+    batch: i64,
+    rows: i64,
+) -> Result<Advance, ApiError> {
     let c = run.policy.cutoffs(run.as_of);
+    let by = Authority::Run(run.id);
+    let mut changed = 0;
+    let mut files = Vec::new();
     if let Some(cutoff) = c.screenshots {
         let pending = "EXISTS (SELECT 1 FROM screenshots s WHERE s.ticket_id = t.id)";
-        let tickets = expired_tickets(db, cutoff, pending, batch).await?;
-        let files = delete_screenshots(db, &tickets).await?;
-        if !files.is_empty() {
-            add(db, run.id, "screenshots", files.len() as i64).await?;
-            return Ok(Advance {
-                completed: false,
-                files,
-            });
+        for ticket in candidates(db, cutoff, pending, batch).await? {
+            let gone = delete_screenshots(db, ticket, by).await?;
+            changed += gone.len() as i64;
+            files.extend(gone);
+            if changed >= rows {
+                break;
+            }
         }
     }
-    if let Some(cutoff) = c.ai_content {
+    if changed == 0
+        && let Some(cutoff) = c.ai_content
+    {
         let pending = "EXISTS (SELECT 1 FROM ai_attempts a WHERE a.ticket_id = t.id
                                AND a.state <> 'processing' AND a.content_purged_at IS NULL)";
-        let tickets = expired_tickets(db, cutoff, pending, batch).await?;
-        let done = purge_ai(db, &tickets).await?;
-        if done > 0 {
-            add(db, run.id, "ai_content", done).await?;
-            return Ok(Advance::default());
+        for ticket in candidates(db, cutoff, pending, batch).await? {
+            changed += i64::from(purge_ai(db, ticket, by).await?);
+            if changed >= rows {
+                break;
+            }
         }
     }
-    if let Some(cutoff) = c.ticket_content {
-        let tickets = expired_tickets(db, cutoff, "t.content_purged_at IS NULL", batch).await?;
-        // Screenshots and AI content went in the steps above; this covers a
-        // ticket that was locked then.
-        let (files, counts) = purge_content(db, &tickets).await?;
-        if counts.total() > 0 {
-            add(db, run.id, "screenshots", counts.screenshots).await?;
-            add(db, run.id, "ai_content", counts.ai_content).await?;
-            add(db, run.id, "ticket_content", counts.ticket_content).await?;
-            return Ok(Advance {
-                completed: false,
-                files,
-            });
+    if changed == 0
+        && let Some(cutoff) = c.ticket_content
+    {
+        for ticket in candidates(db, cutoff, "t.content_purged_at IS NULL", batch).await? {
+            // Screenshots and AI content went in the steps above; this also
+            // covers a ticket that was locked then.
+            let (gone, _, n) = purge_content(db, ticket, by).await?;
+            changed += n;
+            files.extend(gone);
+            if changed >= rows {
+                break;
+            }
         }
     }
-    if let Some(cutoff) = c.drafts {
-        let done = sqlx::query(
+    if changed == 0
+        && let Some(cutoff) = c.drafts
+    {
+        changed = sqlx::query(
             "DELETE FROM ticket_drafts WHERE id IN (
                  SELECT id FROM ticket_drafts
                  WHERE submitted_ticket_id IS NULL AND updated_at < $1
                  ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)",
         )
         .bind(cutoff)
-        .bind(batch)
+        .bind(batch.min(rows))
         .execute(&mut *db)
         .await?
         .rows_affected() as i64;
-        if done > 0 {
-            add(db, run.id, "drafts", done).await?;
-            return Ok(Advance::default());
-        }
+        add(db, run.id, "drafts", changed).await?;
     }
-    if let Some(cutoff) = c.audit {
+    if changed == 0
+        && let Some(cutoff) = c.audit
+    {
         // The Admin who started the run, while still an active Admin.
         let admin: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM accounts WHERE id = $1 AND role = 'admin' AND is_active",
@@ -390,8 +442,46 @@ pub async fn process(db: &mut PgConnection, run: &Run, batch: i64) -> Result<Adv
         .fetch_optional(&mut *db)
         .await?;
         let who = admin.map_or(Who::Service(audit::RETENTION), Who::Account);
-        let done = audit::purge_before(db, cutoff, who).await?;
-        add(db, run.id, "audit_events", done).await?;
+        changed = audit::purge_batch(db, cutoff, who, AUDIT_BATCH).await?;
+        add(db, run.id, "audit_events", changed).await?;
+    }
+    if changed > 0 {
+        if run.attempts > 0 {
+            sqlx::query("UPDATE retention_runs SET attempts = 0 WHERE id = $1")
+                .bind(run.id)
+                .execute(&mut *db)
+                .await?;
+        }
+        return Ok(Advance {
+            files,
+            ..Default::default()
+        });
+    }
+    // Nothing could be taken. Is anything expired left? A plain count, so rows
+    // that another transaction holds are seen and the run is not completed
+    // past them.
+    let left = preview(db, &run.policy, run.as_of).await?;
+    if left.total() > 0 {
+        sqlx::query(
+            "UPDATE retention_runs
+             SET attempts = attempts + 1,
+                 next_attempt_at = clock_timestamp()
+                     + LEAST(interval '10 minutes', interval '5 seconds' * power(2, LEAST(attempts, 10)))
+             WHERE id = $1",
+        )
+        .bind(run.id)
+        .execute(&mut *db)
+        .await?;
+        tracing::warn!(
+            run_id = %run.id,
+            remaining = left.total(),
+            attempts = run.attempts + 1,
+            "expired records are locked by other transactions; retention run will retry"
+        );
+        return Ok(Advance {
+            waiting: true,
+            ..Default::default()
+        });
     }
     let counts: sqlx::types::Json<RetentionCounts> = sqlx::query_scalar(
         "UPDATE retention_runs SET state = 'completed', finished_at = clock_timestamp()
@@ -399,22 +489,6 @@ pub async fn process(db: &mut PgConnection, run: &Run, batch: i64) -> Result<Adv
     )
     .bind(run.id)
     .fetch_one(&mut *db)
-    .await?;
-    audit::record(
-        &mut *db,
-        Entry {
-            action: "retention_run_completed",
-            who: Who::Service(audit::RETENTION),
-            subject: None,
-            ticket: None,
-            metadata: json!({
-                "run_id": run.id,
-                "requested_by": run.requested_by,
-                "policy": run.policy,
-                "deleted": counts.0,
-            }),
-        },
-    )
     .await?;
     tracing::info!(
         run_id = %run.id,
@@ -427,26 +501,19 @@ pub async fn process(db: &mut PgConnection, run: &Run, batch: i64) -> Result<Adv
     );
     Ok(Advance {
         completed: true,
-        files: Vec::new(),
+        ..Default::default()
     })
 }
 
-/// Best effort: a file that stays behind has no row and is removed by the
-/// stray-file sweep of [`crate::screenshots::cleanup`].
-pub(crate) async fn remove_files(dir: &FsPath, ids: &[Uuid]) {
-    for id in ids {
-        let _ = tokio::fs::remove_file(crate::screenshots::file_path(dir, *id)).await;
-    }
-}
-
 /// Inserts a run of `policy` unless one is pending. `None`: one is pending.
+/// The database audits it (`retention_run_started`, and `_completed` later).
 async fn insert_run(
     db: &mut PgConnection,
     policy: &RetentionPolicy,
     requested_by: Option<Uuid>,
     as_of: OffsetDateTime,
 ) -> Result<Option<Uuid>, sqlx::Error> {
-    let id: Option<Uuid> = sqlx::query_scalar(
+    sqlx::query_scalar(
         "INSERT INTO retention_runs (requested_by, request_id, as_of, draft_days, screenshot_days,
                                      ai_content_days, ticket_content_days, audit_days)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -461,26 +528,11 @@ async fn insert_run(
     .bind(policy.ticket_content_days.map(|d| d as i32))
     .bind(policy.audit_days.map(|d| d as i32))
     .fetch_optional(&mut *db)
-    .await?;
-    if let Some(id) = id {
-        audit::record(
-            &mut *db,
-            Entry {
-                action: "retention_run_started",
-                who: requested_by.map_or(Who::Service(audit::RETENTION), Who::Account),
-                subject: None,
-                ticket: None,
-                metadata: json!({ "run_id": id, "policy": policy, "as_of": as_of.unix_timestamp() }),
-            },
-        )
-        .await?;
-    }
-    Ok(id)
+    .await
 }
 
-/// Starts a run of `policy` with the clock at `as_of`. `None` while another run
-/// is pending. The HTTP handler and the daily schedule go through this; tests
-/// use it to place the clock exactly on a boundary.
+/// Starts a run of `policy` with the clock at `as_of`, which the database
+/// refuses if it is in the future. `None` while another run is pending.
 pub async fn start_run(
     pool: &PgPool,
     policy: &RetentionPolicy,
@@ -525,12 +577,21 @@ pub async fn step(
     metrics: &Metrics,
     batch: i64,
 ) -> Result<bool, ApiError> {
-    let result = try_step(pool, dir, batch).await;
+    let result = try_step(pool, dir, metrics, batch).await;
+    if result.is_err() {
+        // The batch rolled back; the next poll takes it again.
+        metrics.retry(Worker::Retention);
+    }
     metrics.step(Worker::Retention, result.is_ok());
     result
 }
 
-async fn try_step(pool: &PgPool, dir: &FsPath, batch: i64) -> Result<bool, ApiError> {
+async fn try_step(
+    pool: &PgPool,
+    dir: &FsPath,
+    metrics: &Metrics,
+    batch: i64,
+) -> Result<bool, ApiError> {
     let mut tx = pool.begin().await?;
     let Some(run) = claim(&mut tx).await? else {
         drop(tx);
@@ -538,10 +599,14 @@ async fn try_step(pool: &PgPool, dir: &FsPath, batch: i64) -> Result<bool, ApiEr
         return telemetry::job(Worker::Retention.label(), None, schedule(pool)).await;
     };
     telemetry::job(Worker::Retention.label(), run.request_id, async move {
-        let advance = process(&mut tx, &run, batch).await?;
+        let advance = process(&mut tx, &run, batch, ROW_BUDGET).await?;
         tx.commit().await?;
-        remove_files(dir, &advance.files).await;
-        Ok(true)
+        if advance.waiting {
+            metrics.retry(Worker::Retention);
+        }
+        crate::screenshots::remove_files(pool, dir, &advance.files).await;
+        // A waiting run sleeps until its backoff has passed.
+        Ok(!advance.waiting)
     })
     .await
 }
@@ -572,6 +637,8 @@ pub struct RetentionSettings {
     pub policy: RetentionPolicy,
     /// Whether the worker applies the policy daily. Off by default.
     pub automatic: bool,
+    /// Bumped by every save. Previews are bound to it.
+    pub version: i64,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub updated_at: OffsetDateTime,
@@ -670,7 +737,7 @@ async fn load_settings(
 ) -> Result<RetentionSettings, sqlx::Error> {
     let lock = if lock { "FOR UPDATE" } else { "" };
     sqlx::query_as(&format!(
-        "SELECT {POLICY_COLUMNS}, automatic, updated_at FROM retention_settings {lock}"
+        "SELECT {POLICY_COLUMNS}, automatic, version, updated_at FROM retention_settings {lock}"
     ))
     .fetch_one(db)
     .await
@@ -733,6 +800,10 @@ pub struct RetentionSettingsWrite {
     /// then authorizes deletion without a further confirmation.
     #[serde(default)]
     pub confirm: Option<String>,
+    /// The `token` of a preview of exactly these periods, required together
+    /// with `confirm`: what was confirmed is what was reviewed.
+    #[serde(default)]
+    pub preview_token: Option<String>,
 }
 
 impl RetentionSettingsWrite {
@@ -751,6 +822,27 @@ fn confirmed(confirm: Option<&str>) -> bool {
     confirm == Some(CONFIRM)
 }
 
+/// Binds a preview to what it showed: these periods, under this version of the
+/// stored settings. A confirmation carries the token back; if the periods it
+/// would apply or the stored settings have changed since, the tokens differ
+/// and the confirmation is refused. Not a secret: it proves nothing about who
+/// asks, only what they looked at.
+pub fn preview_token(policy: &RetentionPolicy, version: i64) -> String {
+    let days = |d: Option<i64>| d.map_or("-".to_owned(), |d| d.to_string());
+    let text = format!(
+        "tikkit.retention.v1|{version}|{}|{}|{}|{}|{}",
+        days(policy.draft_days),
+        days(policy.screenshot_days),
+        days(policy.ai_content_days),
+        days(policy.ticket_content_days),
+        days(policy.audit_days),
+    );
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Replaces the retention policy (Admin only). Saving deletes nothing unless
 /// `automatic` is on; then the worker applies the policy within a day.
 #[utoipa::path(put, path = "/api/admin/retention", tag = "admin", request_body = RetentionSettingsWrite,
@@ -758,6 +850,7 @@ fn confirmed(confirm: Option<&str>) -> bool {
         (status = 200, body = RetentionSettings),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`retention_preview_stale`: with `automatic` on, the periods were not previewed or the settings changed since the preview", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (a period: `out_of_range`; `confirm`: `invalid`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn put_retention(
@@ -776,9 +869,17 @@ pub async fn put_retention(
     }
     let mut tx = state.pool.begin().await?;
     let old = load_settings(&mut tx, true).await?;
+    // Automatic deletion applies these periods without asking again, so the
+    // Admin must have previewed exactly them under the settings as they are.
+    if body.automatic
+        && !policy.is_empty()
+        && body.preview_token.as_deref() != Some(&preview_token(&policy, old.version))
+    {
+        return Err(ApiError::RetentionPreviewStale);
+    }
     sqlx::query(
         "UPDATE retention_settings SET draft_days = $1, screenshot_days = $2, ai_content_days = $3,
-                ticket_content_days = $4, audit_days = $5, automatic = $6,
+                ticket_content_days = $4, audit_days = $5, automatic = $6, version = version + 1,
                 updated_at = now(), updated_by = $7",
     )
     .bind(policy.draft_days.map(|d| d as i32))
@@ -815,6 +916,8 @@ pub struct RetentionPreview {
     pub as_of: OffsetDateTime,
     pub policy: RetentionPolicy,
     pub affected: RetentionCounts,
+    /// Send this back, with `as_of`, to confirm what this preview showed.
+    pub token: String,
 }
 
 /// Dry run (Admin only): exact counts per category for the given periods,
@@ -841,9 +944,13 @@ pub async fn preview_retention(
         .fetch_one(&mut *tx)
         .await?;
     let affected = preview(&mut tx, &policy, as_of).await?;
+    let version: i64 = sqlx::query_scalar("SELECT version FROM retention_settings")
+        .fetch_one(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Json(RetentionPreview {
         as_of,
+        token: preview_token(&policy, version),
         policy,
         affected,
     }))
@@ -854,16 +961,26 @@ pub async fn preview_retention(
 pub struct StartRetentionRun {
     /// Must be `DELETE`.
     pub confirm: String,
+    /// The `token` of the preview the Admin confirmed.
+    pub preview_token: String,
+    /// The `as_of` of that preview: the run's clock, so it removes what the
+    /// preview counted.
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub as_of: OffsetDateTime,
 }
 
-/// Starts applying the saved policy now (Admin only). The retention worker
-/// does the work in batches; `GET /api/admin/retention` shows its progress.
+/// Starts applying the saved policy as previewed (Admin only). The preview must
+/// be of the saved periods, made under the current settings, and at most an
+/// hour old; otherwise `409 retention_preview_stale` and nothing starts. The
+/// retention worker does the work in batches; `GET /api/admin/retention` shows
+/// its progress.
 #[utoipa::path(post, path = "/api/admin/retention/runs", tag = "admin", request_body = StartRetentionRun,
     responses(
         (status = 202, body = RetentionRun),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
-        (status = 409, description = "`conflict`: a run is already pending", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn start_retention_run(
@@ -884,9 +1001,20 @@ pub async fn start_retention_run(
     let now: OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut *tx)
         .await?;
-    let id = insert_run(&mut tx, &settings.policy, Some(user.account_id()), now)
-        .await?
-        .ok_or(ApiError::Conflict)?;
+    if body.preview_token != preview_token(&settings.policy, settings.version)
+        || body.as_of > now
+        || body.as_of < now - PREVIEW_MAX_AGE
+    {
+        return Err(ApiError::RetentionPreviewStale);
+    }
+    let id = insert_run(
+        &mut tx,
+        &settings.policy,
+        Some(user.account_id()),
+        body.as_of,
+    )
+    .await?
+    .ok_or(ApiError::Conflict)?;
     let run = runs(&mut tx, "WHERE r.id = $1", Some(id))
         .await?
         .pop()
