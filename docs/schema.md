@@ -356,3 +356,12 @@ Migration `0023_ai_decisions.sql`. Behavior: [ai-decisions.md](ai-decisions.md).
 - `check_ticket_update()` (the `tickets_lifecycle_guard` trigger of migration
   `0008`) is replaced with one more rule: a row whose status is `ai_solved`
   cannot change in any column (`restrict_violation`).
+
+## Admin submission view
+
+Migration `0024_admin_submissions.sql`. Behavior:
+[admin-submissions.md](admin-submissions.md).
+
+- No new table or column. `tickets_submitted_idx` is a partial index on
+  `tickets (created_at, id)` for every status but `draft`: the newest-first
+  order and cursor of `GET /api/admin/submissions`.
