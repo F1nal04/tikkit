@@ -17,7 +17,9 @@ optional and uses the same database readiness check.
   Check the API container's exit code, restart count, and OOM status with
   `docker inspect --format '{{.State.ExitCode}} {{.RestartCount}} {{.State.OOMKilled}}' <container>`.
   A shutdown should log its drain and stop messages. A startup database error
-  points to connectivity or migration history. Check `pg_isready` inside the DB
+  includes a stable `error_kind` and, when available, the SQLSTATE and
+  migration version. Panic logs include the source file and line.
+  Check `pg_isready` inside the DB
   service and review its logs locally before restarting the API. Address
   connectivity or restore the appropriate build/schema pairing. Preserve
   database and screenshot volumes.
@@ -26,7 +28,11 @@ optional and uses the same database readiness check.
   `request_id` in API error envelopes). For example,
   `docker compose logs --since 30m api web | rg -F '<request-id>'`.
   A page's SSR fetches share the page request's ID. Browser-originated API
-  calls have their own IDs. Durable jobs inherit the ID from their source
+  calls have their own IDs. The public reverse proxy strips the inbound
+  `X-Request-ID` on every `/api/*` request, and the private API generates an
+  ID for each public call. The SSR server sends an ID directly to that API.
+  Keep the API socket unpublished so public traffic passes through the proxy.
+  Durable jobs inherit the ID from their source
   event through restarts. Jobs from older events without an ID get a fresh one.
   A poll or claim failure before a job can be identified has the worker name.
 - Application telemetry uses route templates, bounded error codes, latency,
@@ -57,7 +63,10 @@ API restart. Avoid manual status changes or queue deletion.
   codes. Review only metadata. AI disabled or exempt categories do not need a
   working provider and should route directly to the shared queue.
 - For `TikkitAiHandoffFailed` or `TikkitAiAttemptStuck`, check readiness and the
-  sweep worker. Look for transition failures by request ID. The sweep retries
+  sweep worker. The failed-handoff counter records the first exhausted fallback
+  or failed sweep per ticket observed by this worker process. Transient commit
+  retries appear in the retry counter. Look for transition failures by request
+  ID. The sweep retries
   timed-out or orphaned AI-stage tickets after recovery. Verify falling due
   count and committed queue intake. Investigate any ticket that remains in AI
   processing after recovery through the authorized portal.
@@ -92,31 +101,38 @@ its own counter. This worker handles the resolution-confirmation policy only.
 
 ## Private Prometheus dashboard and alerts
 
-On Compose, set `METRICS_PORT=9091` on the API container, keep it unpublished,
-and run the trusted collector in the API's network namespace, for example
-with `network_mode: "service:api"`. Keep this namespace and the Prometheus
-UI private. When recreating the API container, recreate the collector to
-attach it to the same network namespace. From that namespace, a local
-`curl -fsS http://127.0.0.1:9091/metrics` works without Prometheus. The API
-listener and public origin expose no metrics route.
+Apply the [optional Compose overlay](../docker-compose.observability.example.yml)
+to the base example to set `METRICS_PORT=9091`, start Prometheus, and load the
+[scrape configuration](../ops/prometheus/prometheus.yml) and
+[alert rules](../ops/prometheus/alerts.yml).
 
-Load [alerts.yml](../ops/prometheus/alerts.yml) as a rule file. For example,
-mount it read-only at `/etc/prometheus/tikkit-alerts.yml` and configure:
-
-```yaml
-rule_files:
-  - /etc/prometheus/tikkit-alerts.yml
-scrape_configs:
-  - job_name: tikkit
-    scrape_interval: 30s
-    scrape_timeout: 8s
-    static_configs:
-      - targets: ['127.0.0.1:9091']
+```sh
+docker compose -f docker-compose.prod.example.yml \
+  -f docker-compose.observability.example.yml up -d
 ```
 
-Verify the rule file and its failure/recovery examples with
-`promtool check rules ops/prometheus/alerts.yml` and
-`promtool test rules ops/prometheus/alerts.test.yml`.
+Prometheus shares the API network namespace via `network_mode: "service:api"`.
+It scrapes `127.0.0.1:9091/metrics` and binds its own HTTP listener to loopback
+with `--web.listen-address=127.0.0.1:9090`. Keep both ports unpublished and
+outside public proxy routes. A wildcard Prometheus bind would expose its UI
+and metrics data to other containers on networks shared with the API.
+When recreating the API container, recreate the collector to attach it to the
+same network namespace. To query from inside that namespace, use
+`promtool query instant http://127.0.0.1:9090 'up{job="tikkit"}'` in the
+Prometheus container, or fetch `http://127.0.0.1:9091/metrics` with a local HTTP
+client to inspect the exporter directly.
+
+Verify the rules locally with the same pinned image as CI:
+
+```sh
+image=prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+promtool() {
+  docker run --rm --network none --entrypoint /bin/promtool \
+    -v "$PWD/ops/prometheus:/rules:ro" -w /rules "$image" "$@"
+}
+promtool check rules alerts.yml
+promtool test rules alerts.test.yml
+```
 
 Use the Prometheus expression browser for these graphs or paste the expressions
 into panels in your private dashboard:
@@ -126,17 +142,22 @@ into panels in your private dashboard:
 - API response latency: `histogram_quantile(0.95, sum by (le) (rate(tikkit_http_request_duration_seconds_bucket[5m])))`.
   Error rate: `sum by (status_class) (rate(tikkit_http_request_duration_seconds_count{status_class=~"4xx|5xx"}[5m]))`.
 - Worker queue and deadlines: `tikkit_worker_pending_jobs`, `tikkit_worker_due_jobs`,
-  and `tikkit_worker_oldest_due_seconds`. For AI, due means the processing
-  deadline was reached or the job is orphaned. In-flight calls can run through
-  their bounded grace period. For notifications, due means eligible now.
+  and `tikkit_worker_oldest_due_seconds`. The AI scrape and sweeper share the
+  same eligibility calculation. An orphan is due immediately. An attempt
+  without a live claim is due after its deadline or when its claim budget is
+  exhausted. A live claim gets until its lease expires or the hard limit of
+  deadline plus configured concurrency wait, provider call timeout, and sweep
+  margin, whichever first makes it eligible. Lag starts at that eligibility
+  time. For notifications, due means eligible now.
 - Worker activity: `time() - tikkit_worker_last_success_timestamp_seconds`,
   `increase(tikkit_worker_failures_total[5m])`, and
   `increase(tikkit_worker_retries_total[5m])`.
 - Queue intake, generation, and resolution: `increase(tikkit_ticket_operations_total[10m])`.
   The fixed `operation` labels distinguish direct intake, AI handoff,
   failed handoff, generation succeeded/failed/refused, explicit AI and human
-  confirmations, timeout closures and notification email failures. A guarded
-  refusal can occur before contacting a provider.
+  confirmations, timeout closures and notification email failures. A terminal
+  generation refusal is counted once when the attempt's handoff commits.
+  Waiting for a provider slot increments retries.
 
 The scrape returns HTTP 200 with current process metrics when the database is
 down. Use `tikkit_database_ready` and `tikkit_worker_snapshot_up` to detect the

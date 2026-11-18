@@ -18,10 +18,10 @@
 //! Logs carry ids and stable codes only, never ticket text or image data.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Cursor,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -72,6 +72,21 @@ pub const MAX_CLAIMS: i32 = 3;
 /// Added to the guard's wait and call timeout before the sweep ends an attempt
 /// that a live worker still holds past its deadline.
 const SWEEP_MARGIN: Duration = Duration::from_secs(60);
+
+/// Earliest instant the sweep may take the ticket. Both polling and the
+/// scrape use this expression with `t` = tickets, `a` = ai_attempts,
+/// $1 = claim limit, and $2 = call timeout plus sweep margin, in seconds.
+pub(crate) const SWEEP_DUE_AT: &str = "CASE
+    WHEN a.state IS DISTINCT FROM 'processing' THEN t.created_at
+    ELSE LEAST(
+        CASE WHEN a.claims >= $1 THEN COALESCE(a.claimed_until, a.created_at)
+             ELSE GREATEST(a.deadline_at, a.claimed_until) END,
+        a.deadline_at + make_interval(secs => $2 + (SELECT concurrency_wait_seconds FROM ai_limits))
+    ) END";
+
+pub(crate) fn sweep_grace_seconds(call_timeout: Duration) -> f64 {
+    (call_timeout + SWEEP_MARGIN).as_secs_f64()
+}
 
 // --- Stable outcome codes ---------------------------------------------------------
 
@@ -526,6 +541,7 @@ pub struct Worker {
     options: WorkerOptions,
     shutdown: Cancel,
     metrics: Metrics,
+    failed_handoffs: Arc<Mutex<HashSet<Uuid>>>,
 }
 
 impl Worker {
@@ -543,22 +559,49 @@ impl Worker {
             options: WorkerOptions::default(),
             shutdown: Cancel::new(),
             metrics: state.metrics.clone(),
+            failed_handoffs: Arc::default(),
         }
     }
 
-    fn observe_handoff(&self, result: Result<bool, ApiError>) -> Result<(), ApiError> {
-        match result {
-            Ok(true) => self.metrics.event(Metric::AiHandoff, 1),
-            Ok(false) => {}
-            Err(_) => {
-                self.metrics.event(Metric::HandoffFailed, 1);
-                tracing::error!(
-                    error_code = "ai_handoff_failed",
-                    "AI handoff did not commit"
-                );
+    fn handoff_committed(&self, generation_refused: bool) {
+        self.metrics.event(Metric::AiHandoff, 1);
+        if generation_refused {
+            self.metrics.event(Metric::GenerationRefused, 1);
+        }
+    }
+
+    fn handoff_failed(&self, ticket_id: Uuid) {
+        if self.failed_handoffs.lock().unwrap().insert(ticket_id) {
+            self.metrics.event(Metric::HandoffFailed, 1);
+            tracing::error!(%ticket_id, error_code = "ai_handoff_failed", "AI handoff did not commit");
+        }
+    }
+
+    async fn prune_handoff_failures(&self) {
+        // Admin policy and requester changes can also end a stuck attempt.
+        let checked: Vec<_> = self
+            .failed_handoffs
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        if checked.is_empty() {
+            return;
+        }
+        let resolved = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM unnest($1::uuid[]) AS recorded(id)
+             WHERE NOT EXISTS (SELECT 1 FROM tickets t WHERE t.id = recorded.id AND t.status = 'ai_processing')",
+        )
+        .bind(&checked)
+        .fetch_all(&self.pool)
+        .await;
+        if let Ok(resolved) = resolved {
+            let mut failed = self.failed_handoffs.lock().unwrap();
+            for id in resolved {
+                failed.remove(&id);
             }
         }
-        result.map(drop)
     }
 
     pub fn options(mut self, options: WorkerOptions) -> Self {
@@ -594,13 +637,27 @@ enum Outcome {
     Failed {
         code: &'static str,
         usage_id: Option<Uuid>,
+        generation_refused: bool,
     },
+}
+
+impl Outcome {
+    fn generation_refused(&self) -> bool {
+        matches!(
+            self,
+            Self::Failed {
+                generation_refused: true,
+                ..
+            }
+        )
+    }
 }
 
 fn failed(code: &'static str) -> Outcome {
     Outcome::Failed {
         code,
         usage_id: None,
+        generation_refused: false,
     }
 }
 
@@ -616,6 +673,7 @@ pub async fn worker_loop(worker: Worker) {
         let (worker, slots, running) = (worker.clone(), slots.clone(), running.clone());
         async move {
             let Ok(permit) = slots.try_acquire_owned() else {
+                worker.metrics.step(WorkerMetric::AiAttempts, true);
                 return Ok(false);
             };
             let Some(job) = claim(&worker).await? else {
@@ -829,7 +887,18 @@ async fn run_claimed(worker: &Worker, job: &Job) -> Result<(), ApiError> {
         Ok::<_, ApiError>(queued)
     };
     // Leave the attempt to its lease if even the fallback fails.
-    worker.observe_handoff(handed_off.await).map_err(|_| error)
+    match handed_off.await {
+        Ok(queued) => {
+            if queued {
+                worker.handoff_committed(outcome.generation_refused());
+            }
+            Ok(())
+        }
+        Err(_) => {
+            worker.handoff_failed(job.ticket_id);
+            Err(error)
+        }
+    }
 }
 
 /// Locks the ticket, then the attempt, and says whether the attempt is still
@@ -952,6 +1021,7 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
                 Some(usage_id) => Outcome::Failed {
                     code: Refusal::ConcurrencySaturated.code(),
                     usage_id: Some(usage_id),
+                    generation_refused: true,
                 },
                 None => failed(TIMEOUT),
             };
@@ -968,7 +1038,6 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
             // No provider slot within the guard's wait: the attempt keeps its
             // place and asks again, rather than giving up with time left.
             Err(refused) if refused.refusal == Refusal::ConcurrencySaturated => {
-                worker.metrics.event(Metric::GenerationRefused, 1);
                 worker.metrics.retry(WorkerMetric::AiAttempts);
                 saturated = refused.usage_id.or(saturated);
                 tokio::select! {
@@ -977,16 +1046,14 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
                 }
             }
             Err(refused) => {
-                match refused.refusal {
-                    Refusal::Cancelled => {}
-                    refusal if refusal.provider_called() => {
-                        worker.metrics.event(Metric::GenerationFailed, 1)
-                    }
-                    _ => worker.metrics.event(Metric::GenerationRefused, 1),
+                let provider_called = refused.refusal.provider_called();
+                if provider_called && refused.refusal != Refusal::Cancelled {
+                    worker.metrics.event(Metric::GenerationFailed, 1);
                 }
                 return Outcome::Failed {
                     code: refused.refusal.code(),
                     usage_id: refused.usage_id,
+                    generation_refused: !provider_called && refused.refusal != Refusal::Cancelled,
                 };
             }
         }
@@ -1066,7 +1133,7 @@ async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), Api
         // A suggestion that arrived under a changed policy is not stored.
         (Err(code), Outcome::Suggested(guarded)) => (code, Some(guarded.usage_id)),
         (Err(code), Outcome::Failed { usage_id, .. }) => (code, *usage_id),
-        (Ok(_), Outcome::Failed { code, usage_id }) => (*code, *usage_id),
+        (Ok(_), Outcome::Failed { code, usage_id, .. }) => (*code, *usage_id),
         (Ok(_), Outcome::Suggested(guarded)) => {
             lifecycle::transition(
                 &mut tx,
@@ -1095,18 +1162,12 @@ async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), Api
             return Ok(());
         }
     };
-    let handed_off = async {
-        let queued = hand_off(&mut tx, job.ticket_id, code, usage_id).await?;
-        tx.commit().await?;
-        Ok(queued)
-    };
-    worker.observe_handoff(handed_off.await)?;
-    tracing::info!(
-        worker = "ai_attempts",
-        attempt_id = %job.id,
-        outcome = code,
-        "AI attempt handed off to operators"
-    );
+    let queued = hand_off(&mut tx, job.ticket_id, code, usage_id).await?;
+    tx.commit().await?;
+    if queued {
+        worker.handoff_committed(outcome.generation_refused());
+        tracing::info!(attempt_id = %job.id, outcome = code, "AI attempt handed off to operators");
+    }
     Ok(())
 }
 
@@ -1137,29 +1198,28 @@ pub async fn sweep_due(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool,
 
 async fn sweep_job(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, ApiError> {
     let mut tx = worker.pool.begin().await?;
-    let due: Option<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
+    let query = format!(
         "SELECT t.id,
                 CASE WHEN a.state IS DISTINCT FROM 'processing' THEN 'orphaned'
-                     WHEN a.deadline_at <= clock_timestamp() THEN 'timeout'
+                     WHEN a.deadline_at <= statement_timestamp() THEN 'timeout'
                      ELSE 'claims_exhausted' END,
                 (SELECT request_id FROM ticket_events
                  WHERE ticket_id = t.id AND event_type = 'submit' ORDER BY id LIMIT 1)
          FROM tickets t LEFT JOIN ai_attempts a ON a.ticket_id = t.id
-         WHERE t.status = 'ai_processing' AND NOT (t.id = ANY($1))
-           AND (a.state IS DISTINCT FROM 'processing'
-                OR ((a.claimed_until IS NULL OR a.claimed_until <= clock_timestamp())
-                    AND (a.deadline_at <= clock_timestamp() OR a.claims >= $2))
-                OR a.deadline_at + make_interval(secs => $3
-                       + (SELECT concurrency_wait_seconds FROM ai_limits)) <= clock_timestamp())
+         WHERE t.status = 'ai_processing' AND NOT (t.id = ANY($3))
+           AND ({SWEEP_DUE_AT}) <= statement_timestamp()
          ORDER BY t.created_at, t.id LIMIT 1
-         FOR UPDATE OF t SKIP LOCKED",
-    )
-    .bind(&skipped[..])
-    .bind(MAX_CLAIMS)
-    .bind((worker.guard.call_timeout() + SWEEP_MARGIN).as_secs_f64())
-    .fetch_optional(&mut *tx)
-    .await?;
+         FOR UPDATE OF t SKIP LOCKED"
+    );
+    let due: Option<(Uuid, String, Option<Uuid>)> = sqlx::query_as(&query)
+        .bind(MAX_CLAIMS)
+        .bind(sweep_grace_seconds(worker.guard.call_timeout()))
+        .bind(&skipped[..])
+        .fetch_optional(&mut *tx)
+        .await?;
     let Some((ticket_id, outcome, request_id)) = due else {
+        drop(tx);
+        worker.prune_handoff_failures().await;
         skipped.clear();
         return Ok(false);
     };
@@ -1181,14 +1241,19 @@ async fn sweep_job(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, Api
             Ok::<bool, ApiError>(queued)
         }
         .await;
-        if matches!(handed_off, Ok(true)) {
-            tracing::warn!(%ticket_id, outcome, "AI attempt handed off to operators");
-        }
-        if worker.observe_handoff(handed_off).is_err() {
-            // This row can retry on the next drain without blocking later jobs.
-            worker.metrics.failure(WorkerMetric::AiSweep);
-            worker.metrics.retry(WorkerMetric::AiSweep);
-            skipped.push(ticket_id);
+        match handed_off {
+            Ok(true) => {
+                worker.handoff_committed(false);
+                tracing::warn!(%ticket_id, outcome, "AI attempt handed off to operators");
+            }
+            Ok(false) => {}
+            Err(_) => {
+                // Keep retrying without blocking later jobs or alerting repeatedly.
+                worker.handoff_failed(ticket_id);
+                worker.metrics.failure(WorkerMetric::AiSweep);
+                worker.metrics.retry(WorkerMetric::AiSweep);
+                skipped.push(ticket_id);
+            }
         }
     })
     .await;

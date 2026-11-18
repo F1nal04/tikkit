@@ -62,7 +62,9 @@ configs:
     content: |
       ${PUBLIC_HOST:?set PUBLIC_HOST} {
         handle /api/* {
-          reverse_proxy api:3001
+          reverse_proxy api:3001 {
+            header_up -X-Request-ID
+          }
         }
         handle {
           reverse_proxy web:3000

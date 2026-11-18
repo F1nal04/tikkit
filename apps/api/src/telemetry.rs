@@ -58,7 +58,14 @@ pub fn init_logging(json: bool) {
     }
     // The default panic hook prints the payload even if CatchPanicLayer catches
     // the unwind. The payload may include a value from a request or dependency.
-    std::panic::set_hook(Box::new(|_| tracing::error!("process task panicked")));
+    std::panic::set_hook(Box::new(|panic| {
+        let location = panic.location();
+        tracing::error!(
+            file = location.map(|location| location.file()),
+            line = location.map(|location| location.line()),
+            "process task panicked"
+        );
+    }));
 }
 
 pub(crate) async fn http_request(
@@ -66,6 +73,7 @@ pub(crate) async fn http_request(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // Only the private SSR caller supplies this header. Public proxies strip it.
     let id = request
         .headers()
         .get("x-request-id")

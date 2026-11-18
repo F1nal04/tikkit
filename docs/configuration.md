@@ -54,15 +54,26 @@ Background sends try transient failures at most 3 times; the Admin test sends on
 
 ## Operational access
 
+Keep the API socket private to the public reverse proxy and trusted internal
+services. The public proxy is responsible for stripping the inbound
+`X-Request-ID` on every `/api/*` request before forwarding to the API. The
+checked-in Caddy example uses `header_up -X-Request-ID`, and the Vite dev proxy
+applies the same rule. The SSR server connects directly over the private
+network and supplies an ID it generated. Forward the API's response header
+back to the browser so users can report it.
+
 Set `METRICS_PORT` on the API service to enable scraping. The binary binds the
 metrics router to `127.0.0.1` in its own network namespace. The portal and the
 public API listener have no metrics route. For Compose, run a trusted local
 collector in the API container's network namespace (e.g. Compose
 `network_mode: "service:api"`) and scrape `127.0.0.1:9091` there. Do not put a
-public reverse proxy in that namespace, forward the metrics port, or use host
-networking for the API. Local processes in that namespace can scrape without
+public reverse proxy in that namespace or use host networking for the API.
+With a shared namespace, start Prometheus with
+`--web.listen-address=127.0.0.1:9090`. Keep both that port and the metrics port
+unpublished and outside public proxy routes. Local processes in that namespace can scrape without
 credentials. Restrict log access and the collector's UI and storage to
-operators. Keep the probe status codes available to the deployment's health
+operators. The [optional Compose overlay](../docker-compose.observability.example.yml)
+sets up the listener, scraper, and rules together. Keep the probe status codes available to the deployment's health
 check. See [the operations runbook](operations.md) for the scrape configuration,
 alert rules and diagnostic commands.
 

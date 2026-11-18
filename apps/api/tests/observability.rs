@@ -109,3 +109,70 @@ async fn request_logs_use_route_templates_and_replace_header_content() {
                     == response.headers()["x-request-id"].to_str().ok())
     );
 }
+
+#[test]
+fn production_logging_filters_dependencies_and_reports_safe_causes() {
+    const CHILD: &str = "TIKKIT_LOGGING_TEST_CHILD";
+    const PRIVATE: &str = "private-diagnostic-payload";
+    if std::env::var_os(CHILD).is_some() {
+        tikkit_api::telemetry::init_logging(true);
+        tracing::error!(target: "sqlx::query", PRIVATE);
+        let _ = tikkit_api::api::ApiError::from(sqlx::Error::PoolTimedOut);
+        let _ = tikkit_api::api::ApiError::from(sqlx::Error::Protocol(PRIVATE.to_owned()));
+        tikkit_api::db::log_migration_failure(&sqlx::migrate::MigrateError::ExecuteMigration(
+            sqlx::Error::Io(std::io::Error::other(PRIVATE)),
+            25,
+        ));
+        let _ = std::panic::catch_unwind(|| panic!("{PRIVATE}"));
+        return;
+    }
+
+    // The child uses the real global subscriber and panic hook in isolation.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "production_logging_filters_dependencies_and_reports_safe_causes",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("RUST_LOG", "warn,sqlx=trace")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(!stdout.contains(PRIVATE) && !stderr.contains(PRIVATE));
+    let events: Vec<Value> = stdout
+        .lines()
+        .chain(stderr.lines())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    for kind in ["pool_timed_out", "protocol"] {
+        assert!(
+            events
+                .iter()
+                .any(|event| event["fields"]["error_kind"] == kind),
+            "{stdout}\n{stderr}"
+        );
+    }
+    assert!(
+        events.iter().any(|event| {
+            let fields = &event["fields"];
+            fields["message"] == "database migration failed"
+                && fields["database_error_kind"] == "io"
+                && fields["migration_version"] == 25
+        }),
+        "{stdout}\n{stderr}"
+    );
+    assert!(
+        events.iter().any(|event| {
+            let fields = &event["fields"];
+            fields["message"] == "process task panicked"
+                && fields["file"]
+                    .as_str()
+                    .is_some_and(|file| file.ends_with("observability.rs"))
+                && fields["line"].as_u64().is_some_and(|line| line > 0)
+        }),
+        "{stdout}\n{stderr}"
+    );
+}

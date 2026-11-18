@@ -655,9 +655,8 @@ pub async fn requester_action(
     };
     let failure = |error: &ApiError| {
         if matches!(metric, Some(Metric::AiHandoff)) && matches!(error, ApiError::Internal) {
-            state.metrics.event(Metric::HandoffFailed, 1);
             tracing::error!(
-                error_code = "ai_handoff_failed",
+                error_code = "ai_requester_handoff_failed",
                 "requester handoff did not commit"
             );
         }

@@ -17,14 +17,23 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     telemetry::init_logging(config.json_logs);
 
-    let pool = db::connect(&config.database_url).await.map_err(|_| {
+    let pool = db::connect(&config.database_url).await.map_err(|error| {
+        let sqlstate = error.as_database_error().and_then(|db| db.code());
+        tracing::error!(
+            error_kind = db::error_kind(&error),
+            sqlstate = sqlstate.as_deref(),
+            "database startup connection failed"
+        );
         anyhow::anyhow!(
             "cannot connect to PostgreSQL; check DATABASE_URL and database service health"
         )
     })?;
     db::migrate(&pool)
         .await
-        .map_err(|_| anyhow::anyhow!("database migration failed; check database health and the migration history for this build"))?;
+        .map_err(|error| {
+            db::log_migration_failure(&error);
+            anyhow::anyhow!("database migration failed; check database health and the migration history for this build")
+        })?;
     std::fs::create_dir_all(&config.screenshot_dir)
         .context("cannot create SCREENSHOT_DIR (see docs/configuration.md)")?;
     tokio::spawn(screenshots::cleanup_loop(

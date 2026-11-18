@@ -65,3 +65,80 @@ tests:
       - eval_time: 4m
         alertname: TikkitNotificationOutboxStuck
         exp_alerts: []
+  - name: exporter and database outage with recovery
+    interval: 1m
+    input_series:
+      - series: 'up{job="tikkit",instance="offline"}'
+        values: '0 0 0 1'
+      - series: 'tikkit_database_ready{job="tikkit",instance="database_down"}'
+        values: '0 0 0 1'
+      - series: 'tikkit_worker_snapshot_up{job="tikkit",instance="database_down"}'
+        values: '0 0 0 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: TikkitMetricsUnreachable
+        exp_alerts:
+          - exp_labels: { job: tikkit, instance: offline }
+            exp_annotations:
+              summary: The private Tikkit exporter cannot be scraped.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#api-and-database
+      - eval_time: 2m
+        alertname: TikkitDatabaseNotReady
+        exp_alerts:
+          - exp_labels: { job: tikkit, instance: database_down }
+            exp_annotations:
+              summary: PostgreSQL is unavailable or its migration history does not match the API.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#api-and-database
+      - eval_time: 2m
+        alertname: TikkitWorkerSnapshotUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: TikkitMetricsUnreachable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: TikkitDatabaseNotReady
+        exp_alerts: []
+  - name: separate worker backlog query, polling, and email problems
+    interval: 1m
+    input_series:
+      - series: 'tikkit_database_ready{job="tikkit"}'
+        values: '1+0x5'
+      - series: 'tikkit_worker_snapshot_up{job="tikkit"}'
+        values: '0 0 0 0 0 1'
+      - series: 'tikkit_worker_last_success_timestamp_seconds{job="tikkit",worker="auto_close"}'
+        values: '0 0 0 0 0 0 360'
+      - series: 'tikkit_worker_last_success_timestamp_seconds{job="tikkit",worker="ai_attempts"}'
+        values: '0+60x6'
+      - series: 'tikkit_ticket_operations_total{job="tikkit",operation="notification_email_failed"}'
+        values: '0 0 1 2 3 3'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: TikkitWorkerSnapshotUnavailable
+        exp_alerts:
+          - exp_labels: { job: tikkit }
+            exp_annotations:
+              summary: The API is ready but the worker backlog query is failing or timing out.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#worker-health
+      - eval_time: 4m
+        alertname: TikkitWorkerNotPolling
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: TikkitNotificationEmailFailing
+        exp_alerts:
+          - exp_labels: { job: tikkit, operation: notification_email_failed }
+            exp_annotations:
+              summary: Repeated notification email failures were recorded.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#notifications-and-smtp
+      - eval_time: 5m
+        alertname: TikkitWorkerSnapshotUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: TikkitWorkerNotPolling
+        exp_alerts:
+          - exp_labels: { job: tikkit, worker: auto_close }
+            exp_annotations:
+              summary: auto_close has not completed a poll recently.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#worker-health
+      - eval_time: 6m
+        alertname: TikkitWorkerNotPolling
+        exp_alerts: []

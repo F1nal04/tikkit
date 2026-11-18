@@ -20,7 +20,10 @@ use axum::{
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    ai_attempts::{MAX_CLAIMS, SWEEP_DUE_AT, sweep_grace_seconds},
+};
 
 const BUCKETS_MS: [u32; 9] = [5, 10, 25, 50, 100, 250, 500, 1000, 5000];
 const STATUS_CLASSES: [&str; 5] = ["1xx", "2xx", "3xx", "4xx", "5xx"];
@@ -250,12 +253,12 @@ struct Backlogs {
     close_lag: f64,
 }
 
-async fn backlogs(pool: &PgPool) -> Result<Backlogs, sqlx::Error> {
+async fn backlogs(pool: &PgPool, call_timeout: Duration) -> Result<Backlogs, sqlx::Error> {
     // Only active rows; these predicates use the existing partial indexes.
     // An orphaned AI-stage ticket is due for the sweep immediately.
-    sqlx::query_as(
+    let query = format!(
         "WITH ai AS (
-             SELECT COALESCE(a.deadline_at, t.created_at) AS due
+             SELECT ({SWEEP_DUE_AT}) AS due
              FROM tickets t LEFT JOIN ai_attempts a ON a.ticket_id = t.id AND a.state = 'processing'
              WHERE t.status = 'ai_processing'
          ), mail AS (
@@ -279,10 +282,13 @@ async fn backlogs(pool: &PgPool) -> Result<Backlogs, sqlx::Error> {
              SELECT count(*) AS pending, count(*) FILTER (WHERE due <= statement_timestamp()) AS due,
                     GREATEST(0, EXTRACT(EPOCH FROM statement_timestamp() - min(due)))::float8 AS lag
              FROM closing
-         ) close_count",
-    )
-    .fetch_one(pool)
-    .await
+         ) close_count"
+    );
+    sqlx::query_as(&query)
+        .bind(MAX_CLAIMS)
+        .bind(sweep_grace_seconds(call_timeout))
+        .fetch_one(pool)
+        .await
 }
 
 async fn scrape(State(state): State<AppState>) -> impl IntoResponse {
@@ -290,10 +296,13 @@ async fn scrape(State(state): State<AppState>) -> impl IntoResponse {
     let checks = crate::probe_readiness(&state.pool).await;
     let ready = checks.migrations == "ok";
     let snapshot = if ready {
-        tokio::time::timeout(Duration::from_secs(2), backlogs(&state.pool))
-            .await
-            .ok()
-            .and_then(Result::ok)
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            backlogs(&state.pool, state.ai_client.total_timeout()),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
     } else {
         None
     };

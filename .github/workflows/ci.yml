@@ -54,6 +54,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check --filter=@tikkit/api
       - run: bun run test --filter=@tikkit/api
+      - name: Validate Prometheus alerts
+        run: |
+          image=prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+          promtool() {
+            docker run --rm --network none --entrypoint /bin/promtool \
+              -v "$PWD/ops/prometheus:/rules:ro" -w /rules "$image" "$@"
+          }
+          promtool check rules alerts.yml
+          promtool test rules alerts.test.yml
 
   api-release:
     runs-on: ubuntu-latest

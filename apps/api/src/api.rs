@@ -418,7 +418,11 @@ impl From<sqlx::Error> for ApiError {
         if matches!(code.as_deref(), Some("40001" | "40P01")) {
             return Self::Conflict;
         }
-        tracing::error!(sqlstate = code.as_deref(), "database error");
+        tracing::error!(
+            error_kind = crate::db::error_kind(&error),
+            sqlstate = code.as_deref(),
+            "database error"
+        );
         Self::Internal
     }
 }
