@@ -75,6 +75,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/accounts/{id}/anonymize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Removes the identity of a deactivated account for good (Admin only). The
+         *     account ID, role, and every ticket, event, and statistic that refers to it
+         *     stay; see docs/retention.md for the exact policy. The account must be
+         *     deactivated first, so the last active Admin and an active team's lead can
+         *     never be anonymized. Irreversible. Writes `account_anonymized`.
+         */
+        post: operations["anonymize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/accounts/{id}/personal-data/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exports the personal data of one account as a JSON document (Admin only).
+         *     The typed `username` must be the account's. Bounded: each section holds at
+         *     most 10,000 rows and `truncated` names the sections that were cut. Never
+         *     contains credentials, hashes, internal notes, or other people's data; see
+         *     docs/retention.md for the exact contents. Writes `personal_data_exported`.
+         */
+        post: operations["export"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ai/outcomes": {
         parameters: {
             query?: never;
@@ -211,6 +257,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/personal-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finds one account by username and counts what is stored about it (Admin
+         *     only). Read-only; the preview before an export or anonymization.
+         */
+        get: operations["summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/reports": {
         parameters: {
             query?: never;
@@ -237,6 +303,67 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["export_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The retention policy and the latest runs (Admin only). */
+        get: operations["overview"];
+        /**
+         * Replaces the retention policy (Admin only). Saving deletes nothing unless
+         *     `automatic` is on; then the worker applies the policy within a day.
+         */
+        put: operations["update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dry run (Admin only): exact counts per category for the given periods,
+         *     saved or not. Changes nothing and writes no audit event.
+         */
+        post: operations["preview_policy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Starts applying the saved policy now (Admin only). The retention worker
+         *     does the work in batches; `GET /api/admin/retention` shows its progress.
+         */
+        post: operations["start"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1545,7 +1672,14 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /** @description The typed confirmation of a request about one account. */
+        AccountConfirmation: {
+            /** @description The account's current username, typed by the Admin. */
+            username: string;
+        };
         AccountSummary: {
+            /** @description The account's identity was removed; it cannot be reactivated. */
+            anonymized: boolean;
             /** Format: date-time */
             created_at: string;
             display_name: string;
@@ -1970,6 +2104,39 @@ export interface components {
             /** Format: int64 */
             count: number;
             outcome: components["schemas"]["AiDisposition"];
+        };
+        /** @description What an anonymization removed. Counts only. */
+        AnonymizationResult: {
+            /** Format: uuid */
+            account_id: string;
+            /**
+             * Format: int64
+             * @description Audit events whose username snapshot or IP address was removed.
+             */
+            audit_events: number;
+            /** Format: int64 */
+            drafts: number;
+            /** Format: int64 */
+            notifications: number;
+            /** Format: int64 */
+            pending_screenshots: number;
+            /** Format: int64 */
+            saved_views: number;
+            /** Format: int64 */
+            sessions: number;
+            /** @description Content removed from the account's own final tickets, if requested. */
+            ticket_content: components["schemas"]["RetentionCounts"];
+            /** @description The placeholder that replaced the username and display name. */
+            username: string;
+        };
+        AnonymizeAccount: {
+            /**
+             * @description Also remove the content of the account's own tickets that are in a
+             *     final status now (as ticket content retention would later).
+             */
+            purge_ticket_content?: boolean;
+            /** @description The account's current username, typed by the Admin. */
+            username: string;
         };
         AnswerSnapshot: {
             /**
@@ -2571,6 +2738,8 @@ export interface components {
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_AccountSummary: {
             items: {
+                /** @description The account's identity was removed; it cannot be reactivated. */
+                anonymized: boolean;
                 /** Format: date-time */
                 created_at: string;
                 display_name: string;
@@ -2837,6 +3006,43 @@ export interface components {
             }[];
             next_cursor: string | null;
         };
+        /** @description What is stored about one account, as counts. Nothing is changed. */
+        PersonalDataSummary: {
+            /** Format: uuid */
+            account_id: string;
+            /** Format: date-time */
+            anonymized_at: string | null;
+            /**
+             * Format: int64
+             * @description Audit events the account acted in or is the subject of.
+             */
+            audit_events: number;
+            display_name: string;
+            /** Format: int64 */
+            drafts: number;
+            /**
+             * Format: int64
+             * @description Of those, in a final status with their content still stored.
+             */
+            final_tickets_with_content: number;
+            is_active: boolean;
+            /**
+             * Format: int64
+             * @description Of those, not in a final status. Anonymization leaves them open.
+             */
+            open_tickets: number;
+            /** Format: int64 */
+            pending_screenshots: number;
+            role: components["schemas"]["Role"];
+            /** Format: int64 */
+            sessions: number;
+            /**
+             * Format: int64
+             * @description Tickets the account submitted.
+             */
+            tickets: number;
+            username: string;
+        };
         Priority: {
             archived: boolean;
             /** Format: uuid */
@@ -3029,6 +3235,148 @@ export interface components {
          * @enum {string}
          */
         ResolutionSourceFilter: "ai" | "operator" | "none";
+        /**
+         * @description Records per category. In a preview: what a run started now would remove.
+         *     In a run: what it has removed so far.
+         */
+        RetentionCounts: {
+            /**
+             * Format: int64
+             * @description AI attempts whose input and suggestion were removed.
+             */
+            ai_content?: number;
+            /**
+             * Format: int64
+             * @description Audit events deleted.
+             */
+            audit_events?: number;
+            /**
+             * Format: int64
+             * @description Drafts deleted.
+             */
+            drafts?: number;
+            /**
+             * Format: int64
+             * @description Screenshot records deleted (their files follow).
+             */
+            screenshots?: number;
+            /**
+             * Format: int64
+             * @description Tickets whose text was removed.
+             */
+            ticket_content?: number;
+        };
+        /** @description Bounds of the retention periods, in days. */
+        RetentionLimits: {
+            /**
+             * Format: int64
+             * @description The audit log's retention floor.
+             */
+            audit_min_days: number;
+            /** Format: int64 */
+            max_days: number;
+            /** Format: int64 */
+            min_days: number;
+        };
+        /** @description The retention policy, its bounds, and the latest runs. */
+        RetentionOverview: {
+            limits: components["schemas"]["RetentionLimits"];
+            /** @description Newest first, at most 10. */
+            runs: components["schemas"]["RetentionRun"][];
+            settings: components["schemas"]["RetentionSettings"];
+        };
+        /**
+         * @description Retention periods in days. `null` keeps that category for good, which is
+         *     the default for all five.
+         */
+        RetentionPolicy: {
+            /**
+             * Format: int64
+             * @description AI input and suggestion of tickets in a final status.
+             */
+            ai_content_days: number | null;
+            /**
+             * Format: int64
+             * @description Audit events. At least 30 days.
+             */
+            audit_days: number | null;
+            /**
+             * Format: int64
+             * @description Unsubmitted drafts, from their last save.
+             */
+            draft_days: number | null;
+            /**
+             * Format: int64
+             * @description Screenshots of tickets in a final status, from the final status.
+             */
+            screenshot_days: number | null;
+            /**
+             * Format: int64
+             * @description Subject, description, answers, messages, and cancellation reason of
+             *     tickets in a final status. Implies their screenshots and AI content.
+             */
+            ticket_content_days: number | null;
+        };
+        /** @description What a run would remove if it started at `as_of`. */
+        RetentionPreview: {
+            affected: components["schemas"]["RetentionCounts"];
+            /** Format: date-time */
+            as_of: string;
+            policy: components["schemas"]["RetentionPolicy"];
+        };
+        /** @description One application of the policy. */
+        RetentionRun: {
+            /**
+             * Format: date-time
+             * @description The clock the periods were measured from.
+             */
+            as_of: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Removed so far (final once `completed`). */
+            deleted: components["schemas"]["RetentionCounts"];
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The periods the run applies, as they were when it started. */
+            policy: components["schemas"]["RetentionPolicy"];
+            /**
+             * Format: uuid
+             * @description The Admin who started it; `null` for an automatic run.
+             */
+            requested_by: string | null;
+            requested_by_username: string | null;
+            state: components["schemas"]["RetentionRunState"];
+        };
+        /** @enum {string} */
+        RetentionRunState: "pending" | "completed";
+        RetentionSettings: {
+            /** @description Whether the worker applies the policy daily. Off by default. */
+            automatic: boolean;
+            policy: components["schemas"]["RetentionPolicy"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description Every period is required; `null` keeps that category for good. */
+        RetentionSettingsWrite: {
+            /** Format: int64 */
+            ai_content_days: number | null;
+            /** Format: int64 */
+            audit_days: number | null;
+            automatic: boolean;
+            /**
+             * @description Must be `DELETE` when `automatic` is true and any period is set: saving
+             *     then authorizes deletion without a further confirmation.
+             */
+            confirm?: string | null;
+            /** Format: int64 */
+            draft_days: number | null;
+            /** Format: int64 */
+            screenshot_days: number | null;
+            /** Format: int64 */
+            ticket_content_days: number | null;
+        };
         RetryResult: {
             /** Format: int64 */
             retried: number;
@@ -3213,6 +3561,10 @@ export interface components {
          * @enum {string}
          */
         StaleFilter: "view" | "team_id" | "status" | "category_id" | "priority_id" | "q";
+        StartRetentionRun: {
+            /** @description Must be `DELETE`. */
+            confirm: string;
+        };
         /**
          * @description The ticket's AI attempt as Admins see it: the stored suggestion, the
          *     internal outcome code, and the requester's decision.
@@ -3220,6 +3572,8 @@ export interface components {
         SubmissionAi: {
             /** Format: uuid */
             attempt_id: string;
+            /** @description Retention removed the stored suggestion; `suggestion` is then `null`. */
+            content_removed: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -3246,6 +3600,11 @@ export interface components {
             ai: null | components["schemas"]["SubmissionAi"];
             /** Format: date-time */
             confirmation_deadline: string | null;
+            /**
+             * Format: date-time
+             * @description Set when retention removed the ticket's text; the text fields then hold `—`.
+             */
+            content_removed_at: string | null;
             description: string;
             /** @description Every event of the ticket, oldest first. */
             events: components["schemas"]["SubmissionEvent"][];
@@ -3373,6 +3732,8 @@ export interface components {
          *     ticket get the same data as context.
          */
         TicketAi: {
+            /** @description Retention removed the stored suggestion; `suggestion` is then `null`. */
+            content_removed: boolean;
             /** Format: date-time */
             created_at: string;
             /**
@@ -3415,6 +3776,12 @@ export interface components {
              * @description Auto-close time of the pending proposal; set only while `awaiting_confirmation`.
              */
             confirmation_deadline: string | null;
+            /**
+             * Format: date-time
+             * @description Set when retention removed the ticket's text (subject, description,
+             *     answers, messages): those fields then hold the marker `—`.
+             */
+            content_removed_at: string | null;
             /** Format: date-time */
             created_at: string;
             description: string;
@@ -3789,6 +4156,138 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description `conflict`: the account was anonymized */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    anonymize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnonymizeAccount"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnonymizationResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConfirmation"];
+            };
+        };
+        responses: {
+            /** @description The export, as an attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`username`: `mismatch`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     outcomes: {
@@ -4148,6 +4647,55 @@ export interface operations {
             };
         };
     };
+    summary: {
+        parameters: {
+            query: {
+                /** @description Exact username (case-insensitive). Resolves to one account ID. */
+                username: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalDataSummary"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found`: no account has that username */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_report: {
         parameters: {
             query: {
@@ -4254,6 +4802,202 @@ export interface operations {
             };
             /** @description More than 10,000 matching rows */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionOverview"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetentionSettingsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (a period: `out_of_range`; `confirm`: `invalid`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    preview_policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetentionPolicy"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionPreview"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (a period: `out_of_range`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRetentionRun"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionRun"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: a run is already pending */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
