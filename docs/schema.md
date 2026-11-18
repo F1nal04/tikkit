@@ -120,7 +120,8 @@ Rust validates and authorizes first; these constraints are the backstop.
   Status changes go through `lifecycle::transition` only.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
-  by trigger on join, leave, and team change.
+  by trigger on join, leave, and team change. Audit events have one retention
+  path, `audit_retention_purge` ([Audit events](#audit-events)).
 
 ## Admin management (0005)
 
@@ -374,3 +375,38 @@ available. The AI worker and sweeper read the originating submission event,
 the notification outbox reads its source event, and auto-close reads the latest
 proposal event under the ticket lock. Legacy events retain NULL. Request IDs
 are operational metadata and are not returned in ticket event API payloads.
+
+## Audit events
+
+Migration `0026_audit_events.sql`. Behavior and the list of actions:
+[audit.md](audit.md).
+
+- `audit_events` gains `request_id` (UUID, the same correlation ID and type as
+  `ticket_events.request_id` of migration `0025`: the request that wrote the
+  event, or the originating request of the job that wrote it; NULL only where
+  no correlation ID exists), the actor snapshot `actor_username`, `actor_role`, `actor_team_id`,
+  `actor_service` (the named identity when no account acts),
+  `subject_username`, `resource_type`, `resource_id`, and `ticket_id` (no
+  foreign keys on team or ticket: history outlives them).
+  `audit_events_actor_identity` requires exactly one of `actor_account_id` and
+  `actor_service`.
+- `audit_events_fill` (`BEFORE INSERT`) fills the actor snapshot from
+  `accounts` and `team_memberships`, the subject's username, and the resource
+  (`audit_resource_of(event_type, subject, metadata)`).
+- `ticket_events_audit` (`AFTER INSERT ON ticket_events`) writes the mirror
+  event `ticket_<event_type>` in the same transaction, with
+  `audit_ticket_metadata(event)`: an allow-list of payload keys, the statuses,
+  and per-event additions, and copies the ticket event's `request_id`. Background ticket events get their service from
+  `audit_ticket_service`.
+- `audit_events_guard` replaces the UPDATE/DELETE guard: both raise
+  `restrict_violation`, except a DELETE while the transaction-local setting
+  `tikkit.audit_retention` is `on`. Only `audit_retention_purge(cutoff, admin)`
+  sets it; the function deletes events older than `cutoff` (not in the future)
+  and appends `audit_retention_purged`. TRUNCATE stays rejected.
+- Indexes: `(actor_account_id, created_at, id)`, `(event_type, created_at, id)`,
+  `(ticket_id, created_at, id)`, `(resource_type, resource_id, created_at, id)`,
+  and `request_id`, besides the existing `(created_at, id)`.
+- Additional `audit_events.event_type` values: `ticket_*` (one per ticket event
+  type), `ai_solved_change_denied`, `ticket_reopen_denied`,
+  `ticket_cancel_denied`, `invitation_rejected`, `setup_rejected`,
+  `audit_exported`, `audit_retention_purged`.

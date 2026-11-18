@@ -156,6 +156,20 @@ skipped, or escalated. Tickets that are help desk work link to the staff view
 (`/queue/{id}`); AI-stage and AI-solved records do not. Details:
 [admin-submissions.md](admin-submissions.md).
 
+## Admin audit log (`/admin/audit`)
+
+The audit log for Admins, newest first in pages of 50, with filters for actor
+(username), action, ticket number, request ID, and dates (inclusive UTC days)
+kept in the address bar (`src/lib/audit.ts`; values the API would reject fall
+back to no filter). Each row shows the time (UTC), the action identifier as it
+is stored (identifiers are not translated), the actor with the role and team it
+had at the time or the service name, what the event is about, the request ID,
+and the metadata as plain JSON text behind a disclosure. Links in a row filter
+by that actor, ticket, resource, or request; a ticket also links to its
+submission. The page only reads. "Export as CSV" posts the current filters to
+`POST /api/admin/audit/export` and saves the file in the browser; the server
+bounds it and records the export. Details: [audit.md](audit.md).
+
 ## Notifications
 
 The shell's top bar links to `/notifications` with the unread count (`unread`

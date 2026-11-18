@@ -37,7 +37,8 @@ machine values. A unit test fails if this table and the code disagree.
 - `view_all_submissions` gates the Admin submission view (every submitted
   ticket, [admin-submissions.md](admin-submissions.md)) and the Admin list of
   AI attempts and AI-solved records, `view_reports` the AI outcome statistics
-  ([ai-decisions.md](ai-decisions.md#admin-records-and-statistics)).
+  ([ai-decisions.md](ai-decisions.md#admin-records-and-statistics)) and the
+  audit log search and export ([audit.md](audit.md#admin-api)).
 - Ticket permissions are capabilities; each ticket is further checked by the
   ticket policy below.
 

@@ -162,7 +162,10 @@ Append-only `audit_events`: `setup_completed`, `login_succeeded`, `login_failed`
 `session_revoked` (with `reason`), `invitation_created`, `invitation_revoked`,
 `invitation_accepted`, `recovery_requested` (IP, `matched`), `recovery_completed`,
 `profile_updated` (changed field names), `account_deactivated`,
-`account_reactivated`. Passwords and tokens are never stored or logged.
+`account_reactivated`, and the rejected attempts `setup_rejected` (bootstrap
+replay) and `invitation_rejected` (used, revoked, expired, or unknown link, or
+a body with a field such as `role`). Passwords and tokens are never stored or
+logged. The full model, search, and export: [audit.md](audit.md).
 
 ## Endpoints
 
