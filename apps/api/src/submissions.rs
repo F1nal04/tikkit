@@ -81,11 +81,47 @@ pub enum AiOutcomeFilter {
     Cancelled,
 }
 
+/// Mutually exclusive AI reporting buckets, derived from the Admin attempt
+/// outcome and the recorded submission route.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AiDisposition {
+    Solved,
+    NotSolved,
+    ProviderFailed,
+    Failed,
+    Processing,
+    AwaitingDecision,
+    Cancelled,
+    CategoryExempt,
+    AiDisabled,
+    RequesterSkip,
+    Unknown,
+}
+
+const AI_DISPOSITION_SQL: &str = "CASE
+    WHEN x.ai_outcome = 'failed' AND x.provider_failed THEN 'provider_failed'
+    WHEN x.ai_outcome = 'skipped' THEN 'requester_skip'
+    WHEN x.ai_outcome IS NOT NULL THEN x.ai_outcome
+    WHEN x.route = 'ai' AND EXISTS (
+         SELECT 1 FROM ticket_events e WHERE e.ticket_id = x.id AND e.event_type = 'ai_failed'
+    ) THEN 'failed'
+    WHEN x.route IN ('category_exempt', 'ai_disabled', 'requester_skip') THEN x.route
+    ELSE 'unknown' END";
+
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SubmissionsQuery {
     /// The ticket's (frozen) category, archived ones included.
     pub category_id: Option<Uuid>,
+    /// Current destination team, including archived teams.
+    pub team_id: Option<Uuid>,
+    /// Current effective priority.
+    pub priority_id: Option<Uuid>,
+    /// Current closure classification used in Admin reports.
+    pub resolution: Option<SubmissionResolution>,
+    /// AI reporting bucket, including bypass routes with no attempt.
+    pub ai_disposition: Option<AiDisposition>,
     /// Current ticket status. `draft` is not a submission and is rejected.
     pub status: Option<TicketStatus>,
     pub resolution_source: Option<ResolutionSourceFilter>,
@@ -227,16 +263,19 @@ const RESOLUTION_SQL: &str = "CASE
 
 /// Every submitted ticket as one row `x` of summary columns; `filter` is the
 /// rest of the query (conditions on `x`, order, limit).
-fn summaries(filter: &str) -> String {
+pub(crate) fn summaries(filter: &str) -> String {
     format!(
-        "SELECT * FROM (
+        "SELECT * FROM (SELECT x.*, {AI_DISPOSITION_SQL} AS ai_disposition FROM (
              SELECT t.id, t.reference, t.subject, t.status::text AS status, t.category_id,
                     COALESCE(t.intake_snapshot->'catalog'->>'category_name', c.name) AS category_name,
-                    p.name AS priority_name, r.id AS requester_id,
+                    p.id AS priority_id, p.name AS priority_name, r.id AS requester_id,
                     r.username AS requester_username, r.display_name AS requester_display_name,
-                    tm.name AS team_name, asg.display_name AS assignee_display_name,
+                    tm.id AS team_id, tm.name AS team_name, asg.id AS assignee_id,
+                    asg.display_name AS assignee_display_name, asg.role::text AS assignee_role,
                     t.resolution_source, t.closure_reason, {RESOLUTION_SQL} AS resolution,
                     s.route, CASE WHEN a.id IS NOT NULL THEN {OUTCOME_SQL} END AS ai_outcome,
+                    (a.outcome IN ('invalid_credentials', 'rate_limited', 'upstream_unavailable',
+                                   'malformed_output', 'oversized_output')) AS provider_failed,
                     t.created_at, t.updated_at
              FROM tickets t
              JOIN categories c ON c.id = t.category_id
@@ -252,7 +291,7 @@ fn summaries(filter: &str) -> String {
                  WHERE e.ticket_id = t.id AND e.event_type = 'submit' ORDER BY e.id LIMIT 1
              ) s ON true
              WHERE t.status <> 'draft'
-         ) x {filter}"
+         ) x) x {filter}"
     )
 }
 
@@ -309,7 +348,7 @@ impl TryFrom<SummaryRow> for SubmissionSummary {
     }
 }
 
-fn instant(value: Option<String>) -> Result<Option<OffsetDateTime>, ApiError> {
+pub(crate) fn instant(value: Option<String>) -> Result<Option<OffsetDateTime>, ApiError> {
     value
         .map(|s| {
             OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339)
@@ -319,7 +358,9 @@ fn instant(value: Option<String>) -> Result<Option<OffsetDateTime>, ApiError> {
 }
 
 /// Read-only snapshot: nothing a handler here runs can write.
-async fn read_only(state: &AppState) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+pub(crate) async fn read_only(
+    state: &AppState,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
     let mut tx = state.pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
@@ -366,6 +407,10 @@ pub async fn list_submissions(
            AND ($5::timestamptz IS NULL OR x.created_at >= $5)
            AND ($6::timestamptz IS NULL OR x.created_at < $6)
            AND ($7::timestamptz IS NULL OR (x.created_at, x.id) < ($7, $8))
+           AND ($10::uuid IS NULL OR x.team_id = $10)
+           AND ($11::uuid IS NULL OR x.priority_id = $11)
+           AND ($12::text IS NULL OR x.resolution = $12)
+           AND ($13::text IS NULL OR x.ai_disposition = $13)
          ORDER BY x.created_at DESC, x.id DESC LIMIT $9",
     ))
     .bind(query.category_id)
@@ -377,6 +422,10 @@ pub async fn list_submissions(
     .bind(cursor.map(|c| c.created_at))
     .bind(cursor.map(|c| c.id))
     .bind(page.limit() + 1)
+    .bind(query.team_id)
+    .bind(query.priority_id)
+    .bind(query.resolution.map(ident_str))
+    .bind(query.ai_disposition.map(ident_str))
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;

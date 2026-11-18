@@ -44,6 +44,10 @@ limit:
 | Parameter | Values |
 | --- | --- |
 | `category_id` | The ticket's category (frozen at submission; archived ones included) |
+| `team_id` | Current destination team, including archived teams |
+| `priority_id` | Current effective priority |
+| `resolution` | A current closure bucket listed below |
+| `ai_disposition` | An AI breakdown bucket from [Admin reports](admin-reports.md#ai-outcomes-and-rates) |
 | `status` | Any ticket status except `draft` (`400 invalid_query`) |
 | `resolution_source` | `ai`, `operator`, or `none` (open or cancelled) |
 | `ai_outcome` | An outcome below, or `none` (never had an AI attempt) |

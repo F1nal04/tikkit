@@ -885,3 +885,416 @@ async fn non_admins_get_neither_the_dataset_nor_counts() {
     assert_eq!(r.status, 200);
     assert_eq!(r.body["view"], "requester");
 }
+
+#[tokio::test]
+async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
+    let Some(w) = world().await else { return };
+    let m = mixed(&w).await;
+    let path = "/api/admin/reports";
+    let report = w.get(path, "admin").await;
+    assert_eq!(report.status, 200, "{}", report.body);
+    assert_eq!(report.body["submissions"], 11);
+    assert_eq!(report.body["ai_attempts"], 6);
+    assert_eq!(report.body["ai_rate_denominator"], 3);
+    for (outcome, count) in [
+        ("solved", 1),
+        ("not_solved", 1),
+        ("failed", 1),
+        ("category_exempt", 1),
+        ("ai_disabled", 3),
+        ("requester_skip", 1),
+        ("processing", 1),
+        ("awaiting_decision", 1),
+        ("cancelled", 1),
+    ] {
+        let counted = report.body["ai_outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["outcome"] == outcome)
+            .unwrap();
+        assert_eq!(counted["count"], count, "{outcome}");
+        assert_eq!(
+            w.list(&format!("ai_disposition={outcome}")).await.len(),
+            count
+        );
+    }
+    assert_eq!(report.body["operator"]["queued"], 7);
+    assert_eq!(report.body["operator"]["initial_closures"], 2);
+    assert_eq!(report.body["operator"]["reopens"], 0);
+    assert_eq!(report.body["deflection_rate_denominator"], 10);
+    for (resolution, count) in [
+        ("ai_confirmed", 1),
+        ("requester_confirmed", 1),
+        ("confirmation_timeout", 1),
+        ("cancelled", 1),
+        ("open", 7),
+    ] {
+        let counted = report.body["closures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["resolution"] == resolution)
+            .unwrap();
+        assert_eq!(counted["count"], count);
+        assert_eq!(
+            w.list(&format!("resolution={resolution}")).await.len(),
+            count
+        );
+    }
+    let owner_detail = w
+        .get(&format!("/api/tickets/{}", m.ids["solved"]), "owner")
+        .await;
+    assert_eq!(owner_detail.status, 200);
+    sqlx::query("UPDATE organization SET allow_reopening = true")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let denied = w
+        .action(m.ids["solved"], json!({ "action": "reopen" }), "admin")
+        .await;
+    assert_eq!(denied.status, 403);
+    assert_eq!(w.get(path, "admin").await.body, report.body);
+
+    let provider_failure = w.submit(w.software, "provider failure", true).await;
+    let mut tx = w.pool().begin().await.unwrap();
+    lifecycle::transition(&mut tx, provider_failure, By::System, &Transition::AiFailed)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE ai_attempts SET state = 'handed_off', outcome = 'rate_limited',
+                      finished_at = clock_timestamp() WHERE ticket_id = $1",
+    )
+    .bind(provider_failure)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let failed = w.get(path, "admin").await.body;
+    assert!(failed["ai_outcomes"].as_array().unwrap().contains(&json!({
+        "outcome": "provider_failed", "count": 1,
+    })));
+    assert_eq!(failed["ai_rate_denominator"], 4);
+    assert_eq!(w.list("ai_disposition=provider_failed").await.len(), 1);
+    assert_eq!(w.list("ai_outcome=failed").await.len(), 2);
+
+    for who in NON_ADMINS {
+        assert_eq!(w.get(path, who).await.status, 403, "{who}");
+        assert_eq!(
+            call(
+                &w.app,
+                "POST",
+                "/api/admin/reports/export",
+                None,
+                Some(&w.cookies[who])
+            )
+            .await
+            .status,
+            403,
+            "{who}",
+        );
+    }
+    assert_eq!(call(&w.app, "GET", path, None, None).await.status, 401);
+}
+
+/// Event fixture with a fixed clock. A rejected proposal precedes the first
+/// accepted one. A reply by the requester and a staff note precede staff's reply.
+async fn timed_ticket(w: &World) -> (Uuid, i64) {
+    let (id, reference) = sqlx::query_as(
+        "INSERT INTO tickets (requester_account_id, category_id, priority_id,
+                              team_id, assignee_account_id, status, proposal_version,
+                              resolution_source, closure_reason, subject, description, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'closed', 2, 'operator', 'requester_confirmed',
+                 'Not exported', 'Private intake', '2026-01-15T00:00:00Z')
+         RETURNING id, reference",
+    )
+    .bind(w.ids["owner"])
+    .bind(w.software)
+    .bind(w.priority)
+    .bind(w.desk)
+    .bind(w.ids["op"])
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    for (event, from, to, actor, payload, at) in [
+        (
+            "submit",
+            "draft",
+            "queued",
+            w.ids["owner"],
+            json!({"route": "ai_disabled"}),
+            "00:00",
+        ),
+        (
+            "start_work",
+            "queued",
+            "in_progress",
+            w.ids["op"],
+            json!({}),
+            "00:05",
+        ),
+        (
+            "propose_resolution",
+            "in_progress",
+            "awaiting_confirmation",
+            w.ids["op"],
+            json!({"proposal_version": 1}),
+            "00:40",
+        ),
+        (
+            "reject_resolution",
+            "awaiting_confirmation",
+            "in_progress",
+            w.ids["owner"],
+            json!({"proposal_version": 1}),
+            "00:50",
+        ),
+        (
+            "propose_resolution",
+            "in_progress",
+            "awaiting_confirmation",
+            w.ids["op"],
+            json!({"proposal_version": 2}),
+            "01:00",
+        ),
+        (
+            "accept_resolution",
+            "awaiting_confirmation",
+            "closed",
+            w.ids["owner"],
+            json!({"proposal_version": 2, "resolution_source": "operator", "closure_reason": "requester_confirmed"}),
+            "03:00",
+        ),
+    ] {
+        sqlx::query("INSERT INTO ticket_events (ticket_id, event_type, from_status, to_status, actor_account_id, payload, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7::text::timestamptz)")
+            .bind(id).bind(event).bind(from).bind(to).bind(actor).bind(payload)
+            .bind(format!("2026-01-15T{at}:00Z")).execute(w.pool()).await.unwrap();
+    }
+    for (kind, author_kind, author, at) in [
+        ("public_reply", "requester", w.ids["owner"], "00:10"),
+        ("internal_note", "staff", w.ids["op"], "00:15"),
+        ("public_reply", "staff", w.ids["op"], "00:30"),
+    ] {
+        sqlx::query("INSERT INTO ticket_messages (ticket_id, author_account_id, kind, body, author_kind, created_at)
+                     VALUES ($1, $2, $3, 'Private fixture text', $4, $5::text::timestamptz)")
+            .bind(id).bind(author).bind(kind).bind(author_kind)
+            .bind(format!("2026-01-15T{at}:00Z")).execute(w.pool()).await.unwrap();
+    }
+    (id, reference)
+}
+
+async fn csv(w: &World, query: &str) -> axum::response::Response {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    w.app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/admin/reports/export?{query}"))
+                .header("cookie", &w.cookies["admin"])
+                .header("x-requested-with", "tikkit")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
+    let Some(w) = world().await else { return };
+    let (id, reference) = timed_ticket(&w).await;
+    // An allowed UTC interval expressed with a negative offset. The first
+    // ticket starts exactly at midnight UTC; the second is exactly at the end.
+    let outside = w.submit(w.software, "Outside the interval", false).await;
+    sqlx::query(
+        "UPDATE tickets SET created_at = '2026-01-16T00:00:00Z', team_id = $2 WHERE id = $1",
+    )
+    .bind(outside)
+    .bind(w.desk)
+    .execute(w.pool())
+    .await
+    .unwrap();
+    let unassigned = w.submit(w.software, "Outside the team", false).await;
+    sqlx::query("UPDATE tickets SET created_at = '2026-01-15T11:00:00Z' WHERE id = $1")
+        .bind(unassigned)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let query = format!(
+        "created_from=2026-01-14T19:00:00-05:00&created_before=2026-01-15T19:00:00-05:00&category_id={}&team_id={}",
+        w.software, w.desk,
+    );
+    let report_path = format!("/api/admin/reports?{query}");
+    let report = w.get(&report_path, "admin").await;
+    assert_eq!(report.status, 200, "{}", report.body);
+    assert_eq!(
+        report.body["daily"],
+        json!([{"day": "2026-01-15", "count": 1}])
+    );
+    assert_eq!(
+        report.body["workload"][0]["assignee_id"],
+        json!(w.ids["op"])
+    );
+    assert_eq!(report.body["workload"][0]["queued"], 1);
+    assert_eq!(report.body["workload"][0]["assignee_role"], "operator");
+    assert_eq!(w.list(&query).await.len(), 1);
+    for (key, value) in [
+        ("queued", json!(1)),
+        ("first_response_samples", json!(1)),
+        ("mean_first_response_seconds", json!(1800.0)),
+        ("initial_closures", json!(1)),
+        ("subsequent_closures", json!(0)),
+        ("reopens", json!(0)),
+        ("rejected_proposals", json!(1)),
+        ("time_to_proposal_samples", json!(1)),
+        ("mean_queue_to_proposal_seconds", json!(3600.0)),
+        ("confirmation_wait_samples", json!(1)),
+        ("mean_proposal_to_closure_seconds", json!(7200.0)),
+        ("resolution_samples", json!(1)),
+        ("mean_queue_to_closure_seconds", json!(10800.0)),
+    ] {
+        assert_eq!(report.body["operator"][key], value, "{key}");
+    }
+
+    let confirmed = csv(&w, &query).await;
+    assert_eq!(confirmed.status(), 200);
+    let bytes = axum::body::to_bytes(confirmed.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let (header, row) = std::str::from_utf8(&bytes)
+        .unwrap()
+        .split_once("\r\n")
+        .unwrap();
+    let cells: HashMap<_, _> = header.split(',').zip(row.trim_end().split(',')).collect();
+    assert_eq!(cells["\"closure_reason\""], "\"requester_confirmed\"");
+    assert_eq!(
+        cells["\"requester_confirmed_at\""],
+        "\"2026-01-15T03:00:00Z\""
+    );
+
+    let denied = w.action(id, json!({"action": "reopen"}), "owner").await;
+    assert_eq!(denied.status, 403);
+    assert_eq!(w.get(&report_path, "admin").await.body, report.body);
+    sqlx::query("UPDATE organization SET allow_reopening = true")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let reopened = w.action(id, json!({"action": "reopen"}), "owner").await;
+    assert_eq!(reopened.status, 200, "{}", reopened.body);
+    let r = w.get(&report_path, "admin").await.body;
+    assert_eq!(r["closures"], json!([{"resolution": "open", "count": 1}]));
+    assert_eq!(r["operator"]["reopens"], 1);
+    assert_eq!(r["operator"]["initial_closures"], 1);
+    assert_eq!(r["operator"]["mean_queue_to_closure_seconds"], 10800.0);
+
+    sqlx::query("UPDATE categories SET name = $1 WHERE id = $2")
+        .bind("  =\"calc\",next")
+        .bind(w.software)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let response = csv(&w, &query).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/csv; charset=utf-8"
+    );
+    assert_eq!(
+        response.headers()["content-disposition"],
+        "attachment; filename=\"ticket-report.csv\""
+    );
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let expected = format!(
+        "\"{reference}\",\"2026-01-15T00:00:00Z\",\"'  =\"\"calc\"\",next\",\"Normal\",\"Desk\",\"in_progress\",\"ai_disabled\",\"open\",\"\",\"\",\"2026-01-15T00:00:00Z\",\"2026-01-15T00:30:00Z\",\"2026-01-15T01:00:00Z\",\"2026-01-15T03:00:00Z\",\"requester_confirmed\",\"2026-01-15T01:00:00Z\",\"\",\"\",\"\",\"1\",\"1\",\"1\"\r\n",
+    );
+    let (header, data) = text.split_once("\r\n").unwrap();
+    assert!(header.contains("\"closure_reason\""));
+    assert!(header.contains("\"requester_confirmed_at\""));
+    assert_eq!(data, expected);
+
+    // Later closure increments its own counters. The original duration stays.
+    let mut tx = w.pool().begin().await.unwrap();
+    lifecycle::transition(
+        &mut tx,
+        id,
+        By::Account(w.ids["op"]),
+        &Transition::ProposeResolution {
+            summary: "Private second proposal".into(),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let awaiting = w.get(&report_path, "admin").await.body;
+    assert_eq!(awaiting["awaiting_confirmation"], 1);
+    assert_eq!(
+        w.list(&format!("{query}&status=awaiting_confirmation"))
+            .await
+            .len(),
+        1
+    );
+    let accepted = w
+        .action(
+            id,
+            json!({"action": "accept_resolution", "proposal_version": 3}),
+            "owner",
+        )
+        .await;
+    assert_eq!(accepted.status, 200, "{}", accepted.body);
+    let r = w.get(&report_path, "admin").await.body;
+    assert_eq!(r["operator"]["subsequent_closures"], 1);
+    assert_eq!(r["operator"]["mean_queue_to_closure_seconds"], 10800.0);
+
+    let audit: Vec<(Uuid, Value)> = sqlx::query_as(
+        "SELECT actor_account_id, metadata FROM audit_events WHERE event_type = 'report_exported'",
+    )
+    .fetch_all(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(audit.len(), 2);
+    for (actor, metadata) in audit {
+        assert_eq!(actor, w.ids["admin"]);
+        assert_eq!(
+            metadata,
+            json!({"row_count": 1, "created_from": "2026-01-15T00:00:00Z",
+            "created_before": "2026-01-16T00:00:00Z", "category_id": w.software, "team_id": w.desk})
+        );
+    }
+}
+
+#[tokio::test]
+async fn export_rejects_unbounded_ranges_and_excess_rows_without_auditing() {
+    let Some(w) = world().await else { return };
+    for query in [
+        "",
+        "created_from=2026-01-01T00:00:00Z",
+        "created_from=2026-01-02T00:00:00Z&created_before=2026-01-01T00:00:00Z",
+        "created_from=2026-01-01T00:00:00Z&created_before=2027-01-03T00:00:00Z",
+    ] {
+        assert_eq!(csv(&w, query).await.status(), 400, "{query}");
+    }
+    sqlx::query("INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description, status, created_at)
+        SELECT $1, $2, $3, 'Volume', 'Fixture', 'queued', '2026-01-01T00:00:00Z' FROM generate_series(1, 10001)")
+        .bind(w.ids["owner"]).bind(w.software).bind(w.priority).execute(w.pool()).await.unwrap();
+    assert_eq!(
+        csv(
+            &w,
+            "created_from=2026-01-01T00:00:00Z&created_before=2026-01-02T00:00:00Z"
+        )
+        .await
+        .status(),
+        413
+    );
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE event_type = 'report_exported'",
+    )
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+}

@@ -211,6 +211,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reports/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["export_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/settings": {
         parameters: {
             query?: never;
@@ -1609,6 +1641,12 @@ export interface components {
          * @enum {string}
          */
         AiDecision: "solved" | "not_solved";
+        /**
+         * @description Mutually exclusive AI reporting buckets, derived from the Admin attempt
+         *     outcome and the recorded submission route.
+         * @enum {string}
+         */
+        AiDisposition: "solved" | "not_solved" | "provider_failed" | "failed" | "processing" | "awaiting_decision" | "cancelled" | "category_exempt" | "ai_disabled" | "requester_skip" | "unknown";
         AiFailureCount: {
             /** Format: int64 */
             count: number;
@@ -1928,6 +1966,11 @@ export interface components {
             totals: components["schemas"]["AiUsageCounts"];
             window: components["schemas"]["AiBudgetWindow"];
         };
+        AiVolume: {
+            /** Format: int64 */
+            count: number;
+            outcome: components["schemas"]["AiDisposition"];
+        };
         AnswerSnapshot: {
             /**
              * Format: uuid
@@ -2195,6 +2238,11 @@ export interface components {
          * @enum {string}
          */
         ClosureReason: "requester_confirmed" | "confirmation_timeout";
+        ClosureVolume: {
+            /** Format: int64 */
+            count: number;
+            resolution: components["schemas"]["SubmissionResolution"];
+        };
         CreateInvitationRequest: {
             /** @description Optional recipient. With SMTP configured the link is emailed there. */
             email?: string | null;
@@ -2222,6 +2270,15 @@ export interface components {
             invitation: components["schemas"]["Invitation"];
             /** @description Single-use acceptance link. Shown only now; only its hash is stored. */
             url: string;
+        };
+        DailyVolume: {
+            /** Format: int64 */
+            count: number;
+            /**
+             * Format: date
+             * @description Calendar date in UTC.
+             */
+            day: string;
         };
         DeliveryFailure: {
             /** Format: int64 */
@@ -2408,6 +2465,13 @@ export interface components {
             id: string;
             name: string;
         };
+        NamedVolume: {
+            /** Format: int64 */
+            count: number;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         NewCategory: {
             /** @description 1-100 characters, unique among active categories. */
             name: string;
@@ -2451,6 +2515,34 @@ export interface components {
         NotificationPreferences: {
             email: boolean;
             in_app: boolean;
+        };
+        OperatorTotals: {
+            /** Format: int64 */
+            confirmation_wait_samples: number;
+            /** Format: int64 */
+            first_response_samples: number;
+            /** Format: int64 */
+            initial_closures: number;
+            /** Format: double */
+            mean_first_response_seconds: number | null;
+            /** Format: double */
+            mean_proposal_to_closure_seconds: number | null;
+            /** Format: double */
+            mean_queue_to_closure_seconds: number | null;
+            /** Format: double */
+            mean_queue_to_proposal_seconds: number | null;
+            /** Format: int64 */
+            queued: number;
+            /** Format: int64 */
+            rejected_proposals: number;
+            /** Format: int64 */
+            reopens: number;
+            /** Format: int64 */
+            resolution_samples: number;
+            /** Format: int64 */
+            subsequent_closures: number;
+            /** Format: int64 */
+            time_to_proposal_samples: number;
         };
         Order: {
             /** @description Every ID of this kind, archived ones included, in the new display order. */
@@ -2850,6 +2942,31 @@ export interface components {
         };
         RecoveryRequest: {
             username: string;
+        };
+        Report: {
+            /** Format: int64 */
+            ai_attempts: number;
+            ai_outcomes: components["schemas"]["AiVolume"][];
+            /**
+             * Format: int64
+             * @description Confirmed, not-solved, or failed AI attempts on non-cancelled submissions.
+             */
+            ai_rate_denominator: number;
+            /** Format: int64 */
+            awaiting_confirmation: number;
+            categories: components["schemas"]["NamedVolume"][];
+            closures: components["schemas"]["ClosureVolume"][];
+            daily: components["schemas"]["DailyVolume"][];
+            /**
+             * Format: int64
+             * @description All non-cancelled submissions, including pending and bypassed AI paths.
+             */
+            deflection_rate_denominator: number;
+            operator: components["schemas"]["OperatorTotals"];
+            priorities: components["schemas"]["NamedVolume"][];
+            /** Format: int64 */
+            submissions: number;
+            workload: components["schemas"]["Workload"][];
         };
         /**
          * @description Explicit decisions only: replies and views never implicitly accept a proposal
@@ -3425,6 +3542,21 @@ export interface components {
              */
             lead_account_id?: string | null;
             name: string;
+        };
+        Workload: {
+            /** Format: int64 */
+            active: number;
+            /** Format: uuid */
+            assignee_id: string | null;
+            assignee_name: string | null;
+            assignee_role: null | components["schemas"]["Role"];
+            /** Format: int64 */
+            awaiting_confirmation: number;
+            /** Format: int64 */
+            queued: number;
+            /** Format: uuid */
+            team_id: string | null;
+            team_name: string | null;
         };
     };
     responses: never;
@@ -4002,6 +4134,120 @@ export interface operations {
             };
         };
     };
+    get_report: {
+        parameters: {
+            query?: {
+                /** @description Inclusive submission time, RFC 3339. Required for CSV. */
+                created_from?: string;
+                /** @description Exclusive submission time, RFC 3339. Required for CSV. */
+                created_before?: string;
+                /** @description Frozen category ID. */
+                category_id?: string;
+                /** @description Current destination team ID. */
+                team_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Report"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export_report: {
+        parameters: {
+            query?: {
+                /** @description Inclusive submission time, RFC 3339. Required for CSV. */
+                created_from?: string;
+                /** @description Exclusive submission time, RFC 3339. Required for CSV. */
+                created_before?: string;
+                /** @description Frozen category ID. */
+                category_id?: string;
+                /** @description Current destination team ID. */
+                team_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Missing, reversed, or over-366-day range */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description More than 10,000 matching rows */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     settings: {
         parameters: {
             query?: never;
@@ -4089,6 +4335,14 @@ export interface operations {
             query?: {
                 /** @description The ticket's (frozen) category, archived ones included. */
                 category_id?: string;
+                /** @description Current destination team, including archived teams. */
+                team_id?: string;
+                /** @description Current effective priority. */
+                priority_id?: string;
+                /** @description Current closure classification used in Admin reports. */
+                resolution?: components["schemas"]["SubmissionResolution"];
+                /** @description AI reporting bucket, including bypass routes with no attempt. */
+                ai_disposition?: components["schemas"]["AiDisposition"];
                 /** @description Current ticket status. `draft` is not a submission and is rejected. */
                 status?: components["schemas"]["TicketStatus"];
                 resolution_source?: components["schemas"]["ResolutionSourceFilter"];
