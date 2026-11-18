@@ -253,6 +253,37 @@ function seedHistory(st, user) {
 }
 
 
+// Admin audit log (docs/audit.md): newest first, Admin only. Metadata is untrusted text, and one
+// resource ID is a spreadsheet formula. The export is CSV and records itself, as the API does.
+const auditActor = (username, role, team = null) => ({ account_id: `40000000-0000-4000-8000-00000000000${{ admin: 6, requester: 1, operator: 3 }[username]}`, username, role, team_id: team && '50000000-0000-4000-8000-000000000001', team_name: team, service: null })
+const auditService = (service) => ({ account_id: null, username: null, role: null, team_id: null, team_name: null, service })
+const AUDIT_TICKET = '60000000-0000-4000-8000-000000000301'
+const auditTicket = { resource_type: 'ticket', resource_id: AUDIT_TICKET, ticket_id: AUDIT_TICKET, ticket_reference: 301 }
+const auditEvent = (id, minute, action, actor, extra = {}) => ({
+  id, created_at: `2026-11-02T09:${String(minute).padStart(2, '0')}:00Z`, action, actor, subject: null,
+  resource_type: null, resource_id: null, ticket_id: null, ticket_reference: null, request_id: `70000000-0000-4000-8000-${String(id).padStart(12, '0')}`, metadata: {}, ...extra,
+})
+const AUDIT = [
+  auditEvent(1, 1, 'login_failed', auditService('anonymous'), { subject: { account_id: '40000000-0000-4000-8000-000000000003', username: 'operator' }, resource_type: 'account', resource_id: '40000000-0000-4000-8000-000000000003', metadata: { reason: 'wrong_password' } }),
+  auditEvent(2, 2, 'ticket_submit', auditActor('requester', 'user'), { ...auditTicket, metadata: { route: 'ai', to_status: 'ai_processing' } }),
+  auditEvent(3, 3, 'ticket_ai_suggestion_ready', auditService('ai_attempts'), { ...auditTicket, request_id: null }),
+  auditEvent(4, 4, 'ticket_ai_solved', auditActor('requester', 'user'), { ...auditTicket, metadata: { resolution_source: 'ai', closure_reason: 'requester_confirmed', note: '<img src=x onerror="window.auditXss = true">' } }),
+  auditEvent(5, 5, 'ai_solved_change_denied', auditActor('operator', 'operator', 'Desk'), { ...auditTicket, metadata: { attempted: 'reopen', status: 'ai_solved', error: 'not_found' } }),
+  auditEvent(6, 6, 'organization_settings_updated', auditActor('admin', 'admin'), { resource_type: 'organization', resource_id: '=HYPERLINK("http://evil.example")', metadata: { from: { allow_reopening: false }, to: { allow_reopening: true } } }),
+]
+const auditMatches = (q) => (e) =>
+  (!q.get('action') || e.action === q.get('action')) &&
+  (!q.get('actor_username') || e.actor.username === q.get('actor_username').toLowerCase()) &&
+  (!q.get('ticket_reference') || String(e.ticket_reference) === q.get('ticket_reference')) &&
+  (!q.get('resource_type') || e.resource_type === q.get('resource_type')) &&
+  (!q.get('resource_id') || e.resource_id === q.get('resource_id')) &&
+  (!q.get('request_id') || e.request_id === q.get('request_id')) &&
+  (!q.get('created_from') || e.created_at >= q.get('created_from')) &&
+  (!q.get('created_before') || e.created_at < q.get('created_before'))
+const auditExports = new Map()
+const csvCell = (value) => `"${/^[=+\-@\t\r]/.test(value) ? "'" : ''}${String(value).replaceAll('"', '""')}"`
+
+
 // Admin submission view (docs/admin-submissions.md): mixed outcomes, Admin only. The suggestion is
 // untrusted text, and the AI settings carry a credential hint that must never reach these pages.
 const submission = (reference, subject, extra = {}) => ({
@@ -374,6 +405,31 @@ createServer(async (req, res) => {
     })
   }
   if (route === 'GET /api/catalog/all') return ROLES[user] === 'admin' ? reply(res, 200, CATALOG) : fail(res, 403, 'forbidden')
+  if (pathname.startsWith('/api/admin/audit')) {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const q = new URL(req.url, 'http://stub').searchParams
+    // Per session, so parallel tests do not see each other's exports.
+    const token = tokenOf(req)
+    const log = [...AUDIT, ...(auditExports.get(token) ?? [])]
+    if (route === 'GET /api/admin/audit/actions') return reply(res, 200, { actions: [...new Set(log.map((e) => e.action))].sort() })
+    if (route === 'POST /api/admin/audit/export') {
+      if (req.headers['x-requested-with'] !== 'tikkit') return fail(res, 403, 'csrf_rejected')
+      const rows = log.filter(auditMatches(q)).reverse()
+      const mine = auditExports.get(token) ?? []
+      mine.push(auditEvent(100 + mine.length, 30 + mine.length, 'audit_exported', auditActor('admin', 'admin'), { resource_type: 'audit_log', metadata: { filters: Object.fromEntries(q), rows: rows.length, truncated: false } }))
+      auditExports.set(token, mine)
+      const lines = [['id', 'time_utc', 'action', 'actor_username', 'resource_id'], ...rows.map((e) => [String(e.id), e.created_at, e.action, e.actor.username ?? '', e.resource_id ?? ''])]
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="tikkit-audit-2026-11-18.csv"', 'x-export-rows': String(rows.length), 'x-export-truncated': 'false' })
+      return res.end(lines.map((cells) => `${cells.map(csvCell).join(',')}\r\n`).join(''))
+    }
+    if (route !== 'GET /api/admin/audit') return fail(res, 405, 'method_not_allowed')
+    const matching = log.filter(auditMatches(q)).reverse()
+    // Two pages of the unfiltered log, so paging is exercised.
+    const limit = 4
+    const start = q.get('cursor') ? Number(q.get('cursor')) : 0
+    const next = start + limit < matching.length ? String(start + limit) : null
+    return reply(res, 200, { items: matching.slice(start, start + limit), next_cursor: next })
+  }
   if (pathname.startsWith('/api/admin/submissions')) {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
     if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed')
