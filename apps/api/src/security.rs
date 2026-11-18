@@ -258,7 +258,8 @@ impl Throttle {
     pub const fn budget(self) -> (&'static str, u32) {
         match self {
             Self::Submission => ("submission", 10),
-            Self::Draft => ("draft", 60),
+            // Autosave debounces at 1.2 s: two busy tabs stay below this.
+            Self::Draft => ("draft", 120),
             Self::Message => ("message", 30),
             Self::Upload => ("upload", 30),
             Self::Search => ("search", 120),

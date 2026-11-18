@@ -370,13 +370,13 @@ async fn costly_routes_have_per_account_budgets() {
         (
             "POST",
             "/api/ticket-drafts".to_owned(),
-            60,
+            120,
             Some(json!({"subject": 1})),
         ),
         (
             "PATCH",
             format!("/api/ticket-drafts/{any}"),
-            60,
+            120,
             Some(json!({})),
         ),
         (
