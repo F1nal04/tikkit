@@ -1,0 +1,67 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+
+tests:
+  - name: provider failure with a completed queue handoff
+    interval: 1m
+    input_series:
+      - series: 'tikkit_ticket_operations_total{job="tikkit",operation="ai_generation_failed"}'
+        values: '0+1x10'
+      - series: 'tikkit_ticket_operations_total{job="tikkit",operation="queue_intake_after_ai"}'
+        values: '0+1x10'
+      - series: 'tikkit_ticket_operations_total{job="tikkit",operation="ai_handoff_failed"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TikkitAiHandoffFailed
+        exp_alerts: []
+  - name: a failed handoff and overdue attempts, notifications, and confirmations
+    interval: 1m
+    input_series:
+      - series: 'tikkit_ticket_operations_total{job="tikkit",operation="ai_handoff_failed"}'
+        values: '0 0 1 1 1'
+      - series: 'tikkit_worker_oldest_due_seconds{job="tikkit",worker="ai_attempts"}'
+        values: '0 190 250 310 0'
+      - series: 'tikkit_worker_oldest_due_seconds{job="tikkit",worker="auto_close"}'
+        values: '0 190 250 310 0'
+      - series: 'tikkit_worker_oldest_due_seconds{job="tikkit",worker="notifications"}'
+        values: '0 360 420 480 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TikkitAiHandoffFailed
+        exp_alerts:
+          - exp_labels: { job: tikkit, operation: ai_handoff_failed }
+            exp_annotations:
+              summary: An AI-stage ticket could not be handed off to the help desk.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#ai-handoffs-and-provider-failures
+      - eval_time: 3m
+        alertname: TikkitAiAttemptStuck
+        exp_alerts:
+          - exp_labels: { job: tikkit, worker: ai_attempts }
+            exp_annotations:
+              summary: An AI-stage ticket is overdue for a result or handoff.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#ai-handoffs-and-provider-failures
+      - eval_time: 3m
+        alertname: TikkitConfirmationTimeoutStuck
+        exp_alerts:
+          - exp_labels: { job: tikkit, worker: auto_close }
+            exp_annotations:
+              summary: A staff resolution confirmation deadline expired and auto-close is behind.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#resolution-confirmation-timeouts
+      - eval_time: 3m
+        alertname: TikkitNotificationOutboxStuck
+        exp_alerts:
+          - exp_labels: { job: tikkit, worker: notifications }
+            exp_annotations:
+              summary: A notification is overdue for delivery processing.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#notifications-and-smtp
+      - eval_time: 4m
+        alertname: TikkitAiAttemptStuck
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: TikkitConfirmationTimeoutStuck
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: TikkitNotificationOutboxStuck
+        exp_alerts: []

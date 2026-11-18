@@ -125,9 +125,9 @@ pub(crate) async fn clear_assignments(
 ) -> Result<(), ApiError> {
     sqlx::query("WITH changed AS (
         UPDATE tickets SET assignee_account_id = NULL, updated_at = now() WHERE assignee_account_id = $1 RETURNING id
-    ) INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload)
-      SELECT id, $2, 'assignment_changed', jsonb_build_object('previous_assignee_account_id', $1::uuid, 'assignee_account_id', NULL, 'reason', $3::text) FROM changed")
-        .bind(account).bind(user.account_id()).bind(reason).execute(db).await?;
+    ) INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, request_id)
+      SELECT id, $2, 'assignment_changed', jsonb_build_object('previous_assignee_account_id', $1::uuid, 'assignee_account_id', NULL, 'reason', $3::text), $4 FROM changed")
+        .bind(account).bind(user.account_id()).bind(reason).bind(crate::telemetry::request_id()).execute(db).await?;
     Ok(())
 }
 

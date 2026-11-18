@@ -3,16 +3,14 @@ use std::{path::Path, sync::Arc, time::Duration};
 use axum::{
     Extension, Router,
     extract::{DefaultBodyLimit, State},
-    http::{Request, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     routing::{get, patch, post, put},
 };
 use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::{
-    catch_panic::CatchPanicLayer,
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    trace::{DefaultOnResponse, TraceLayer},
+    catch_panic::CatchPanicLayer, request_id::PropagateRequestIdLayer, trace::TraceLayer,
 };
 use utoipa::{OpenApi, ToSchema};
 
@@ -37,12 +35,14 @@ pub mod lifecycle;
 pub mod mail;
 pub mod management;
 pub mod messages;
+pub mod metrics;
 pub mod notifications;
 pub mod queues;
 pub mod screenshots;
 pub mod smtp;
 pub mod submission;
 pub mod submissions;
+pub mod telemetry;
 pub mod tickets;
 pub mod views;
 
@@ -51,6 +51,7 @@ use api::{ApiError, Json};
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    pub metrics: metrics::Metrics,
     /// Private screenshot volume (`SCREENSHOT_DIR`); never served directly.
     pub screenshot_dir: Arc<Path>,
     /// Outbound client for AI provider calls (one per process).
@@ -65,6 +66,7 @@ impl AppState {
     pub fn new(pool: PgPool, screenshot_dir: Arc<Path>) -> Self {
         Self {
             pool,
+            metrics: metrics::Metrics::default(),
             screenshot_dir,
             ai_client: ai::AiClient::new(),
             ai_endpoint: ai::Endpoint::Official,
@@ -229,20 +231,7 @@ async fn health() -> Json<Health> {
         (status = 503, description = "A required dependency is unavailable or incompatible", body = Readiness),
     ))]
 async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
-    let probe = async {
-        sqlx::query("SELECT 1").execute(&state.pool).await?;
-        db::migration_status(&state.pool).await
-    };
-    let checks = match tokio::time::timeout(Duration::from_secs(3), probe).await {
-        Ok(Ok(migrations)) => Checks {
-            database: "ok",
-            migrations,
-        },
-        _ => Checks {
-            database: "unavailable",
-            migrations: "unknown",
-        },
-    };
+    let checks = probe_readiness(&state.pool).await;
     if checks.migrations == "ok" {
         (
             StatusCode::OK,
@@ -260,6 +249,23 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     }
 }
 
+async fn probe_readiness(pool: &PgPool) -> Checks {
+    let probe = async {
+        sqlx::query("SELECT 1").execute(pool).await?;
+        db::migration_status(pool).await
+    };
+    match tokio::time::timeout(Duration::from_secs(3), probe).await {
+        Ok(Ok(migrations)) => Checks {
+            database: "ok",
+            migrations,
+        },
+        _ => Checks {
+            database: "unavailable",
+            migrations: "unknown",
+        },
+    }
+}
+
 /// This OpenAPI document.
 #[utoipa::path(get, path = "/api/openapi.json", tag = "operations",
     responses((status = 200, description = "OpenAPI 3.1 document", content_type = "application/json")))]
@@ -273,6 +279,7 @@ pub fn app(state: AppState) -> Router {
 }
 
 pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
+    let metrics = state.metrics.clone();
     let routes = Router::new()
         .route("/api/health", get(health))
         .route("/api/ready", get(ready))
@@ -476,12 +483,12 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .layer(axum::middleware::from_fn(auth::csrf))
         .layer(Extension(Arc::new(auth::Auth::new(settings))))
         .with_state(state);
-    with_conventions(routes)
+    with_conventions(routes, metrics)
 }
 
 /// Request IDs, tracing, panic safety, body limit, and the error envelope.
 /// Layers run outermost-last: the request ID is set before anything else.
-pub fn with_conventions(router: Router) -> Router {
+pub fn with_conventions(router: Router, metrics: metrics::Metrics) -> Router {
     router
         .layer(DefaultBodyLimit::max(api::MAX_JSON_BODY))
         .layer(CatchPanicLayer::custom(|_| {
@@ -491,15 +498,15 @@ pub fn with_conventions(router: Router) -> Router {
         .layer(axum::middleware::from_fn(api::error_envelope))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(
-            // Logs the path only: query strings may carry tokens.
             TraceLayer::new_for_http()
-                .make_span_with(|request: &Request<_>| {
-                    let id = request.headers().get("x-request-id").and_then(|v| v.to_str().ok());
-                    tracing::info_span!("request", method = %request.method(), path = request.uri().path(), request_id = id)
-                })
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+                .make_span_with(telemetry::request_span)
+                .on_response(telemetry::request_completed)
+                .on_failure(()),
         )
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(axum::middleware::from_fn_with_state(
+            metrics,
+            telemetry::http_request,
+        ))
 }
 
 #[cfg(test)]
@@ -559,7 +566,7 @@ mod tests {
                     get(|| async { panic!("boom") as &'static str }),
                 )
                 .merge(super::app(lazy_state()));
-        super::with_conventions(routes)
+        super::with_conventions(routes, Default::default())
     }
 
     async fn send(request: Request<Body>) -> (Response, Value) {
@@ -617,10 +624,17 @@ mod tests {
         let generated = response.headers()["x-request-id"].to_str().unwrap();
         assert!(Uuid::parse_str(generated).is_ok());
 
-        let request = Request::get("/api/nope").header("x-request-id", "abc-123");
+        let id = Uuid::new_v4().to_string();
+        let request = Request::get("/api/nope").header("x-request-id", &id);
         let (response, body) = send(request.body(Body::empty()).unwrap()).await;
-        assert_eq!(response.headers()["x-request-id"], "abc-123");
-        assert_eq!(body["request_id"], "abc-123");
+        assert_eq!(response.headers()["x-request-id"], id);
+        assert_eq!(body["request_id"], id);
+
+        let request = Request::get("/api/nope").header("x-request-id", "private-content");
+        let (response, body) = send(request.body(Body::empty()).unwrap()).await;
+        let generated = response.headers()["x-request-id"].to_str().unwrap();
+        assert!(Uuid::parse_str(generated).is_ok());
+        assert_eq!(body["request_id"], generated);
     }
 
     #[tokio::test]

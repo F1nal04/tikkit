@@ -646,12 +646,34 @@ pub async fn requester_action(
         RequesterAction::AiNotSolved {} => Transition::AiNotSolved,
         RequesterAction::SkipAi {} => Transition::SkipAi,
     };
+    use crate::metrics::Event as Metric;
+    let metric = match transition {
+        Transition::AcceptResolution { .. } => Some(Metric::HumanConfirmed),
+        Transition::AiSolved => Some(Metric::AiConfirmed),
+        Transition::AiNotSolved | Transition::SkipAi => Some(Metric::AiHandoff),
+        _ => None,
+    };
+    let failure = |error: &ApiError| {
+        if matches!(metric, Some(Metric::AiHandoff)) && matches!(error, ApiError::Internal) {
+            state.metrics.event(Metric::HandoffFailed, 1);
+            tracing::error!(
+                error_code = "ai_handoff_failed",
+                "requester handoff did not commit"
+            );
+        }
+    };
     let mut tx = state.pool.begin().await?;
     let result =
         lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await;
     let status = match result {
         Ok(status) => {
-            tx.commit().await?;
+            tx.commit()
+                .await
+                .map_err(ApiError::from)
+                .inspect_err(failure)?;
+            if let Some(metric) = metric {
+                state.metrics.event(metric, 1);
+            }
             status
         }
         Err(ApiError::Conflict)
@@ -664,7 +686,10 @@ pub async fn requester_action(
             drop(tx);
             ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await?
         }
-        Err(error) => return Err(error),
+        Err(error) => {
+            failure(&error);
+            return Err(error);
+        }
     };
     Ok(Json(ActionResult { status }))
 }
@@ -869,8 +894,8 @@ pub(crate) async fn apply_staff_action(
             .execute(&mut *tx)
             .await?;
             sqlx::query(
-                "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload)
-                 VALUES ($1, $2, 'priority_changed', $3)",
+                "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, request_id)
+                 VALUES ($1, $2, 'priority_changed', $3, $4)",
             )
             .bind(id)
             .bind(actor.id)
@@ -878,6 +903,7 @@ pub(crate) async fn apply_staff_action(
                 "previous_priority_id": priority_id, "previous_priority_name": previous_name,
                 "priority_id": next, "priority_name": next_name,
             }))
+            .bind(crate::telemetry::request_id())
             .execute(&mut *tx)
             .await?;
             scope.status

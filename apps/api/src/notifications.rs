@@ -27,6 +27,8 @@ use crate::{
     auth::{CurrentUser, Settings, audit, ident, ident_str},
     authz::{self, Actor, Permission, TicketScope, TicketView, require_permission},
     mail::{self, DeliverOptions, MailError, OutboundMessage},
+    metrics::{Event as Metric, Metrics, Worker},
+    telemetry,
 };
 
 /// Tries per outbox row before it is `failed` (until an Admin retries it).
@@ -65,14 +67,18 @@ where
     }
 }
 
-pub async fn worker_loop(pool: PgPool, settings: Settings) {
-    poll_loop("notifications", || process_one(&pool, &settings)).await
+pub async fn worker_loop(state: AppState, settings: Settings) {
+    poll_loop(Worker::Notifications.label(), || {
+        process_one(&state.pool, &settings, &state.metrics)
+    })
+    .await
 }
 
 #[derive(sqlx::FromRow)]
 struct Job {
     id: Uuid,
     event_id: i64,
+    request_id: Option<Uuid>,
     account_id: Uuid,
     audience: String,
     channel: String,
@@ -212,38 +218,72 @@ enum Outcome {
 /// committed, so concurrent workers skip it and a row is never sent twice; if
 /// the process dies after SMTP accepted a message, the idempotency key makes
 /// the retry a no-op that is then recorded as sent.
-pub async fn process_one(pool: &PgPool, settings: &Settings) -> Result<bool, ApiError> {
+pub async fn process_one(
+    pool: &PgPool,
+    settings: &Settings,
+    metrics: &Metrics,
+) -> Result<bool, ApiError> {
+    let result = process_job(pool, settings, metrics).await;
+    metrics.step(Worker::Notifications, result.is_ok());
+    result
+}
+
+async fn process_job(
+    pool: &PgPool,
+    settings: &Settings,
+    metrics: &Metrics,
+) -> Result<bool, ApiError> {
     let mut tx = pool.begin().await?;
     let job: Option<Job> = sqlx::query_as(
-        "SELECT id, event_id, account_id, audience, channel, attempts FROM notification_outbox
-         WHERE status = 'pending' AND available_at <= clock_timestamp()
+        "SELECT id, event_id, account_id, audience, channel, attempts,
+                 (SELECT request_id FROM ticket_events WHERE id = event_id) AS request_id
+         FROM notification_outbox WHERE status = 'pending' AND available_at <= clock_timestamp()
          ORDER BY available_at, id LIMIT 1 FOR UPDATE SKIP LOCKED",
     )
     .fetch_optional(&mut *tx)
     .await?;
     let Some(job) = job else { return Ok(false) };
-    let outcome = match deliver(pool, &mut tx, &job, settings).await {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            // The transaction may be aborted; record the attempt outside it so a
-            // poison row cannot be retried forever.
-            let _ = tx.rollback().await;
-            tracing::error!(notification_id = %job.id, "notification processing failed");
-            record(pool, &job, &Outcome::Failed("internal")).await?;
-            return Err(error);
-        }
+    telemetry::job(Worker::Notifications.label(), job.request_id, async move {
+        let outcome = match deliver(pool, &mut tx, &job, settings).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // A failed transaction cannot record the attempt. Use a fresh
+                // transaction, conditional on this exact claim still being current.
+                let _ = tx.rollback().await;
+                tracing::error!(notification_id = %job.id, error_code = "internal", "notification processing failed");
+                let failure = Outcome::Failed("internal");
+                if record(pool, &job, &failure).await? {
+                    observe_delivery(metrics, &job, &failure);
+                }
+                return Err(error);
+            }
+        };
+        record(&mut *tx, &job, &outcome).await?;
+        tx.commit().await?;
+        observe_delivery(metrics, &job, &outcome);
+        Ok(true)
+    })
+    .await
+}
+
+fn observe_delivery(metrics: &Metrics, job: &Job, outcome: &Outcome) {
+    let Outcome::Failed(code) = outcome else {
+        return;
     };
-    if let Outcome::Failed(code) = outcome {
-        tracing::warn!(notification_id = %job.id, error = code, "notification delivery failed");
+    let status = status_of(job, outcome);
+    if status == "pending" {
+        metrics.retry(Worker::Notifications);
     }
-    record(&mut *tx, &job, &outcome).await?;
-    tx.commit().await?;
-    Ok(true)
+    if job.channel == "email" {
+        metrics.event(Metric::MailFailed, 1);
+    }
+    tracing::warn!(notification_id = %job.id, error_code = code, status, "notification delivery failed");
 }
 
 const UPDATE_OUTCOME: &str = "UPDATE notification_outbox SET status = $2, attempts = attempts + 1,
     last_error = $3, available_at = clock_timestamp() + make_interval(secs => $4),
-    completed_at = CASE WHEN $2 = 'pending' THEN NULL ELSE clock_timestamp() END WHERE id = $1";
+    completed_at = CASE WHEN $2 = 'pending' THEN NULL ELSE clock_timestamp() END
+    WHERE id = $1 AND attempts = $5 AND status = 'pending'";
 
 fn status_of(job: &Job, outcome: &Outcome) -> &'static str {
     match outcome {
@@ -259,8 +299,12 @@ fn backoff(attempts: i32) -> f64 {
     f64::from((30_i32 << attempts.clamp(0, 7)).min(3600))
 }
 
-async fn record<'c>(db: impl PgExecutor<'c>, job: &Job, outcome: &Outcome) -> Result<(), ApiError> {
-    sqlx::query(UPDATE_OUTCOME)
+async fn record<'c>(
+    db: impl PgExecutor<'c>,
+    job: &Job,
+    outcome: &Outcome,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query(UPDATE_OUTCOME)
         .bind(job.id)
         .bind(status_of(job, outcome))
         .bind(match outcome {
@@ -268,9 +312,10 @@ async fn record<'c>(db: impl PgExecutor<'c>, job: &Job, outcome: &Outcome) -> Re
             _ => None,
         })
         .bind(backoff(job.attempts))
+        .bind(job.attempts)
         .execute(db)
         .await?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 async fn deliver(

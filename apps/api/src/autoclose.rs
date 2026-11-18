@@ -19,20 +19,23 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::{
+    AppState,
     api::ApiError,
     lifecycle::{self, By, Transition},
+    metrics::{Event, Metrics, Worker},
     notifications::poll_loop,
+    telemetry,
 };
 
-pub async fn worker_loop(pool: PgPool) {
+pub async fn worker_loop(state: AppState) {
     let skip = Arc::new(Mutex::new(Vec::<Uuid>::new()));
-    poll_loop("auto_close", || {
-        let pool = pool.clone();
+    poll_loop(Worker::AutoClose.label(), || {
+        let state = state.clone();
         let skip = Arc::clone(&skip);
         async move {
             // Copy the ids out so the mutex is not held across the query.
             let mut skipped = skip.lock().await.clone();
-            let result = close_due(&pool, &mut skipped).await;
+            let result = close_due(&state.pool, &mut skipped, &state.metrics).await;
             *skip.lock().await = skipped;
             result
         }
@@ -42,39 +45,40 @@ pub async fn worker_loop(pool: PgPool) {
 
 /// Closes one overdue proposal and returns whether it did. See [`close_due`].
 pub async fn close_one(pool: &PgPool) -> Result<bool, ApiError> {
-    try_close(pool, &[]).await.map_err(into_error)
+    try_close(pool, &[], &Metrics::default())
+        .await
+        .map_err(into_error)
 }
 
 /// One step of a drain cycle. `skipped` tickets are left out of this cycle
 /// after their transition failed. `Ok(true)` means keep draining (a ticket was
 /// closed, or one was skipped). `Ok(false)` means nothing else is due; `skipped`
 /// is cleared so the next cycle, after the poll sleep, can retry them.
-pub async fn close_due(pool: &PgPool, skipped: &mut Vec<Uuid>) -> Result<bool, ApiError> {
-    match try_close(pool, skipped).await {
+pub async fn close_due(
+    pool: &PgPool,
+    skipped: &mut Vec<Uuid>,
+    metrics: &Metrics,
+) -> Result<bool, ApiError> {
+    let result = match try_close(pool, skipped, metrics).await {
         Ok(true) => Ok(true),
         Ok(false) => {
             skipped.clear();
             Ok(false)
         }
-        Err(CloseError::Ticket { id, error }) => {
-            // The code only: database errors can carry statement text.
-            tracing::error!(
-                worker = "auto_close",
-                ticket_id = %id,
-                error_code = error_code(&error),
-                "auto-close transition failed; skipping ticket for this cycle"
-            );
+        Err(CloseError::Ticket { id, .. }) => {
             skipped.push(id);
             Ok(true)
         }
         Err(CloseError::Unavailable(error)) => Err(error),
-    }
+    };
+    metrics.step(Worker::AutoClose, result.is_ok());
+    result
 }
 
 enum CloseError {
     /// The due ticket's transition failed and the transaction was rolled back.
     Ticket { id: Uuid, error: ApiError },
-    /// Selecting or committing failed before a ticket could be set aside.
+    /// The worker could not claim a ticket.
     Unavailable(ApiError),
 }
 
@@ -95,13 +99,17 @@ fn error_code(error: &ApiError) -> &'static str {
     }
 }
 
-async fn try_close(pool: &PgPool, skip: &[Uuid]) -> Result<bool, CloseError> {
+async fn try_close(pool: &PgPool, skip: &[Uuid], metrics: &Metrics) -> Result<bool, CloseError> {
     let mut tx = pool
         .begin()
         .await
         .map_err(|error| CloseError::Unavailable(error.into()))?;
-    let due: Option<(Uuid, i32)> = sqlx::query_as(
-        "SELECT id, proposal_version FROM tickets
+    let due: Option<(Uuid, i32, Option<Uuid>)> = sqlx::query_as(
+        "SELECT t.id, t.proposal_version,
+                (SELECT e.request_id FROM ticket_events e
+                 WHERE e.ticket_id = t.id AND e.event_type = 'propose_resolution'
+                 ORDER BY e.id DESC LIMIT 1)
+         FROM tickets t
          WHERE status = 'awaiting_confirmation'
            AND confirmation_deadline <= clock_timestamp()
            AND NOT (id = ANY($1::uuid[]))
@@ -113,18 +121,29 @@ async fn try_close(pool: &PgPool, skip: &[Uuid]) -> Result<bool, CloseError> {
     .fetch_optional(&mut *tx)
     .await
     .map_err(|error| CloseError::Unavailable(error.into()))?;
-    let Some((id, proposal_version)) = due else {
+    let Some((id, proposal_version, request_id)) = due else {
         return Ok(false);
     };
-    let t = Transition::ConfirmationTimeout { proposal_version };
-    if let Err(error) = lifecycle::transition(&mut tx, id, By::System, &t).await {
-        // Roll back before the caller records the skip, so this lock is gone
-        // and the next ticket can be claimed.
-        drop(tx);
-        return Err(CloseError::Ticket { id, error });
-    }
-    tx.commit()
-        .await
-        .map_err(|error| CloseError::Unavailable(error.into()))?;
-    Ok(true)
+    telemetry::job(Worker::AutoClose.label(), request_id, async move {
+        let t = Transition::ConfirmationTimeout { proposal_version };
+        let close = async {
+            lifecycle::transition(&mut tx, id, By::System, &t).await?;
+            tx.commit().await?;
+            Ok::<_, ApiError>(())
+        };
+        if let Err(error) = close.await {
+            metrics.failure(Worker::AutoClose);
+            metrics.retry(Worker::AutoClose);
+            tracing::error!(
+                ticket_id = %id,
+                error_code = error_code(&error),
+                "auto-close failed; skipping ticket for this cycle"
+            );
+            return Err(CloseError::Ticket { id, error });
+        }
+        metrics.event(Event::ConfirmationTimeout, 1);
+        tracing::info!(ticket_id = %id, "resolution confirmation timed out");
+        Ok(true)
+    })
+    .await
 }

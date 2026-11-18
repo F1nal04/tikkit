@@ -1,0 +1,55 @@
+groups:
+  - name: tikkit
+    rules:
+      - alert: TikkitMetricsUnreachable
+        expr: up{job="tikkit"} == 0
+        for: 2m
+        annotations:
+          summary: The private Tikkit exporter cannot be scraped.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#api-and-database
+      - alert: TikkitDatabaseNotReady
+        expr: tikkit_database_ready{job="tikkit"} == 0
+        for: 2m
+        annotations:
+          summary: PostgreSQL is unavailable or its migration history does not match the API.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#api-and-database
+      - alert: TikkitWorkerSnapshotUnavailable
+        expr: tikkit_worker_snapshot_up{job="tikkit"} == 0 and tikkit_database_ready{job="tikkit"} == 1
+        for: 2m
+        annotations:
+          summary: The API is ready but the worker backlog query is failing or timing out.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#worker-health
+      - alert: TikkitWorkerNotPolling
+        expr: time() - tikkit_worker_last_success_timestamp_seconds{job="tikkit"} > 120
+        for: 2m
+        annotations:
+          summary: '{{ $labels.worker }} has not completed a poll recently.'
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#worker-health
+      - alert: TikkitAiHandoffFailed
+        expr: increase(tikkit_ticket_operations_total{job="tikkit",operation="ai_handoff_failed"}[10m]) > 0
+        annotations:
+          summary: An AI-stage ticket could not be handed off to the help desk.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#ai-handoffs-and-provider-failures
+      - alert: TikkitAiAttemptStuck
+        expr: tikkit_worker_oldest_due_seconds{job="tikkit",worker="ai_attempts"} > 120
+        for: 2m
+        annotations:
+          summary: An AI-stage ticket is overdue for a result or handoff.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#ai-handoffs-and-provider-failures
+      - alert: TikkitConfirmationTimeoutStuck
+        expr: tikkit_worker_oldest_due_seconds{job="tikkit",worker="auto_close"} > 120
+        for: 2m
+        annotations:
+          summary: A staff resolution confirmation deadline expired and auto-close is behind.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#resolution-confirmation-timeouts
+      - alert: TikkitNotificationOutboxStuck
+        expr: tikkit_worker_oldest_due_seconds{job="tikkit",worker="notifications"} > 300
+        for: 2m
+        annotations:
+          summary: A notification is overdue for delivery processing.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#notifications-and-smtp
+      - alert: TikkitNotificationEmailFailing
+        expr: increase(tikkit_ticket_operations_total{job="tikkit",operation="notification_email_failed"}[10m]) >= 3
+        annotations:
+          summary: Repeated notification email failures were recorded.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#notifications-and-smtp

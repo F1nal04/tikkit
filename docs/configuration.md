@@ -20,7 +20,9 @@ name the variable and the fix but never echo values.
 | `TRUST_PROXY_HEADERS` | no | `false` | `true` only behind a reverse proxy that overwrites `X-Forwarded-For` (the production compose sets it for Caddy); the last hop is used as client IP for rate limits. Otherwise every client shares the proxy's IP. |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
 | `SCREENSHOT_DIR` | in production | `data/screenshots` | Private directory for validated screenshot files, created at startup. Production requires an absolute path on a persistent volume (the production compose uses `/var/lib/tikkit/screenshots`). Only the API reads it; never serve it. Back it up with the database ([screenshots.md](screenshots.md#storage-backup-and-restore)). |
-| `RUST_LOG` | no | `info,sqlx=warn` | Log filter, e.g. `info,tower_http=debug`. Request logs include the request ID and path, never query strings or bodies. |
+| `LOG_FORMAT` | no | `json` | API structured logging. Set `text` for human-readable output. The web server logs JSON. |
+| `RUST_LOG` | no | `info` | API log filter, e.g. `info,tikkit_api::ai_attempts=debug`. Only Tikkit targets are emitted. |
+| `METRICS_PORT` | no | disabled | Optional port (1–65535) for `GET /metrics` on the API process's IPv4 loopback. Use a dedicated port, e.g. `9091`. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 
 AI providers are not environment configuration: they are optional, disabled by
@@ -49,6 +51,20 @@ Background sends try transient failures at most 3 times; the Admin test sends on
 - On SIGTERM or Ctrl+C the API stops accepting connections, drains in-flight
   requests for up to `SHUTDOWN_TIMEOUT_SECS`, closes the database pool (at most
   5 more seconds), and exits.
+
+## Operational access
+
+Set `METRICS_PORT` on the API service to enable scraping. The binary binds the
+metrics router to `127.0.0.1` in its own network namespace. The portal and the
+public API listener have no metrics route. For Compose, run a trusted local
+collector in the API container's network namespace (e.g. Compose
+`network_mode: "service:api"`) and scrape `127.0.0.1:9091` there. Do not put a
+public reverse proxy in that namespace, forward the metrics port, or use host
+networking for the API. Local processes in that namespace can scrape without
+credentials. Restrict log access and the collector's UI and storage to
+operators. Keep the probe status codes available to the deployment's health
+check. See [the operations runbook](operations.md) for the scrape configuration,
+alert rules and diagnostic commands.
 
 ## Production
 

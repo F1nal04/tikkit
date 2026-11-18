@@ -365,3 +365,12 @@ Migration `0024_admin_submissions.sql`. Behavior:
 - No new table or column. `tickets_submitted_idx` is a partial index on
   `tickets (created_at, id)` for every status but `draft`: the newest-first
   order and cursor of `GET /api/admin/submissions`.
+
+## Operational request correlation
+
+Migration `0025_request_correlation.sql` adds nullable `ticket_events.request_id`
+(UUID). Event writers bind the current request or job correlation ID when
+available. The AI worker and sweeper read the originating submission event,
+the notification outbox reads its source event, and auto-close reads the latest
+proposal event under the ticket lock. Legacy events retain NULL. Request IDs
+are operational metadata and are not returned in ticket event API payloads.

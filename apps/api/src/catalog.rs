@@ -332,9 +332,11 @@ pub async fn update_category(
     .ok_or(ApiError::NotFound)?;
     // An exempt category bypasses AI: stop its attempts still in flight and
     // hand those tickets to operators. Their results are never accepted.
-    if category.skip_ai {
-        ai_attempts::invalidate(&mut tx, Some(id), ai_attempts::CATEGORY_EXEMPT).await?;
-    }
+    let handed_off = if category.skip_ai {
+        ai_attempts::invalidate(&mut tx, Some(id), ai_attempts::CATEGORY_EXEMPT).await?
+    } else {
+        0
+    };
     audit_item(
         &mut tx,
         &user,
@@ -344,6 +346,9 @@ pub async fn update_category(
     )
     .await?;
     tx.commit().await?;
+    state
+        .metrics
+        .event(crate::metrics::Event::AiHandoff, handed_off);
     Ok(Json(category))
 }
 

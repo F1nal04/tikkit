@@ -312,7 +312,6 @@ impl AiGuard {
                 tracing::info!(
                     %usage_id,
                     provider = active.provider.as_str(),
-                    model = %active.model,
                     images = request.images.len(),
                     status = "succeeded",
                     input_tokens = suggestion.usage.input_tokens,
@@ -576,7 +575,6 @@ fn log_outcome(
     tracing::info!(
         %usage_id,
         provider = active.provider.as_str(),
-        model = %active.model,
         images = request.images.len(),
         status,
         outcome,

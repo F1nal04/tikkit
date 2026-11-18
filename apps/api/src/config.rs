@@ -14,6 +14,8 @@ pub enum Environment {
 pub struct Config {
     pub database_url: String,
     pub api_addr: SocketAddr,
+    pub metrics_port: Option<u16>,
+    pub json_logs: bool,
     pub public_origin: Url,
     pub session_secret: Vec<u8>,
     pub encryption_key: [u8; 32],
@@ -47,6 +49,8 @@ impl fmt::Debug for Config {
         f.debug_struct("Config")
             .field("database_url", &"<redacted>")
             .field("api_addr", &self.api_addr)
+            .field("metrics_port", &self.metrics_port)
+            .field("json_logs", &self.json_logs)
             .field("public_origin", &self.public_origin.as_str())
             .field("session_secret", &"<redacted>")
             .field("encryption_key", &"<redacted>")
@@ -94,6 +98,22 @@ impl Config {
                 );
                 ([127, 0, 0, 1], 3001).into()
             });
+        let metrics_port = match var("METRICS_PORT").map(|value| value.parse::<u16>()) {
+            None => None,
+            Some(Ok(port)) if port != 0 => Some(port),
+            Some(_) => {
+                fail("METRICS_PORT must be a port between 1 and 65535 (loopback only)");
+                None
+            }
+        };
+        let json_logs = match var("LOG_FORMAT").as_deref() {
+            None | Some("json") => true,
+            Some("text") => false,
+            Some(_) => {
+                fail("LOG_FORMAT must be `json` or `text`");
+                true
+            }
+        };
         let public_origin = match var("PUBLIC_ORIGIN").map(|v| Url::parse(&v)) {
             None => {
                 fail(
@@ -179,6 +199,8 @@ impl Config {
                 Ok(Self {
                     database_url,
                     api_addr,
+                    metrics_port,
+                    json_logs,
                     public_origin,
                     session_secret,
                     encryption_key,
@@ -235,6 +257,8 @@ mod tests {
     fn valid_configuration_uses_defaults() {
         let c = config(&[]).unwrap();
         assert_eq!(c.api_addr, "127.0.0.1:3001".parse().unwrap());
+        assert!(c.metrics_port.is_none());
+        assert!(c.json_logs);
         assert_eq!(c.shutdown_timeout, Duration::from_secs(20));
         assert_eq!(c.environment, Environment::Development);
         assert_eq!(c.encryption_key[31], 31);
@@ -252,6 +276,8 @@ mod tests {
         let err = config(&[
             ("DATABASE_URL", "mysql://root:hunter2@db/x"),
             ("API_ADDR", "localhost"),
+            ("METRICS_PORT", "0.0.0.0:9091"),
+            ("LOG_FORMAT", "unknown"),
             ("PUBLIC_ORIGIN", "https://help.example.com/portal"),
             ("SESSION_SECRET", "c2hvcnQ="),
             ("ENCRYPTION_KEY", "CHANGE_ME_openssl_rand_base64_32"),
@@ -262,7 +288,7 @@ mod tests {
             ("TRUST_PROXY_HEADERS", "yes"),
         ])
         .unwrap_err();
-        assert_eq!(err.0.len(), 10, "{err}");
+        assert_eq!(err.0.len(), 12, "{err}");
         let text = err.to_string();
         assert!(!text.contains("hunter2") && !text.contains("c2hvcnQ="));
     }

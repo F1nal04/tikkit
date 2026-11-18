@@ -18,6 +18,8 @@
       "persistent": true,
       "passThroughEnv": [
         "API_ADDR",
+        "METRICS_PORT",
+        "LOG_FORMAT",
         "DATABASE_URL",
         "PUBLIC_ORIGIN",
         "SESSION_SECRET",
@@ -44,6 +46,8 @@
       "persistent": true,
       "passThroughEnv": [
         "API_ADDR",
+        "METRICS_PORT",
+        "LOG_FORMAT",
         "DATABASE_URL",
         "PUBLIC_ORIGIN",
         "SESSION_SECRET",

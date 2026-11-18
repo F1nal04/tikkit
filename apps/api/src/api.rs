@@ -418,7 +418,7 @@ impl From<sqlx::Error> for ApiError {
         if matches!(code.as_deref(), Some("40001" | "40P01")) {
             return Self::Conflict;
         }
-        tracing::error!(%error, "database error");
+        tracing::error!(sqlstate = code.as_deref(), "database error");
         Self::Internal
     }
 }

@@ -34,8 +34,9 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 - `details.status` appears only on a `conflict` about an AI decision: the
   ticket's committed status ([ai-decisions.md](ai-decisions.md#repeats-and-races)).
   `details.fields` is then an empty object.
-- `request_id` equals the `x-request-id` response header. Clients may send their
-  own `x-request-id`; otherwise the API generates a UUID. Logs carry it.
+- `request_id` equals the `x-request-id` response header. Clients may send
+  a hyphenated UUIDv4 as `x-request-id`; the API generates an ID for missing or
+  invalid values. Logs carry the canonical UUID and the matched route template.
 
 | Situation | Status | Code |
 | --- | --- | --- |
