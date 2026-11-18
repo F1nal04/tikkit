@@ -1135,6 +1135,7 @@ export default {
     validation_failed: 'Please correct the highlighted fields.',
     unavailable: 'The service is unavailable. Please try again later.',
     generic: 'Something went wrong. Please try again.',
+    outbound_disabled: 'This restored copy is in restore mode and sends nothing to mail servers or AI providers.',
     smtp_not_configured: 'Outbound email is not configured.',
     smtp_auth_failed: 'The mail server rejected the username or password.',
     smtp_tls_failed: 'Could not establish a verified TLS connection to the mail server.',

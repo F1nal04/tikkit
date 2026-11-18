@@ -1141,6 +1141,7 @@ export default {
     validation_failed: 'Bitte korrigieren Sie die markierten Felder.',
     unavailable: 'Der Dienst ist nicht erreichbar. Bitte versuchen Sie es später erneut.',
     generic: 'Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.',
+    outbound_disabled: 'Diese wiederhergestellte Kopie läuft im Wiederherstellungsmodus und sendet nichts an Mailserver oder KI-Anbieter.',
     smtp_not_configured: 'Ausgehende E-Mail ist nicht eingerichtet.',
     smtp_auth_failed: 'Der Mailserver hat Benutzername oder Passwort abgelehnt.',
     smtp_tls_failed: 'Eine geprüfte TLS-Verbindung zum Mailserver war nicht möglich.',
