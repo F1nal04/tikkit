@@ -9,6 +9,12 @@ use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let migrate_only = match std::env::args_os().skip(1).collect::<Vec<_>>().as_slice() {
+        [] => false,
+        [command] if command == "migrate" => true,
+        _ => anyhow::bail!("usage: tikkit-api [migrate]"),
+    };
+
     // Development convenience: load ./.env (or a parent's) without overriding real
     // env vars. Production reads only the real environment.
     if std::env::var("ENVIRONMENT").as_deref() != Ok("production") {
@@ -34,6 +40,12 @@ async fn main() -> anyhow::Result<()> {
             db::log_migration_failure(&error);
             anyhow::anyhow!("database migration failed; check database health and the migration history for this build")
         })?;
+    if migrate_only {
+        pool.close().await;
+        tracing::info!("Database migrations complete");
+        return Ok(());
+    }
+
     std::fs::create_dir_all(&config.screenshot_dir)
         .context("cannot create SCREENSHOT_DIR (see docs/configuration.md)")?;
     tokio::spawn(screenshots::cleanup_loop(
