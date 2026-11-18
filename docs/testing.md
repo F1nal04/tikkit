@@ -56,6 +56,14 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `fixtures::team(&pool, "Name", lead) -> Result<Uuid>`: team plus lead
   membership in one transaction; `fixtures::member(&pool, team, account)`
 
+### Security boundary and authorization matrix
+
+`tests/authz_matrix.rs` enumerates every operation of the OpenAPI document
+(cross-checked against the router) for signed out and the five roles; a new
+route fails `every_route_has_a_matrix_row` until it gets a row.
+`tests/boundary.rs` covers the origin policy, cookies, headers, proxy trust,
+budgets, and injection edges. See [security.md](security.md).
+
 ## AI provider tests
 
 `apps/api/tests/ai_providers.rs` drives the three adapters against an in-process
