@@ -464,8 +464,9 @@ async fn login_is_rate_limited_per_username_and_ip() {
     );
     assert!(r.retry_after.unwrap().parse::<u64>().unwrap() >= 1);
 
-    // Per IP: 10 per minute across usernames (5 used above, the 6th was counted too).
-    for i in 0..4 {
+    // Per IP: 10 failures per minute across usernames (5 used above; the
+    // refused 6th attempt was not a failure and did not count).
+    for i in 0..5 {
         let body = json!({ "username": format!("u{i}"), "password": "x" });
         let r = call(&app, "POST", "/api/auth/login", Some(body), None).await;
         assert_eq!(r.status, StatusCode::UNAUTHORIZED);
@@ -524,4 +525,66 @@ async fn audit_events_are_append_only() {
         let err = sqlx::query(statement).execute(&t.pool).await.unwrap_err();
         assert_eq!(err.as_database_error().unwrap().code().unwrap(), "23001");
     }
+}
+
+#[tokio::test]
+async fn sign_in_limits_count_failures_and_cannot_lock_out_the_owner() {
+    let Some(t) = TestDb::new().await else { return };
+    account(&t, "ivan", Role::User).await;
+    let app = test_app(&t.pool);
+    let home = [198, 51, 100, 7];
+    let sign_in = |password: &'static str, ip: [u8; 4]| {
+        let app = app.clone();
+        async move {
+            let body = json!({ "username": "ivan", "password": password });
+            call_from(&app, "POST", "/api/auth/login", Some(body), None, ip).await
+        }
+    };
+    // Successful sign-ins never count against anyone.
+    for _ in 0..12 {
+        assert_eq!(sign_in(PASSWORD, home).await.status, StatusCode::OK);
+    }
+    // An attacker spread over many addresses burns the username's ceiling...
+    for i in 0..40u8 {
+        let r = sign_in("not the password", [203, 0, 113, i + 1]).await;
+        assert!(
+            matches!(
+                r.status,
+                StatusCode::UNAUTHORIZED | StatusCode::TOO_MANY_REQUESTS
+            ),
+            "{}",
+            r.status
+        );
+    }
+    let stranger = sign_in(PASSWORD, [192, 0, 2, 50]).await;
+    assert_eq!(stranger.status, StatusCode::TOO_MANY_REQUESTS);
+    // ...but the owner still signs in from where they signed in before.
+    assert_eq!(sign_in(PASSWORD, home).await.status, StatusCode::OK);
+    // Known and unknown usernames are refused alike under the ceiling.
+    for i in 0..40u8 {
+        let body = json!({ "username": "nobody-here", "password": "x" });
+        call_from(
+            &app,
+            "POST",
+            "/api/auth/login",
+            Some(body),
+            None,
+            [203, 0, 113, i + 1],
+        )
+        .await;
+    }
+    let body = json!({ "username": "nobody-here", "password": "x" });
+    let unknown = call_from(
+        &app,
+        "POST",
+        "/api/auth/login",
+        Some(body),
+        None,
+        [192, 0, 2, 50],
+    )
+    .await;
+    assert_eq!(
+        (unknown.status, unknown.code()),
+        (stranger.status, stranger.code())
+    );
 }
