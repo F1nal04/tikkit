@@ -166,10 +166,10 @@
 
 <section aria-labelledby="run-heading">
   <h2 id="run-heading">{s.run}</h2>
-  {#if keepsEverything(saved.policy)}
-    <p>{s.runNothing}</p>
-  {:else if dirty}
+  {#if dirty}
     <p>{s.runDirty}</p>
+  {:else if keepsEverything(saved.policy)}
+    <p>{s.runNothing}</p>
   {:else if pending}
     <p>{s.runPending}</p>
     <div class="actions"><button type="button" class="secondary" onclick={refresh} disabled={!!busy}>{s.refresh}</button></div>
