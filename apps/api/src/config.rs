@@ -178,7 +178,9 @@ impl Config {
         };
         let session_ttl = hours("SESSION_TTL_HOURS", 24 * 14, 24 * 365);
         let session_rotate = hours("SESSION_ROTATE_HOURS", 24, 24 * 365);
-        if var("TRUST_PROXY_HEADERS").is_some() {
+        // The old switch trusted the header from any peer. `false` meant what an
+        // empty TRUSTED_PROXIES means now; anything else must be migrated.
+        if var("TRUST_PROXY_HEADERS").is_some_and(|v| v != "false") {
             fail(
                 "TRUST_PROXY_HEADERS was replaced by TRUSTED_PROXIES: list the reverse proxy's and SSR server's addresses or networks instead, e.g. TRUSTED_PROXIES=172.30.0.0/24",
             );
@@ -316,7 +318,10 @@ mod tests {
     }
 
     #[test]
-    fn trusted_proxies_are_parsed() {
+    fn trusted_proxies_are_parsed_and_the_old_switch_is_migrated() {
+        assert!(config(&[("TRUST_PROXY_HEADERS", "false")]).is_ok());
+        let err = config(&[("TRUST_PROXY_HEADERS", "true")]).unwrap_err();
+        assert!(err.0[0].contains("TRUSTED_PROXIES"), "{err}");
         let c = config(&[("TRUSTED_PROXIES", "172.30.0.0/24,10.0.0.5")]).unwrap();
         assert!(c.trusted_proxies.contains("172.30.0.200".parse().unwrap()));
         assert!(!c.trusted_proxies.contains("172.31.0.1".parse().unwrap()));
