@@ -656,7 +656,7 @@ const MATRIX: &[Row] = &[
         "UAAAAA",
     ),
     // Only the uploader reaches the handler, and an attached original is `409`
-    // (scenario_requester_cannot_rewrite_submitted_content checks it stays).
+    // (boundary::requester_cannot_rewrite_submitted_content and screenshots tests).
     row(
         "DELETE",
         "/api/screenshots/{id}",
