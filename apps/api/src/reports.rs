@@ -11,8 +11,10 @@ use uuid::Uuid;
 use crate::{
     AppState,
     api::{ApiError, Json, Query, Role},
-    auth::{CurrentUser, audit, ident},
+    audit::{self, Entry, Who},
+    auth::{CurrentUser, ident},
     authz::{Permission, require_permission},
+    csv,
     submissions::{self, AiDisposition, SubmissionResolution},
 };
 
@@ -354,7 +356,7 @@ pub async fn get_report(
     user: CurrentUser,
     Query(query): Query<ReportQuery>,
 ) -> Result<Json<Report>, ApiError> {
-    require_permission(&user, Permission::ViewAllSubmissions)?;
+    require_permission(&user, Permission::ViewReports)?;
     let scope = Scope::try_from(query)?;
     let mut tx = submissions::read_only(&state).await?;
     let result = report(&mut tx, &scope).await?;
@@ -389,35 +391,31 @@ struct ExportRow {
 }
 
 impl ExportRow {
-    fn write(&self, csv: &mut String) -> Result<(), ApiError> {
-        csv_row(
-            csv,
-            [
-                &self.reference.to_string(),
-                &timestamp(Some(self.created_at))?,
-                &self.category_name,
-                &self.priority_name,
-                self.team_name.as_deref().unwrap_or_default(),
-                &self.status,
-                &self.ai_disposition,
-                &self.resolution,
-                self.closure_reason.as_deref().unwrap_or_default(),
-                &timestamp(self.ai_confirmed_at)?,
-                &timestamp(self.queued_at)?,
-                &timestamp(self.first_response_at)?,
-                &timestamp(self.first_closure_proposed_at)?,
-                &timestamp(self.first_closed_at)?,
-                self.first_closure_reason.as_deref().unwrap_or_default(),
-                &timestamp(self.latest_proposed_at)?,
-                &timestamp(self.closed_at)?,
-                &timestamp(self.requester_confirmed_at)?,
-                &timestamp(self.cancelled_at)?,
-                &self.rejected_proposals.to_string(),
-                &self.reopens.to_string(),
-                &self.closure_events.to_string(),
-            ],
-        );
-        Ok(())
+    fn csv_line(&self) -> Result<String, ApiError> {
+        Ok(csv::line([
+            &self.reference.to_string(),
+            &timestamp(Some(self.created_at))?,
+            &self.category_name,
+            &self.priority_name,
+            self.team_name.as_deref().unwrap_or_default(),
+            &self.status,
+            &self.ai_disposition,
+            &self.resolution,
+            self.closure_reason.as_deref().unwrap_or_default(),
+            &timestamp(self.ai_confirmed_at)?,
+            &timestamp(self.queued_at)?,
+            &timestamp(self.first_response_at)?,
+            &timestamp(self.first_closure_proposed_at)?,
+            &timestamp(self.first_closed_at)?,
+            self.first_closure_reason.as_deref().unwrap_or_default(),
+            &timestamp(self.latest_proposed_at)?,
+            &timestamp(self.closed_at)?,
+            &timestamp(self.requester_confirmed_at)?,
+            &timestamp(self.cancelled_at)?,
+            &self.rejected_proposals.to_string(),
+            &self.reopens.to_string(),
+            &self.closure_events.to_string(),
+        ]))
     }
 }
 
@@ -433,32 +431,6 @@ fn timestamp(value: Option<OffsetDateTime>) -> Result<String, ApiError> {
         .map(Option::unwrap_or_default)
 }
 
-fn csv_row<const N: usize>(csv: &mut String, cells: [&str; N]) {
-    for (i, cell) in cells.into_iter().enumerate() {
-        if i != 0 {
-            csv.push(',');
-        }
-        csv.push('"');
-        let leading = cell.trim_start_matches(|c: char| {
-            // Tab and line breaks are dangerous prefixes themselves, even
-            // after a space or quote. Preserve them for the prefix check.
-            !matches!(c, '\t' | '\r' | '\n')
-                && (c.is_whitespace() || c.is_control() || matches!(c, '"' | '\'' | '\u{feff}'))
-        });
-        if leading.starts_with(['=', '+', '-', '@', '\t', '\r', '\n', '＝', '＋', '－', '＠']) {
-            csv.push('\'');
-        }
-        for c in cell.chars() {
-            if c == '"' {
-                csv.push('"');
-            }
-            csv.push(c);
-        }
-        csv.push('"');
-    }
-    csv.push_str("\r\n");
-}
-
 /// The audit integration point for the report export.
 async fn audit_export(
     db: &mut PgConnection,
@@ -466,18 +438,23 @@ async fn audit_export(
     scope: &Scope,
     rows: usize,
 ) -> Result<(), ApiError> {
-    audit(
+    audit::record(
         db,
-        "report_exported",
-        Some(actor),
-        None,
-        json!({
-            "created_from": timestamp(Some(scope.from))?,
-            "created_before": timestamp(Some(scope.before))?,
-            "category_id": scope.category_id,
-            "team_id": scope.team_id,
-            "row_count": rows,
-        }),
+        Entry {
+            action: "report_exported",
+            who: Who::Account(actor),
+            subject: None,
+            ticket: None,
+            metadata: json!({
+                "filters": {
+                    "created_from": timestamp(Some(scope.from))?,
+                    "created_before": timestamp(Some(scope.before))?,
+                    "category_id": scope.category_id,
+                    "team_id": scope.team_id,
+                },
+                "rows": rows,
+            }),
+        },
     )
     .await?;
     Ok(())
@@ -494,7 +471,7 @@ pub async fn export_report(
     user: CurrentUser,
     Query(query): Query<ReportQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_permission(&user, Permission::ViewAllSubmissions)?;
+    require_permission(&user, Permission::ViewReports)?;
     let scope = Scope::try_from(query)?;
 
     let mut tx = state.pool.begin().await?;
@@ -512,36 +489,32 @@ pub async fn export_report(
         return Err(ApiError::PayloadTooLarge);
     }
 
-    let mut csv = String::new();
-    csv_row(
-        &mut csv,
-        [
-            "reference",
-            "submitted_at",
-            "category",
-            "priority",
-            "team",
-            "status",
-            "ai_outcome",
-            "resolution",
-            "closure_reason",
-            "ai_confirmed_at",
-            "queued_at",
-            "first_response_at",
-            "first_closure_proposed_at",
-            "first_closed_at",
-            "first_closure_reason",
-            "latest_proposed_at",
-            "closed_at",
-            "requester_confirmed_at",
-            "cancelled_at",
-            "rejected_proposals",
-            "reopens",
-            "closure_events",
-        ],
-    );
+    let mut out = csv::line([
+        "reference",
+        "submitted_at",
+        "category",
+        "priority",
+        "team",
+        "status",
+        "ai_outcome",
+        "resolution",
+        "closure_reason",
+        "ai_confirmed_at",
+        "queued_at",
+        "first_response_at",
+        "first_closure_proposed_at",
+        "first_closed_at",
+        "first_closure_reason",
+        "latest_proposed_at",
+        "closed_at",
+        "requester_confirmed_at",
+        "cancelled_at",
+        "rejected_proposals",
+        "reopens",
+        "closure_events",
+    ]);
     for row in &rows {
-        row.write(&mut csv)?;
+        out.push_str(&row.csv_line()?);
     }
     audit_export(&mut tx, user.account_id(), &scope, rows.len()).await?;
     tx.commit().await?;
@@ -553,6 +526,6 @@ pub async fn export_report(
                 "attachment; filename=\"ticket-report.csv\"",
             ),
         ],
-        csv,
+        out,
     ))
 }

@@ -1,6 +1,6 @@
 # Admin reports and CSV export
 
-The Reports page and API require the Admin-only `view_all_submissions`
+The Reports page and API require the Admin-only `view_reports`
 permission. They use the same cohort and classifications as the
 [Admin submission list](admin-submissions.md). Ticket details and immutable
 events, including the reason, actor, and time of cancellation, remain available
@@ -154,7 +154,12 @@ suggestions, cancellation reasons, user identity, secrets, and provider
 diagnostics. Cells are quoted and quote-escaped, with formula-like prefixes
 neutralized even when preceded by whitespace or quotes.
 
-After generating a successful export, `reports::audit_export` appends
-`report_exported` through the existing audit facility. The audit row records
-the Admin account, normalized UTC bounds, filter IDs, and exported row count.
-Failed or unauthorized exports create no export event.
+Both Admin exports use the same CSV encoder in `csv::line`.
+
+After generating a successful export, `reports::audit_export` records
+`report_exported` through `audit::record` in the export transaction. As with
+`audit_exported`, the event holds the Admin actor, a `filters` object, and a
+`rows` count. Report filters carry normalized UTC bounds and category and
+team IDs. The audit writer attaches the request ID, which is also returned
+in the response's `x-request-id` header. Failed or unauthorized exports
+create no export event. See [Audit log](audit.md).

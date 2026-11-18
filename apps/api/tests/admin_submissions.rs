@@ -1072,6 +1072,20 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
         .action(m.ids["solved"], json!({ "action": "reopen" }), "admin")
         .await;
     assert_eq!(denied.status, 403);
+    let audit = w
+        .get(
+            &format!(
+                "/api/admin/audit?action=ai_solved_change_denied&ticket_id={}",
+                m.ids["solved"]
+            ),
+            "admin",
+        )
+        .await;
+    assert_eq!(audit.status, 200, "{}", audit.body);
+    let events = audit.body["items"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["actor"]["account_id"], json!(w.ids["admin"]));
+    assert_eq!(events[0]["metadata"]["attempted"], "reopen");
     assert_eq!(w.get(&path, "admin").await.body, report.body);
 
     for who in NON_ADMINS {
@@ -1292,6 +1306,10 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
 
     let confirmed = csv(&w, &query).await;
     assert_eq!(confirmed.status(), 200);
+    let confirmed_request_id = confirmed.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let bytes = axum::body::to_bytes(confirmed.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -1339,6 +1357,10 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
         "attachment; filename=\"ticket-report.csv\""
     );
     assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let reopened_request_id = response.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -1384,19 +1406,29 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
     assert_eq!(r["operator"]["subsequent_closures"], 1);
     assert_eq!(r["operator"]["mean_queue_to_closure_seconds"], 10800.0);
 
-    let audit: Vec<(Uuid, Value)> = sqlx::query_as(
-        "SELECT actor_account_id, metadata FROM audit_events WHERE event_type = 'report_exported'",
-    )
-    .fetch_all(w.pool())
-    .await
-    .unwrap();
-    assert_eq!(audit.len(), 2);
-    for (actor, metadata) in audit {
-        assert_eq!(actor, w.ids["admin"]);
+    for request_id in [confirmed_request_id, reopened_request_id] {
+        let audit = w
+            .get(
+                &format!("/api/admin/audit?action=report_exported&request_id={request_id}"),
+                "admin",
+            )
+            .await;
+        assert_eq!(audit.status, 200, "{}", audit.body);
+        let events = audit.body["items"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event["request_id"], request_id);
+        assert_eq!(event["actor"]["account_id"], json!(w.ids["admin"]));
+        assert_eq!(event["actor"]["role"], "admin");
         assert_eq!(
-            metadata,
-            json!({"row_count": 1, "created_from": "2026-01-15T00:00:00Z",
-            "created_before": "2026-01-16T00:00:00Z", "category_id": w.software, "team_id": w.desk})
+            event["metadata"],
+            json!({
+                "filters": {
+                    "created_from": "2026-01-15T00:00:00Z", "created_before": "2026-01-16T00:00:00Z",
+                    "category_id": w.software, "team_id": w.desk,
+                },
+                "rows": 1,
+            })
         );
     }
 }
