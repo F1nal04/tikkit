@@ -1,0 +1,35 @@
+{
+	admin off
+	persist_config off
+	skip_install_trust
+	log {
+		format filter {
+			request delete
+		}
+	}
+	{$CADDY_GLOBAL_OPTIONS}
+}
+
+{$PUBLIC_ORIGIN} {
+	# The loopback metrics listener is for a private collector only.
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		respond 404
+	}
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy api:3001 {
+			header_up -X-Request-ID
+		}
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# Local proxy process check. The public smoke test checks TLS and both upstreams.
+http://:2016 {
+	bind 127.0.0.1
+	respond /health 200
+}

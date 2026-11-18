@@ -1,13 +1,14 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
     branches: [main]
   push:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:
@@ -22,7 +23,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
         env:
           POSTGRES_USER: tikkit
           POSTGRES_PASSWORD: tikkit
@@ -114,3 +115,55 @@ jobs:
             apps/web/playwright-report/
           if-no-files-found: ignore
           retention-days: 14
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      COMPOSE_PROJECT_NAME: tikkit-ci
+      COMPOSE_FILE: docker-compose.prod.example.yml
+      TIKKIT_WEB_IMAGE: tikkit-ci-web:smoke
+      TIKKIT_API_IMAGE: tikkit-ci-api:smoke
+      PUBLIC_ORIGIN: https://localhost:18344
+      PROXY_BIND: 127.0.0.1
+      HTTPS_PORT: "18344"
+      HTTP_PORT: "18380"
+      CADDY_GLOBAL_OPTIONS: local_certs
+      METRICS_PORT: "9091"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate disposable deployment secrets
+        run: |
+          umask 077
+          env_file="$RUNNER_TEMP/tikkit-production.env"
+          {
+            printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+            printf 'TIKKIT_DB_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+            printf 'SESSION_SECRET=%s\n' "$(openssl rand -base64 32)"
+            printf 'ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)"
+          } > "$env_file"
+          printf 'COMPOSE_ENV_FILES=%s\n' "$env_file" >> "$GITHUB_ENV"
+      - name: Build production images
+        run: |
+          docker build -f apps/web/Dockerfile -t "$TIKKIT_WEB_IMAGE" .
+          docker build -f apps/api/Dockerfile -t "$TIKKIT_API_IMAGE" .
+      - name: Migrate and smoke-test a clean Compose install
+        run: |
+          docker compose up -d --wait --wait-timeout 120 postgres
+          docker compose run --rm --no-deps api migrate
+          docker compose up -d --wait --wait-timeout 120
+          for service in api web postgres; do
+            container=$(docker compose ps -q "$service")
+            test "$(docker inspect --format '{{len .HostConfig.PortBindings}}' "$container")" -eq 0
+          done
+          docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt "$RUNNER_TEMP/tikkit-ca.crt"
+          docker compose exec -T api curl -fsS -o /dev/null http://127.0.0.1:9091/metrics
+          bash ops/compose/smoke.sh "$PUBLIC_ORIGIN" "$RUNNER_TEMP/tikkit-ca.crt"
+      - if: failure() && env.COMPOSE_ENV_FILES != ''
+        run: docker compose logs --no-color --tail 100
+      - if: always() && env.COMPOSE_ENV_FILES != ''
+        run: docker compose down --volumes --remove-orphans

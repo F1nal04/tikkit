@@ -1,0 +1,85 @@
+name: Release images
+
+on:
+  push:
+    tags:
+      - 'api-v*'
+      - 'web-v*'
+  # Tags written by another workflow with GITHUB_TOKEN do not trigger push runs.
+  # Dispatch this workflow on that tag to use the same validation and CI gate.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-ref:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      component: ${{ steps.tag.outputs.component }}
+      tag: ${{ steps.tag.outputs.tag }}
+      revision: ${{ steps.tag.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the component tag and main ancestry
+        id: tag
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/(web|api)-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Select a stable web-vX.Y.Z or api-vX.Y.Z tag." >&2
+            exit 1
+          fi
+          component=${BASH_REMATCH[1]}
+          git merge-base --is-ancestor HEAD origin/main
+          {
+            printf 'component=%s\n' "$component"
+            printf 'tag=%s\n' "$GITHUB_REF_NAME"
+            printf 'revision=%s\n' "$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: release-ref
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [release-ref, ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      COMPONENT: ${{ needs.release-ref.outputs.component }}
+      TAG: ${{ needs.release-ref.outputs.tag }}
+      REVISION: ${{ needs.release-ref.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-ref.outputs.revision }}
+          persist-credentials: false
+      - name: Build and push the tagged GHCR image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          unset GHCR_TOKEN
+          repository=${GITHUB_REPOSITORY,,}
+          image="ghcr.io/${repository}-$COMPONENT:$TAG"
+          docker buildx create --driver docker-container --use
+          docker buildx build --platform linux/amd64 --push --provenance=mode=max \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.version=$TAG" \
+            --tag "$image" -f "apps/$COMPONENT/Dockerfile" .
+      - if: always()
+        run: docker logout ghcr.io

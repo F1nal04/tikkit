@@ -1,83 +1,129 @@
-# Production deployment sketch, not a finished package (images are built later).
-# Required values come from the environment or a git-ignored .env next to this
-# file; see docs/configuration.md. AI and SMTP stay disabled until an Admin
-# configures them in the application.
 name: tikkit
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+x-probe-defaults: &probe-defaults
+  interval: 5s
+  timeout: 3s
+  retries: 12
+  start_period: 15s
 
 services:
   proxy:
-    image: caddy:2.10
-    ports: ["80:80", "443:443"]
+    <<: *service-defaults
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    user: "10001:10001"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set the public HTTPS origin}
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+    ports:
+      - "${PROXY_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${PROXY_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
-    volumes: [caddy-data:/data]
-    networks: [edge]
-    depends_on: [api, web]
+    volumes:
+      - caddy-data:/data
+    tmpfs:
+      - /config
+    networks:
+      edge: { gw_priority: 1 }
+      app: {}
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
+    healthcheck:
+      <<: *probe-defaults
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2016/health"]
 
   web:
-    image: ghcr.io/f1nal04/tikkit-web:${TIKKIT_VERSION:-latest}
+    <<: *service-defaults
+    image: ${TIKKIT_WEB_IMAGE:?set an explicit web image reference}
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST, e.g. help.example.com} # ignored by adapter-node 6, see docs/security.md
-      PROTOCOL_HEADER: x-forwarded-proto # Caddy overwrites it; pages send HSTS for https
-      API_ORIGIN: http://api:3001 # server-side rendering calls the API directly
-    networks: [edge]
+      ORIGIN: ${PUBLIC_ORIGIN:?set the public HTTPS origin}
+      API_ORIGIN: http://api:3001
+      SHUTDOWN_TIMEOUT: 20
+    networks: [app]
+    depends_on:
+      api: { condition: service_healthy }
+    stop_grace_period: 30s
+    healthcheck:
+      <<: *probe-defaults
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/setup', { redirect: 'manual' }).then(r => { if (r.status !== 200 && r.status !== 303) process.exitCode = 1 }).catch(() => { process.exitCode = 1 })"]
 
   api:
-    image: ghcr.io/f1nal04/tikkit-api:${TIKKIT_VERSION:-latest}
+    <<: *service-defaults
+    image: ${TIKKIT_API_IMAGE:?set an explicit API image reference}
     environment:
       ENVIRONMENT: production
       API_ADDR: 0.0.0.0:3001
-      PUBLIC_ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST}
-      DATABASE_URL: postgres://tikkit:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/tikkit
-      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (openssl rand -base64 32)}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY (openssl rand -base64 32)}
-      SHUTDOWN_TIMEOUT_SECS: 20
-      # Caddy (and the web server's SSR calls) are the socket peers for every
-      # client; X-Forwarded-For is trusted only from this fixed `edge` subnet.
-      TRUSTED_PROXIES: 172.30.0.0/24
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set the public HTTPS origin}
+      DATABASE_URL: postgres://tikkit:${TIKKIT_DB_PASSWORD:?set a hex application DB password}@postgres:5432/tikkit
+      SESSION_SECRET: ${SESSION_SECRET:?set a session secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set an encryption key}
+      # TODO(#44): wire the final trusted-proxy setting here for this direct Caddy hop.
+      METRICS_PORT: ${METRICS_PORT:-}
       SCREENSHOT_DIR: /var/lib/tikkit/screenshots
-    volumes: [screenshots-data:/var/lib/tikkit/screenshots] # private: never served by the proxy
-    stop_grace_period: 30s # longer than SHUTDOWN_TIMEOUT_SECS + 5s pool close
-    networks: [edge, internal]
+      SHUTDOWN_TIMEOUT_SECS: 20
+    volumes:
+      - screenshots-data:/var/lib/tikkit/screenshots
+    networks:
+      egress: { gw_priority: 1 }
+      app: {}
+      db: {}
+    stop_grace_period: 40s
     depends_on:
       postgres: { condition: service_healthy }
+    healthcheck:
+      <<: *probe-defaults
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/api/health >/dev/null && curl -fsS http://127.0.0.1:3001/api/ready >/dev/null"]
 
   postgres:
-    image: postgres:17.6
+    <<: *service-defaults
+    image: postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    user: "999:999"
     environment:
-      POSTGRES_DB: tikkit
-      POSTGRES_USER: tikkit
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-    volumes: [postgres-data:/var/lib/postgresql/data]
-    networks: [internal]
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: --auth-local=peer --auth-host=scram-sha-256
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a PostgreSQL bootstrap password}
+      TIKKIT_DB_PASSWORD: ${TIKKIT_DB_PASSWORD:?set a hex application DB password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:uid=999,gid=999,mode=3775
+      - /tmp
+    configs:
+      - source: postgres-init
+        target: /docker-entrypoint-initdb.d/10-tikkit.sql
+    networks: [db]
+    stop_grace_period: 60s
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tikkit -d tikkit"]
-      interval: 5s
-      retries: 20
+      <<: *probe-defaults
+      # TCP only becomes available after the official image finishes initialization.
+      test: ["CMD-SHELL", 'PGPASSWORD="$${TIKKIT_DB_PASSWORD}" psql -h 127.0.0.1 -U tikkit -d tikkit -Atq -c "SELECT 1"']
 
 configs:
   caddyfile:
-    content: |
-      ${PUBLIC_HOST:?set PUBLIC_HOST} {
-        handle /api/* {
-          reverse_proxy api:3001 {
-            header_up -X-Request-ID
-          }
-        }
-        handle {
-          reverse_proxy web:3000
-        }
-      }
+    file: ./ops/caddy/Caddyfile
+  postgres-init:
+    file: ./ops/compose/init-postgres.sql
 
 networks:
   edge:
-    ipam:
-      config: [{ subnet: 172.30.0.0/24 }] # matches TRUSTED_PROXIES; only proxy, web, api join it
-  internal:
-    internal: true # no outbound or published access to the database
+  egress:
+  app:
+    internal: true
+  db:
+    internal: true
 
 volumes:
   caddy-data:

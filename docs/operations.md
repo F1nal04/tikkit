@@ -14,7 +14,8 @@ Tikkit runs the notification outbox, AI attempt processor and sweeper,
 resolution-confirmation timeout worker, and data retention worker in the API
 process. A self-hosted Compose
 operator can use the health endpoints and service logs directly. Prometheus is
-optional and uses the same database readiness check.
+optional and uses the same database readiness check. See the
+[deployment guide](deployment.md) for installation and version changes.
 
 ## API and database
 
@@ -23,7 +24,7 @@ optional and uses the same database readiness check.
   migration check code. Alert `TikkitMetricsUnreachable` also fires when the
   collector cannot reach the private listener. Check the listener address and
   local network namespace before treating a scrape failure as an API outage.
-- Use `docker compose ps -a` and `docker compose logs --since 30m --tail 300 web api db`
+- Use `docker compose ps -a` and `docker compose logs --since 30m --tail 300 web api postgres`
   (substitute the service names in your stack) for startup and worker messages.
   Check the API container's exit code, restart count, and OOM status with
   `docker inspect --format '{{.State.ExitCode}} {{.RestartCount}} {{.State.OOMKilled}}' <container>`.
@@ -135,12 +136,12 @@ hourly screenshot clean-up. After restoring a backup, start a run again
 ## Private Prometheus dashboard and alerts
 
 Apply the [optional Compose overlay](../docker-compose.observability.example.yml)
-to the base example to set `METRICS_PORT=9091`, start Prometheus, and load the
-[scrape configuration](../ops/prometheus/prometheus.yml) and
+to the production Compose file to set `METRICS_PORT=9091`, start Prometheus,
+and load the [scrape configuration](../ops/prometheus/prometheus.yml) and
 [alert rules](../ops/prometheus/alerts.yml).
 
 ```sh
-docker compose -f docker-compose.prod.example.yml \
+docker compose --env-file .env.production -p tikkit -f docker-compose.prod.example.yml \
   -f docker-compose.observability.example.yml up -d
 ```
 
