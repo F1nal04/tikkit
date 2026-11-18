@@ -784,11 +784,10 @@ pub async fn cleanup(pool: &PgPool, dir: &FsPath) -> Result<Vec<Uuid>, ApiError>
     .fetch_all(&mut *tx)
     .await?;
     if !expired.is_empty() {
-        audit(
+        crate::audit::system(
             &mut *tx,
+            "screenshot_cleanup",
             "screenshots_expired",
-            None,
-            None,
             json!({"screenshot_ids": expired}),
         )
         .await?;

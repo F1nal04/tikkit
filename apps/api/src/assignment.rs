@@ -108,6 +108,29 @@ pub(crate) async fn apply(
     action: AssignmentAction,
 ) -> Result<AssignmentReceipt, ApiError> {
     use AssignmentAction as A;
+    let attempted = match action {
+        A::Dispatch { .. } => "dispatch",
+        A::ReturnToGeneral { .. } => "return_to_general",
+        A::Claim { .. } => "claim",
+        A::Assign { .. } => "assign",
+        A::Unassign { .. } => "unassign",
+    };
+    let result = apply_in_transaction(pool, account_id, id, action).await;
+    if let Err(error) = &result {
+        // The transaction is gone: a denied attempt on an AI-solved record is
+        // recorded on its own, and the ticket stays untouched.
+        crate::audit::ticket_denied(pool, account_id, id, attempted, error).await;
+    }
+    result
+}
+
+async fn apply_in_transaction(
+    pool: &PgPool,
+    account_id: Uuid,
+    id: Uuid,
+    action: AssignmentAction,
+) -> Result<AssignmentReceipt, ApiError> {
+    use AssignmentAction as A;
     let mut tx = pool.begin().await?;
     // Account, membership, and team before the ticket. `lock_actor`, deactivation,
     // and membership edits use that order; locking a target after the ticket

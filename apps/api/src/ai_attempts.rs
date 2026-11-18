@@ -48,7 +48,7 @@ use crate::{
     ai_guard::{AiGuard, Guarded, Refusal},
     ai_privacy,
     api::{ApiError, Language},
-    auth::{audit, ident, ident_str},
+    auth::{ident, ident_str},
     lifecycle::{self, By, Transition},
     metrics::{Event as Metric, Metrics, Worker as WorkerMetric},
     notifications::{is_stopping, poll_loop},
@@ -1228,11 +1228,10 @@ async fn sweep_job(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, Api
             let queued = hand_off(&mut tx, ticket_id, &outcome, None).await?;
             if queued && outcome == ORPHANED {
                 // There is no attempt row to carry the outcome.
-                audit(
+                crate::audit::system(
                     &mut *tx,
+                    "ai_attempts",
                     "ai_attempt_orphaned",
-                    None,
-                    None,
                     serde_json::json!({ "ticket_id": ticket_id, "outcome": ORPHANED }),
                 )
                 .await?;

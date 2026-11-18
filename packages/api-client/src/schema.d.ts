@@ -115,6 +115,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The audit log, newest first (Admin only). Searching is a pure read: it
+         *     writes nothing, so reviewing history leaves no trace in it.
+         */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The action identifiers that occur in the log, for the search filter (Admin only). */
+        get: operations["actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exports the matching events as CSV, newest first (Admin only). Bounded: at
+         *     most 10,000 rows; `x-export-truncated: true` says a longer result was cut
+         *     (narrow the filters or the time range). Cells that a spreadsheet would run
+         *     as a formula are neutralized. The export itself is audited
+         *     (`audit_exported`: who, the filters, the row count).
+         */
+        post: operations["export"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/notifications": {
         parameters: {
             query?: never;
@@ -1944,6 +2004,59 @@ export interface components {
              */
             visible: boolean;
         };
+        AuditAccount: {
+            /** Format: uuid */
+            account_id: string;
+            username: string | null;
+        };
+        AuditActions: {
+            /** @description Every action identifier present in the log, sorted. */
+            actions: string[];
+        };
+        /** @description Who acted, as it was when the event was written. */
+        AuditActor: {
+            /**
+             * Format: uuid
+             * @description `null` when a service acted.
+             */
+            account_id: string | null;
+            role: null | components["schemas"]["Role"];
+            /** @description Set exactly when no account acted: `anonymous` or the background service. */
+            service: string | null;
+            /**
+             * Format: uuid
+             * @description The account's team at the time, if it had one.
+             */
+            team_id: string | null;
+            team_name: string | null;
+            username: string | null;
+        };
+        AuditEvent: {
+            /** @description Stable machine identifier. */
+            action: string;
+            actor: components["schemas"]["AuditActor"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            /** @description Identifiers, codes, and before/after settings. Never secrets or content. */
+            metadata: Record<string, never>;
+            /**
+             * Format: uuid
+             * @description The request that wrote the event, or that caused the job that wrote it.
+             */
+            request_id: string | null;
+            resource_id: string | null;
+            resource_type: string | null;
+            subject: null | components["schemas"]["AuditAccount"];
+            /** Format: uuid */
+            ticket_id: string | null;
+            /**
+             * Format: int64
+             * @description `null` when the event is not about a ticket.
+             */
+            ticket_reference: number | null;
+        };
         /** @enum {string} */
         AuthorKind: "requester" | "staff";
         /** @description An eligible assignee for bulk assignment. */
@@ -2413,6 +2526,36 @@ export interface components {
                  * @description Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion.
                  */
                 ticket_id: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_AuditEvent: {
+            items: {
+                /** @description Stable machine identifier. */
+                action: string;
+                actor: components["schemas"]["AuditActor"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: int64 */
+                id: number;
+                /** @description Identifiers, codes, and before/after settings. Never secrets or content. */
+                metadata: Record<string, never>;
+                /**
+                 * Format: uuid
+                 * @description The request that wrote the event, or that caused the job that wrote it.
+                 */
+                request_id: string | null;
+                resource_id: string | null;
+                resource_type: string | null;
+                subject: null | components["schemas"]["AuditAccount"];
+                /** Format: uuid */
+                ticket_id: string | null;
+                /**
+                 * Format: int64
+                 * @description `null` when the event is not about a ticket.
+                 */
+                ticket_reference: number | null;
             }[];
             next_cursor: string | null;
         };
@@ -3594,6 +3737,187 @@ export interface operations {
                 };
             };
             /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query?: {
+                /** @description Acting account ID. */
+                actor?: string;
+                /** @description Acting account's username (case-insensitive, exact). */
+                actor_username?: string;
+                /** @description Action identifier, e.g. `login_failed` or `ticket_ai_solved`. */
+                action?: string;
+                /** @description Resource type, e.g. `ticket`, `account`, `team`, `invitation`. */
+                resource_type?: string;
+                /** @description Resource identifier within its type. */
+                resource_id?: string;
+                /** @description Events about this ticket. */
+                ticket_id?: string;
+                /** @description Events about the ticket with this reference number. */
+                ticket_reference?: number;
+                /** @description Events written by one request, or by the jobs it caused (`x-request-id`, a UUID). */
+                request_id?: string;
+                /** @description Inclusive event time, RFC 3339. */
+                created_from?: string;
+                /** @description Exclusive event time, RFC 3339. */
+                created_before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AuditEvent"];
+                };
+            };
+            /** @description `invalid_query` (unknown parameter, malformed value, or empty time range) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`cursor: invalid_cursor`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    actions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditActions"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query?: {
+                /** @description Acting account ID. */
+                actor?: string;
+                /** @description Acting account's username (case-insensitive, exact). */
+                actor_username?: string;
+                /** @description Action identifier, e.g. `login_failed` or `ticket_ai_solved`. */
+                action?: string;
+                /** @description Resource type, e.g. `ticket`, `account`, `team`, `invitation`. */
+                resource_type?: string;
+                /** @description Resource identifier within its type. */
+                resource_id?: string;
+                /** @description Events about this ticket. */
+                ticket_id?: string;
+                /** @description Events about the ticket with this reference number. */
+                ticket_reference?: number;
+                /** @description Events written by one request, or by the jobs it caused (`x-request-id`, a UUID). */
+                request_id?: string;
+                /** @description Inclusive event time, RFC 3339. */
+                created_from?: string;
+                /** @description Exclusive event time, RFC 3339. */
+                created_before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CSV with a header row. Headers `x-export-rows` and `x-export-truncated`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description `invalid_query` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) or `csrf_rejected` */
             403: {
                 headers: {
                     [name: string]: unknown;
