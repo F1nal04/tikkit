@@ -11,6 +11,8 @@
 }
 
 {$PUBLIC_ORIGIN} {
+	header Strict-Transport-Security "max-age=31536000"
+
 	# The loopback metrics listener is for a private collector only.
 	@metrics path /metrics /metrics/*
 	handle @metrics {

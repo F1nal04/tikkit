@@ -15,6 +15,9 @@ release.
    [ops/compose/init-postgres.sql](../ops/compose/init-postgres.sql) in the
    same relative layout as the repository. Use a stable Compose project name
    (`tikkit` below). The project name determines which volumes the stack uses.
+   Keep the mounted `ops/caddy/Caddyfile` and `ops/compose/init-postgres.sql`
+   world-readable (`chmod 644`) so Caddy (UID 10001) and PostgreSQL (UID 999)
+   can read them. The mounted files contain configuration and no secrets.
 2. Point the public hostname at the host IPv4 address and allow inbound TCP
    80 and 443 to Caddy.
    Caddy handles certificate issuance/renewal and redirects HTTP to HTTPS.
@@ -34,9 +37,7 @@ release.
    access only.
 
    ```sh
-   umask 077
-   cp .env.production.example .env.production
-   chmod 600 .env.production
+   (umask 077; cp .env.production.example .env.production; chmod 600 .env.production)
    ```
 
    Generate each value independently and put it in the protected env file or
@@ -107,10 +108,37 @@ requesters and staff. Configure your teams and intake catalog before
 accepting tickets. AI and SMTP start disabled and require no provider key
 or relay credentials for setup, readiness or ticket handling.
 
+### PostgreSQL initialized without the application login
+
+If PostgreSQL started but stays unhealthy, inspect `compose logs postgres`.
+A permission error reading `10-tikkit.sql` can leave an initialized data
+volume without the `tikkit` login or database. The upstream initializer only
+runs on an empty volume, so fixing the mount and restarting alone leaves
+that failure in place. Fix the file mode, then inspect the cluster:
+
+```sh
+compose exec -T postgres psql -U postgres -d postgres -c '\du'
+compose exec -T postgres psql -U postgres -d postgres -c '\l'
+```
+
+For a failed fresh install, use a fresh project and volumes, or, after
+confirming both the login and database are absent, run the initializer once
+against the running PostgreSQL container:
+
+```sh
+compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  < ops/compose/init-postgres.sql
+compose up -d --wait postgres
+```
+
+If either object exists, inspect the partial state and preserve the volume
+until you have established what it contains.
+
 ## Runtime services and probes
 
 Caddy is the only published service. It forwards `/api/*` to
 `api:3001` and strips inbound `X-Request-ID` on that entire path. It
+sets `Strict-Transport-Security: max-age=31536000` on HTTPS responses and
 forwards portal routes, SSR data requests, and fingerprinted
 `/_app/immutable/` assets to `web:3000`. The Node image runs the generated
 `apps/web/build/index.js` from the SvelteKit Node adapter, with both its
@@ -138,11 +166,11 @@ off the host's public listeners. Optional `METRICS_PORT=9091` binds to
 the API container's loopback, and the [observability overlay and runbook](operations.md)
 show how to scrape it privately.
 
-**Integration with #44.** The API service has a marked placeholder for the
-final trusted-proxy configuration. Until that lands, the API uses its
-default proxy-trust setting and can group clients behind Caddy for existing
-rate limits. Wire the #44 setting for this direct Caddy hop when rebasing
-the stack. Preserve the fixed external origin and request-ID stripping.
+**Integration with #44.** Compose enables the existing `TRUST_PROXY_HEADERS`
+setting. The API receives traffic from Caddy and the SSR server, which
+forwards Caddy's `X-Forwarded-For` on its private API calls. Wire #44's
+final trust policy for both peers when rebasing. Preserve the fixed external
+origin and request-ID stripping.
 
 The API process runs AI attempt and sweep jobs, notification outbox
 delivery, screenshot cleanup, AI usage retention and resolution-confirmation
@@ -212,5 +240,34 @@ Keep the newer volumes for investigation. Never edit migration history to
 force a rollback. A PostgreSQL **major** upgrade requires a separate
 database upgrade/restore procedure.
 
+### Manual restore to fresh volumes
+
+Use the database dump and screenshot archive from the same backup. In a
+separate deployment directory, prepare a protected `.env.restore` with the
+previous image references and recovered secrets, including the encryption key.
+Keep its proxy unpublished during the restore and block API egress before
+starting restored workers so they cannot send mail or call AI providers.
+Use a fresh project name so Compose creates separate volumes. With the
+decrypted backup streams available as `tikkit.pg` and `screenshots.tar`:
+
+```sh
+restore() {
+  docker compose --env-file .env.restore -f docker-compose.prod.example.yml -p tikkit-restore "$@"
+}
+
+restore up -d --wait postgres
+restore exec -T postgres pg_restore -U postgres -d tikkit --exit-on-error --single-transaction < tikkit.pg
+restore run --rm -T --no-deps --entrypoint tar api \
+  --no-same-owner -C /var/lib/tikkit/screenshots -xf - < screenshots.tar
+restore run --rm -T --no-deps api migrate
+```
+
+The fresh PostgreSQL bootstrap creates the same `tikkit` owner before the
+restore. Keep the dump and archive protected, and verify the restored
+deployment privately before switching traffic. The encrypted backup and
+restore documentation from #47 supersedes this manual procedure when available.
+
 See the [release pipeline](ci.md#release-images) for component tags and
-image provenance.
+image provenance. Release Please creates the tags from `main`. The image
+workflow publishes after CI passes and the `release` environment admits the job. The first hosted
+release and GHCR publication are still to be verified.

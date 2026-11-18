@@ -69,7 +69,9 @@ services:
       DATABASE_URL: postgres://tikkit:${TIKKIT_DB_PASSWORD:?set a hex application DB password}@postgres:5432/tikkit
       SESSION_SECRET: ${SESSION_SECRET:?set a session secret}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set an encryption key}
-      # TODO(#44): wire the final trusted-proxy setting here for this direct Caddy hop.
+      # TODO(#44): wire the final trust policy for both peers, Caddy and web SSR.
+      # The SSR server forwards X-Forwarded-For from its incoming Caddy request.
+      TRUST_PROXY_HEADERS: "true"
       METRICS_PORT: ${METRICS_PORT:-}
       SCREENSHOT_DIR: /var/lib/tikkit/screenshots
       SHUTDOWN_TIMEOUT_SECS: 20
