@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto'
 import { API_ORIGIN } from '$app/env/private'
 import { resolveLocale } from '#lib/i18n.ts'
-import type { Cookies } from '@sveltejs/kit'
-import type { Handle, HandleFetch } from '@sveltejs/kit/hooks'
+import type { Cookies, RequestEvent } from '@sveltejs/kit'
+import type { Handle, HandleFetch, HandleServerError } from '@sveltejs/kit/hooks'
 
-export const handle: Handle = ({ event, resolve }) => {
+export const handle: Handle = async ({ event, resolve }) => {
+  const start = performance.now()
+  event.locals.requestId = randomUUID()
   const query = event.url.searchParams.get('lang')
   const locale = resolveLocale(
     query,
@@ -19,11 +22,12 @@ export const handle: Handle = ({ event, resolve }) => {
   // no-referrer: invite and reset page URLs carry tokens.
   event.setHeaders({
     'cache-control': 'private, no-store',
+    'x-request-id': event.locals.requestId,
     vary: 'Cookie, Accept-Language',
     'referrer-policy': 'no-referrer',
   })
   let done = false
-  return resolve(event, {
+  const response = await resolve(event, {
     transformPageChunk: ({ html }) => {
       if (done || !html.includes('<html')) return html
       done = true
@@ -31,6 +35,33 @@ export const handle: Handle = ({ event, resolve }) => {
       return html.replace('%lang%', event.locals.locale)
     },
   })
+  log(event, 'info', 'web_request_completed', response.status, Math.round(performance.now() - start))
+  return response
+}
+
+export const handleError: HandleServerError = ({ event, kind, error }) => {
+  const status = kind === 'unknown' ? 500 : error.status
+  if (typeof status === 'number' && status >= 500) log(event, 'error', 'ssr_failed', status)
+}
+
+function log(
+  event: RequestEvent,
+  level: 'info' | 'error',
+  code: 'web_request_completed' | 'ssr_failed' | 'api_unreachable' | 'api_request_failed',
+  status?: number,
+  latency_ms?: number,
+) {
+  // Use route templates and fixed fields. URLs, exceptions and headers may contain secrets.
+  console[level](JSON.stringify({
+    timestamp: new Date().toISOString(),
+    service: 'web',
+    level,
+    event: code,
+    request_id: event.locals.requestId,
+    route: event.route.id ?? 'unmatched',
+    status,
+    latency_ms,
+  }))
 }
 
 // During SSR, `/api` is not served by this process; send it to Rust directly.
@@ -38,6 +69,7 @@ export const handleFetch: HandleFetch = async ({ event, request, fetch }) => {
   const url = new URL(request.url)
   if (url.origin !== event.url.origin || !url.pathname.startsWith('/api/')) return fetch(request)
   request = new Request(new URL(url.pathname + url.search, API_ORIGIN), request)
+  request.headers.set('x-request-id', event.locals.requestId)
   for (const name of ['accept-language', 'x-forwarded-for']) {
     const value = event.request.headers.get(name)
     if (value) request.headers.set(name, value)
@@ -47,7 +79,11 @@ export const handleFetch: HandleFetch = async ({ event, request, fetch }) => {
   const session = event.cookies.get('tikkit_session')
   if (session) request.headers.set('cookie', `tikkit_session=${session}`)
   else request.headers.delete('cookie')
-  const response = await fetch(request)
+  const response = await fetch(request).catch((error: unknown) => {
+    log(event, 'error', 'api_unreachable')
+    throw error
+  })
+  if (response.status >= 500) log(event, 'error', 'api_request_failed', response.status)
   // SvelteKit drops Set-Cookie from cross-origin fetches; relay a rotated session to the browser.
   for (const header of response.headers.getSetCookie()) relaySessionCookie(event.cookies, header)
   return response
