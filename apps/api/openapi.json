@@ -599,6 +599,203 @@
         }
       }
     },
+    "/api/admin/submissions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Every submitted ticket, newest first (Admin only): AI-stage and AI-solved\nrecords, escalated tickets, operator resolutions, and cancellations. Drafts\nare not submissions and never listed. Filters apply before the page limit.",
+        "operationId": "list_submissions",
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "The ticket's (frozen) category, archived ones included.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Current ticket status. `draft` is not a submission and is rejected.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TicketStatus"
+            }
+          },
+          {
+            "name": "resolution_source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResolutionSourceFilter"
+            }
+          },
+          {
+            "name": "ai_outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AiOutcomeFilter"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SubmissionSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` (unknown filter value, `status=draft`, bad or empty date range)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`cursor`: `invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/submissions/{id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One submission with its frozen intake, AI attempt (suggestion, internal\noutcome code, decision and confirmation event), and every event (Admin\nonly). Read-only: there is no action here, and AI-solved records stay final.",
+        "operationId": "submission_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing, or a draft)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ai/policy": {
       "get": {
         "tags": [
@@ -5699,6 +5896,20 @@
           }
         }
       },
+      "AiOutcomeFilter": {
+        "type": "string",
+        "description": "`ai_outcome` filter: an [`AiRecordOutcome`], or `none` for submissions that\nnever had an AI attempt.",
+        "enum": [
+          "none",
+          "processing",
+          "awaiting_decision",
+          "solved",
+          "not_solved",
+          "skipped",
+          "failed",
+          "cancelled"
+        ]
+      },
       "AiOutcomeStats": {
         "type": "object",
         "description": "AI outcome counts. Period counts come from the immutable ticket events, so a\ndenied or repeated request never moves them.",
@@ -7174,6 +7385,26 @@
           }
         }
       },
+      "EventActor": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "FieldKind": {
         "type": "string",
         "enum": [
@@ -8275,6 +8506,147 @@
           }
         }
       },
+      "Page_SubmissionSummary": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One submission in the Admin list. No ticket text beyond the subject.",
+              "required": [
+                "id",
+                "reference",
+                "subject",
+                "status",
+                "category_id",
+                "category_name",
+                "priority_name",
+                "requester",
+                "team_name",
+                "assignee_display_name",
+                "resolution_source",
+                "closure_reason",
+                "resolution",
+                "route",
+                "ai_outcome",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "ai_outcome": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AiRecordOutcome",
+                      "description": "What became of the AI attempt; `null` when there never was one."
+                    }
+                  ]
+                },
+                "assignee_display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "category_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "category_name": {
+                  "type": "string",
+                  "description": "The category name frozen at submission."
+                },
+                "closure_reason": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ClosureReason"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Submission time."
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "priority_name": {
+                  "type": "string",
+                  "description": "Current effective priority."
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "requester": {
+                  "$ref": "#/components/schemas/TicketRequester"
+                },
+                "resolution": {
+                  "$ref": "#/components/schemas/SubmissionResolution"
+                },
+                "resolution_source": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResolutionSource",
+                      "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+                    }
+                  ]
+                },
+                "route": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SubmissionRoute",
+                      "description": "`null` for records predating the submission event."
+                    }
+                  ]
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "team_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`null`: the shared general queue, or never human work."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Team": {
         "type": "object",
         "description": "One page of a list. `next_cursor` is null on the last page.",
@@ -8876,6 +9248,15 @@
           "operator"
         ]
       },
+      "ResolutionSourceFilter": {
+        "type": "string",
+        "description": "`resolution_source` filter: `none` is every submission without one (open\nor cancelled).",
+        "enum": [
+          "ai",
+          "operator",
+          "none"
+        ]
+      },
       "RetryResult": {
         "type": "object",
         "required": [
@@ -9385,6 +9766,216 @@
           "q"
         ]
       },
+      "SubmissionAi": {
+        "type": "object",
+        "description": "The ticket's AI attempt as Admins see it: the stored suggestion, the\ninternal outcome code, and the requester's decision.",
+        "required": [
+          "attempt_id",
+          "outcome",
+          "state",
+          "outcome_code",
+          "provider",
+          "model",
+          "language",
+          "suggestion",
+          "decision",
+          "decision_event_id",
+          "decided_at",
+          "created_at",
+          "finished_at"
+        ],
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiDecision"
+              }
+            ]
+          },
+          "decision_event_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The decision event in `events` (for `solved`: the confirmation event)."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "model": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AiRecordOutcome"
+          },
+          "outcome_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Internal stable code of why there is no suggestion (docs/ai-attempts.md)."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AiAttemptState"
+          },
+          "suggestion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiSuggestion",
+                "description": "The one stored suggestion, untrusted model text: render as plain text."
+              }
+            ]
+          }
+        }
+      },
+      "SubmissionDetail": {
+        "type": "object",
+        "description": "One submission in full, read-only.",
+        "required": [
+          "summary",
+          "description",
+          "intake_snapshot",
+          "confirmation_deadline",
+          "ai",
+          "events"
+        ],
+        "properties": {
+          "ai": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmissionAi"
+              }
+            ]
+          },
+          "confirmation_deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubmissionEvent"
+            },
+            "description": "Every event of the ticket, oldest first."
+          },
+          "intake_snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmittedIntake",
+                "description": "Frozen original intake; null only for legacy records predating submission."
+              }
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/SubmissionSummary"
+          }
+        }
+      },
+      "SubmissionEvent": {
+        "type": "object",
+        "description": "One immutable ticket event: transitions, assignment and priority changes,\nand message events (which carry the message ID only, never its text).",
+        "required": [
+          "id",
+          "event_type",
+          "from_status",
+          "to_status",
+          "actor",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "actor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventActor",
+                "description": "`null` for background jobs."
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "from_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus",
+                "description": "Set on status transitions only."
+              }
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "to_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus"
+              }
+            ]
+          }
+        }
+      },
       "SubmissionReceipt": {
         "type": "object",
         "description": "Immutable submission receipt. A replay returns the original submitted status;\nread `/api/tickets/{id}` for the current status.",
@@ -9404,6 +9995,149 @@
           },
           "status": {
             "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "SubmissionResolution": {
+        "type": "string",
+        "description": "How a submission ended, from its status and closure provenance. Only\n`ai_confirmed` is an AI resolution; an undecided or abandoned suggestion is\n`open` or `cancelled`, never solved.",
+        "enum": [
+          "open",
+          "ai_confirmed",
+          "requester_confirmed",
+          "confirmation_timeout",
+          "cancelled"
+        ]
+      },
+      "SubmissionRoute": {
+        "type": "string",
+        "description": "How the submission entered: the `route` of its `submit` event.",
+        "enum": [
+          "ai",
+          "ai_disabled",
+          "category_exempt",
+          "requester_skip"
+        ]
+      },
+      "SubmissionSummary": {
+        "type": "object",
+        "description": "One submission in the Admin list. No ticket text beyond the subject.",
+        "required": [
+          "id",
+          "reference",
+          "subject",
+          "status",
+          "category_id",
+          "category_name",
+          "priority_name",
+          "requester",
+          "team_name",
+          "assignee_display_name",
+          "resolution_source",
+          "closure_reason",
+          "resolution",
+          "route",
+          "ai_outcome",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "ai_outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiRecordOutcome",
+                "description": "What became of the AI attempt; `null` when there never was one."
+              }
+            ]
+          },
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string",
+            "description": "The category name frozen at submission."
+          },
+          "closure_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClosureReason"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Submission time."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string",
+            "description": "Current effective priority."
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "requester": {
+            "$ref": "#/components/schemas/TicketRequester"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/SubmissionResolution"
+          },
+          "resolution_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResolutionSource",
+                "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              }
+            ]
+          },
+          "route": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmissionRoute",
+                "description": "`null` for records predating the submission event."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null`: the shared general queue, or never human work."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

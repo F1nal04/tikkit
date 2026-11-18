@@ -42,6 +42,7 @@ pub mod queues;
 pub mod screenshots;
 pub mod smtp;
 pub mod submission;
+pub mod submissions;
 pub mod tickets;
 pub mod views;
 
@@ -125,6 +126,8 @@ impl AppState {
         ai_usage::usage,
         ai_records::records,
         ai_records::outcomes,
+        submissions::list_submissions,
+        submissions::submission_detail,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -181,6 +184,8 @@ impl AppState {
         api::TicketAssignmentView,
         queues::QueueView,
         queues::QueueSort,
+        submissions::ResolutionSourceFilter,
+        submissions::AiOutcomeFilter,
     ))
 )]
 pub struct ApiDoc;
@@ -345,6 +350,11 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/settings/ai/usage", get(ai_usage::usage))
         .route("/api/admin/ai/records", get(ai_records::records))
         .route("/api/admin/ai/outcomes", get(ai_records::outcomes))
+        .route("/api/admin/submissions", get(submissions::list_submissions))
+        .route(
+            "/api/admin/submissions/{id}",
+            get(submissions::submission_detail),
+        )
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))

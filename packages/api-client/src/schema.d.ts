@@ -167,6 +167,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every submitted ticket, newest first (Admin only): AI-stage and AI-solved
+         *     records, escalated tickets, operator resolutions, and cancellations. Drafts
+         *     are not submissions and never listed. Filters apply before the page limit.
+         */
+        get: operations["list_submissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/submissions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One submission with its frozen intake, AI attempt (suggestion, internal
+         *     outcome code, decision and confirmation event), and every event (Admin
+         *     only). Read-only: there is no action here, and AI-solved records stay final.
+         */
+        get: operations["submission_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ai/policy": {
         parameters: {
             query?: never;
@@ -1613,6 +1655,12 @@ export interface components {
             status: components["schemas"]["AiOutcomeStatus"];
         };
         /**
+         * @description `ai_outcome` filter: an [`AiRecordOutcome`], or `none` for submissions that
+         *     never had an AI attempt.
+         * @enum {string}
+         */
+        AiOutcomeFilter: "none" | "processing" | "awaiting_decision" | "solved" | "not_solved" | "skipped" | "failed" | "cancelled";
+        /**
          * @description AI outcome counts. Period counts come from the immutable ticket events, so a
          *     denied or repeated request never moves them.
          */
@@ -2121,6 +2169,12 @@ export interface components {
             /** @description Same value as the `x-request-id` response header. */
             request_id: string;
         };
+        EventActor: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+            username: string;
+        };
         /** @enum {string} */
         FieldKind: "text" | "select";
         Health: {
@@ -2470,6 +2524,40 @@ export interface components {
             next_cursor: string | null;
         };
         /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_SubmissionSummary: {
+            items: {
+                ai_outcome: null | components["schemas"]["AiRecordOutcome"];
+                assignee_display_name: string | null;
+                /** Format: uuid */
+                category_id: string;
+                /** @description The category name frozen at submission. */
+                category_name: string;
+                closure_reason: null | components["schemas"]["ClosureReason"];
+                /**
+                 * Format: date-time
+                 * @description Submission time.
+                 */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /** @description Current effective priority. */
+                priority_name: string;
+                /** Format: int64 */
+                reference: number;
+                requester: components["schemas"]["TicketRequester"];
+                resolution: components["schemas"]["SubmissionResolution"];
+                resolution_source: null | components["schemas"]["ResolutionSource"];
+                route: null | components["schemas"]["SubmissionRoute"];
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /** @description `null`: the shared general queue, or never human work. */
+                team_name: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_Team: {
             items: {
                 archived: boolean;
@@ -2661,6 +2749,12 @@ export interface components {
          * @enum {string}
          */
         ResolutionSource: "ai" | "operator";
+        /**
+         * @description `resolution_source` filter: `none` is every submission without one (open
+         *     or cancelled).
+         * @enum {string}
+         */
+        ResolutionSourceFilter: "ai" | "operator" | "none";
         RetryResult: {
             /** Format: int64 */
             retried: number;
@@ -2846,6 +2940,60 @@ export interface components {
          */
         StaleFilter: "view" | "team_id" | "status" | "category_id" | "priority_id" | "q";
         /**
+         * @description The ticket's AI attempt as Admins see it: the stored suggestion, the
+         *     internal outcome code, and the requester's decision.
+         */
+        SubmissionAi: {
+            /** Format: uuid */
+            attempt_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at: string | null;
+            decision: null | components["schemas"]["AiDecision"];
+            /**
+             * Format: int64
+             * @description The decision event in `events` (for `solved`: the confirmation event).
+             */
+            decision_event_id: number | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            language: components["schemas"]["Language"];
+            model: string;
+            outcome: components["schemas"]["AiRecordOutcome"];
+            /** @description Internal stable code of why there is no suggestion (docs/ai-attempts.md). */
+            outcome_code: string | null;
+            provider: string;
+            state: components["schemas"]["AiAttemptState"];
+            suggestion: null | components["schemas"]["AiSuggestion"];
+        };
+        /** @description One submission in full, read-only. */
+        SubmissionDetail: {
+            ai: null | components["schemas"]["SubmissionAi"];
+            /** Format: date-time */
+            confirmation_deadline: string | null;
+            description: string;
+            /** @description Every event of the ticket, oldest first. */
+            events: components["schemas"]["SubmissionEvent"][];
+            intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            summary: components["schemas"]["SubmissionSummary"];
+        };
+        /**
+         * @description One immutable ticket event: transitions, assignment and priority changes,
+         *     and message events (which carry the message ID only, never its text).
+         */
+        SubmissionEvent: {
+            actor: null | components["schemas"]["EventActor"];
+            /** Format: date-time */
+            created_at: string;
+            event_type: string;
+            from_status: null | components["schemas"]["TicketStatus"];
+            /** Format: int64 */
+            id: number;
+            payload: Record<string, never>;
+            to_status: null | components["schemas"]["TicketStatus"];
+        };
+        /**
          * @description Immutable submission receipt. A replay returns the original submitted status;
          *     read `/api/tickets/{id}` for the current status.
          */
@@ -2855,6 +3003,49 @@ export interface components {
             /** Format: int64 */
             reference: number;
             status: components["schemas"]["TicketStatus"];
+        };
+        /**
+         * @description How a submission ended, from its status and closure provenance. Only
+         *     `ai_confirmed` is an AI resolution; an undecided or abandoned suggestion is
+         *     `open` or `cancelled`, never solved.
+         * @enum {string}
+         */
+        SubmissionResolution: "open" | "ai_confirmed" | "requester_confirmed" | "confirmation_timeout" | "cancelled";
+        /**
+         * @description How the submission entered: the `route` of its `submit` event.
+         * @enum {string}
+         */
+        SubmissionRoute: "ai" | "ai_disabled" | "category_exempt" | "requester_skip";
+        /** @description One submission in the Admin list. No ticket text beyond the subject. */
+        SubmissionSummary: {
+            ai_outcome: null | components["schemas"]["AiRecordOutcome"];
+            assignee_display_name: string | null;
+            /** Format: uuid */
+            category_id: string;
+            /** @description The category name frozen at submission. */
+            category_name: string;
+            closure_reason: null | components["schemas"]["ClosureReason"];
+            /**
+             * Format: date-time
+             * @description Submission time.
+             */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Current effective priority. */
+            priority_name: string;
+            /** Format: int64 */
+            reference: number;
+            requester: components["schemas"]["TicketRequester"];
+            resolution: components["schemas"]["SubmissionResolution"];
+            resolution_source: null | components["schemas"]["ResolutionSource"];
+            route: null | components["schemas"]["SubmissionRoute"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** @description `null`: the shared general queue, or never human work. */
+            team_name: string | null;
+            /** Format: date-time */
+            updated_at: string;
         };
         SubmitDraft: {
             /** Format: uuid */
@@ -3560,6 +3751,124 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_submissions: {
+        parameters: {
+            query?: {
+                /** @description The ticket's (frozen) category, archived ones included. */
+                category_id?: string;
+                /** @description Current ticket status. `draft` is not a submission and is rejected. */
+                status?: components["schemas"]["TicketStatus"];
+                resolution_source?: components["schemas"]["ResolutionSourceFilter"];
+                ai_outcome?: components["schemas"]["AiOutcomeFilter"];
+                /** @description Inclusive submission time, RFC 3339. */
+                created_from?: string;
+                /** @description Exclusive submission time, RFC 3339. */
+                created_before?: string;
+                /** @description Page size, 1-100 (default 25). */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SubmissionSummary"];
+                };
+            };
+            /** @description `invalid_query` (unknown filter value, `status=draft`, bad or empty date range) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`cursor`: `invalid_cursor`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submission_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionDetail"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing, or a draft) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
