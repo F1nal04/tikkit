@@ -93,7 +93,7 @@ CREATE FUNCTION retention_path(stack text, statement text, fn text) RETURNS bool
 LANGUAGE sql IMMUTABLE AS $$
     SELECT stack ~ ('^PL/pgSQL function [a-z_]+\(\) line \d+ at GET DIAGNOSTICS\n'
                     || 'SQL statement "' || statement || ' [^\n]*"\n'
-                    || 'PL/pgSQL function ' || fn || '\(uuid\) line \d+ at SQL statement(\n|$)')
+                    || 'PL/pgSQL function ' || fn || '\(uuid\) line \d+ at (SQL statement|RETURN QUERY)(\n|$)')
 $$;
 
 -- Replaces the function of migrations 0008/0023 with one more rule:
