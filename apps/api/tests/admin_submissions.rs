@@ -772,6 +772,28 @@ async fn unconfirmed_abandoned_and_failed_attempts_are_not_solved() {
 }
 
 #[tokio::test]
+async fn a_handed_off_attempt_keeps_its_outcome_when_the_ticket_is_cancelled_later() {
+    let Some(w) = world().await else { return };
+    let m = mixed(&w).await;
+    // Both tickets reached the help desk first; cancelling afterwards is not "abandoned".
+    for subject in ["failed", "not_solved"] {
+        let cancel = json!({ "action": "cancel", "reason": "No longer needed" });
+        let r = w.action(m.ids[subject], cancel, "owner").await;
+        assert_eq!(r.status, 200, "{}", r.body);
+    }
+    assert_eq!(w.subjects("ai_outcome=failed").await, ["failed"]);
+    assert_eq!(w.subjects("ai_outcome=not_solved").await, ["not_solved"]);
+    assert_eq!(w.subjects("ai_outcome=cancelled").await, ["abandoned"]);
+    let mut cancelled = w.subjects("status=cancelled").await;
+    cancelled.sort();
+    assert_eq!(cancelled, ["abandoned", "failed", "not_solved"]);
+    for item in w.list("status=cancelled").await {
+        assert_eq!(item["resolution"], "cancelled", "{item}");
+        assert_eq!(item["resolution_source"], Value::Null, "{item}");
+    }
+}
+
+#[tokio::test]
 async fn viewing_has_no_side_effects_and_returns_no_secrets() {
     let Some(w) = world().await else { return };
     let m = mixed(&w).await;
