@@ -66,6 +66,9 @@ pub struct Settings {
     pub trusted_proxies: TrustedProxies,
     /// Send `Strict-Transport-Security` (the portal is served over https).
     pub hsts: bool,
+    /// Deadline for one API request ([`crate::security::REQUEST_TIMEOUT`];
+    /// tests shorten it).
+    pub request_timeout: Duration,
     /// Origin for links in invitations and emails, without trailing slash.
     pub public_origin: String,
     /// Decrypts the stored SMTP password. Never logged.
@@ -83,6 +86,7 @@ impl fmt::Debug for Settings {
             .field("secure_cookie", &self.secure_cookie)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("hsts", &self.hsts)
+            .field("request_timeout", &self.request_timeout)
             .field("public_origin", &self.public_origin)
             .field("encryption_key", &"<redacted>")
             .field(
@@ -101,6 +105,7 @@ impl Default for Settings {
             secure_cookie: false,
             trusted_proxies: TrustedProxies::default(),
             hsts: false,
+            request_timeout: crate::security::REQUEST_TIMEOUT,
             public_origin: "http://localhost:3000".into(),
             encryption_key: [0; 32],
             smtp_trust_root_pem: None,
@@ -116,6 +121,7 @@ impl From<&Config> for Settings {
             secure_cookie: c.environment == Environment::Production,
             trusted_proxies: c.trusted_proxies.clone(),
             hsts: c.public_origin.scheme() == "https",
+            request_timeout: crate::security::REQUEST_TIMEOUT,
             public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
             encryption_key: c.encryption_key,
             smtp_trust_root_pem: None,

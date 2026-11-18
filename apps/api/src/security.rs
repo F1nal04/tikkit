@@ -219,11 +219,12 @@ pub async fn headers(State(hsts): State<bool>, request: Request, next: Next) -> 
 /// 30 s), so it only cuts off requests that are stuck or deliberately slow.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Ends a request still running after [`REQUEST_TIMEOUT`] with `503
+/// Ends a request still running after its deadline ([`REQUEST_TIMEOUT`] in
+/// production, `auth::Settings::request_timeout`) with `503
 /// request_timeout`. Dropping the handler rolls back its open transaction,
 /// exactly as when the client disconnects.
-pub async fn deadline(request: Request, next: Next) -> Response {
-    bounded(REQUEST_TIMEOUT, next.run(request)).await
+pub async fn deadline(State(limit): State<Duration>, request: Request, next: Next) -> Response {
+    bounded(limit, next.run(request)).await
 }
 
 async fn bounded(limit: Duration, response: impl Future<Output = Response>) -> Response {

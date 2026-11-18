@@ -762,3 +762,62 @@ async fn open_drafts_are_capped_per_account() {
     .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
 }
+
+#[tokio::test]
+async fn a_stuck_request_ends_at_the_deadline_and_commits_nothing() {
+    let Some(t) = TestDb::new().await else { return };
+    let p = &t.pool;
+    fixtures::bootstrap_admin(p).await;
+    let settings = Settings {
+        request_timeout: std::time::Duration::from_millis(300),
+        ..Settings::default()
+    };
+    let app = test_app_with(p, settings);
+    let admin = login(&app, "admin", PASSWORD).await.session();
+    let current = call(&app, "GET", "/api/admin/settings", None, Some(&admin))
+        .await
+        .body;
+    let mut changed = current.clone();
+    changed["name"] = json!("Changed while stuck");
+    // Another transaction holds the organization row, so the update blocks.
+    let mut holder = p.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM organization FOR UPDATE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let sent = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        call(
+            &app,
+            "PUT",
+            "/api/admin/settings",
+            Some(changed),
+            Some(&admin),
+        ),
+    )
+    .await
+    .expect("the deadline must answer while the request is still blocked");
+    assert_eq!(
+        sent.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        sent.body
+    );
+    assert_eq!(sent.code(), "request_timeout");
+    assert!(sent.body["request_id"].is_string());
+    holder.rollback().await.unwrap();
+    // The abandoned transaction is rolled back, never committed.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let name: String = sqlx::query_scalar("SELECT name FROM organization")
+        .fetch_one(p)
+        .await
+        .unwrap();
+    assert_eq!(json!(name), current["name"]);
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE event_type = 'organization_settings_updated'",
+    )
+    .fetch_one(p)
+    .await
+    .unwrap();
+    assert_eq!(audited, 0);
+}

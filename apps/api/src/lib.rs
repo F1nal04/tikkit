@@ -303,6 +303,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
     let throttle = |t: Throttle| axum::middleware::from_fn_with_state(t, security::throttle);
     let metrics = state.metrics.clone();
     let hsts = settings.hsts;
+    let request_timeout = settings.request_timeout;
     let routes = Router::new()
         .route("/api/health", get(health))
         .route("/api/ready", get(ready))
@@ -564,7 +565,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .layer(axum::middleware::from_fn(auth::csrf))
         .layer(Extension(Arc::new(auth::Auth::new(settings))))
         .with_state(state);
-    with_conventions(routes, metrics).layer(axum::middleware::from_fn_with_state(
+    with_conventions(routes, metrics, request_timeout).layer(axum::middleware::from_fn_with_state(
         hsts,
         security::headers,
     ))
@@ -572,10 +573,17 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
 
 /// Request IDs, tracing, panic safety, body limit, and the error envelope.
 /// Layers run outermost-last: the request ID is set before anything else.
-pub fn with_conventions(router: Router, metrics: metrics::Metrics) -> Router {
+pub fn with_conventions(
+    router: Router,
+    metrics: metrics::Metrics,
+    request_timeout: Duration,
+) -> Router {
     router
         .layer(DefaultBodyLimit::max(api::MAX_JSON_BODY))
-        .layer(axum::middleware::from_fn(security::deadline))
+        .layer(axum::middleware::from_fn_with_state(
+            request_timeout,
+            security::deadline,
+        ))
         .layer(CatchPanicLayer::custom(|_| {
             tracing::error!("request handler panicked");
             ApiError::Internal.into_response()
@@ -651,7 +659,7 @@ mod tests {
                     get(|| async { panic!("boom") as &'static str }),
                 )
                 .merge(super::app(lazy_state()));
-        super::with_conventions(routes, Default::default())
+        super::with_conventions(routes, Default::default(), super::security::REQUEST_TIMEOUT)
     }
 
     async fn send(request: Request<Body>) -> (Response, Value) {
