@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { API_ORIGIN } from '$app/env/private'
+import { API_ORIGIN, PROTOCOL_HEADER } from '$app/env/private'
 import { resolveLocale } from '#lib/i18n.ts'
 import type { Cookies, RequestEvent } from '@sveltejs/kit'
 import type { Handle, HandleFetch, HandleServerError } from '@sveltejs/kit/hooks'
@@ -24,7 +24,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     'cache-control': 'private, no-store',
     'x-request-id': event.locals.requestId,
     vary: 'Cookie, Accept-Language',
-    ...securityHeaders(event.url),
+    ...securityHeaders(event.url, PROTOCOL_HEADER !== ''),
   })
   let done = false
   const response = await resolve(event, {
@@ -42,9 +42,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 /**
  * Security headers on every rendered page (docs/security.md). The CSP itself
  * comes from SvelteKit (`csp` in vite.config.ts) because it carries the nonce.
- * HSTS only when the portal is served over https (`ORIGIN`).
+ * HSTS only when the request is known to be https: adapter-node takes the URL's
+ * protocol from `PROTOCOL_HEADER` (set by the trusted proxy) when configured and
+ * otherwise just assumes https, which proves nothing.
  */
-export function securityHeaders(url: URL): Record<string, string> {
+export function securityHeaders(url: URL, protocolFromProxy: boolean): Record<string, string> {
   const headers: Record<string, string> = {
     'referrer-policy': 'no-referrer',
     'x-content-type-options': 'nosniff',
@@ -53,7 +55,7 @@ export function securityHeaders(url: URL): Record<string, string> {
     'cross-origin-resource-policy': 'same-origin',
     'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
   }
-  if (url.protocol === 'https:') headers['strict-transport-security'] = 'max-age=31536000'
+  if (protocolFromProxy && url.protocol === 'https:') headers['strict-transport-security'] = 'max-age=31536000'
   return headers
 }
 

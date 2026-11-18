@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RequestEvent } from '@sveltejs/kit'
 import { handle, handleFetch, securityHeaders } from './hooks.server'
 
-vi.mock('$app/env/private', () => ({ API_ORIGIN: 'http://api.internal' }))
+vi.mock('$app/env/private', () => ({ API_ORIGIN: 'http://api.internal', PROTOCOL_HEADER: '' }))
 
 describe('SSR correlation', () => {
   it('shares a fresh request ID with same-origin API calls and safe request logs', async () => {
@@ -40,16 +40,19 @@ describe('SSR correlation', () => {
 })
 
 describe('page security headers', () => {
-  it('forbid framing and sniffing everywhere and send HSTS only over https', () => {
+  it('forbid framing and sniffing everywhere and send HSTS only for proxy-confirmed https', () => {
     for (const origin of ['http://127.0.0.1:3000', 'https://help.example.com']) {
-      const headers = securityHeaders(new URL('/tickets', origin))
-      expect(headers).toMatchObject({
-        'referrer-policy': 'no-referrer',
-        'x-content-type-options': 'nosniff',
-        'x-frame-options': 'DENY',
-        'cross-origin-opener-policy': 'same-origin',
-      })
-      expect('strict-transport-security' in headers).toBe(origin.startsWith('https:'))
+      for (const fromProxy of [false, true]) {
+        const headers = securityHeaders(new URL('/tickets', origin), fromProxy)
+        expect(headers).toMatchObject({
+          'referrer-policy': 'no-referrer',
+          'x-content-type-options': 'nosniff',
+          'x-frame-options': 'DENY',
+          'cross-origin-opener-policy': 'same-origin',
+        })
+        // Without PROTOCOL_HEADER the https URL is only adapter-node's assumption.
+        expect('strict-transport-security' in headers).toBe(fromProxy && origin.startsWith('https:'))
+      }
     }
   })
 

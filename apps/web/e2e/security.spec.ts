@@ -34,9 +34,9 @@ test('pages carry a nonce-based CSP and the other security headers', async ({ re
   expect(headers['cross-origin-opener-policy']).toBe('same-origin')
   expect(headers['permissions-policy']).toContain('camera=()')
   expect(headers['cache-control']).toBe('private, no-store')
-  // adapter-node takes the page origin as https://<Host> unless PROTOCOL_HEADER
-  // says otherwise, as behind the production TLS proxy; so HSTS is sent.
-  expect(headers['strict-transport-security']).toBe('max-age=31536000')
+  // adapter-node assumes https://<Host> without PROTOCOL_HEADER, which proves
+  // nothing about the connection: no HSTS (the test servers set no header).
+  expect(headers['strict-transport-security']).toBeUndefined()
 })
 
 test('the app hydrates and works under the CSP without a single violation', async ({ page }) => {
