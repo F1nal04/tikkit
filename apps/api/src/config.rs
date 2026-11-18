@@ -4,6 +4,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use sqlx::postgres::PgConnectOptions;
 use url::Url;
 
+use crate::security::TrustedProxies;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Environment {
     Development,
@@ -25,8 +27,8 @@ pub struct Config {
     pub session_ttl: Duration,
     /// Session age after which the token is rotated.
     pub session_rotate: Duration,
-    /// Take the client IP from `X-Forwarded-For` (only behind a trusted reverse proxy).
-    pub trust_proxy_headers: bool,
+    /// Peers (reverse proxy, SSR server) whose `X-Forwarded-For` is honoured.
+    pub trusted_proxies: TrustedProxies,
     /// Private directory for screenshot files (a persistent volume in production).
     pub screenshot_dir: PathBuf,
 }
@@ -58,7 +60,7 @@ impl fmt::Debug for Config {
             .field("environment", &self.environment)
             .field("session_ttl", &self.session_ttl)
             .field("session_rotate", &self.session_rotate)
-            .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("screenshot_dir", &self.screenshot_dir)
             .finish()
     }
@@ -176,12 +178,19 @@ impl Config {
         };
         let session_ttl = hours("SESSION_TTL_HOURS", 24 * 14, 24 * 365);
         let session_rotate = hours("SESSION_ROTATE_HOURS", 24, 24 * 365);
-        let trust_proxy_headers = match var("TRUST_PROXY_HEADERS").as_deref() {
-            None | Some("false") => false,
-            Some("true") => true,
-            Some(_) => {
-                fail("TRUST_PROXY_HEADERS must be `true` or `false`");
-                false
+        if var("TRUST_PROXY_HEADERS").is_some() {
+            fail(
+                "TRUST_PROXY_HEADERS was replaced by TRUSTED_PROXIES: list the reverse proxy's and SSR server's addresses or networks instead, e.g. TRUSTED_PROXIES=172.30.0.0/24",
+            );
+        }
+        let trusted_proxies = match var("TRUSTED_PROXIES").map(|v| v.parse()) {
+            None => TrustedProxies::default(),
+            Some(Ok(proxies)) => proxies,
+            Some(Err(())) => {
+                fail(
+                    "TRUSTED_PROXIES must be a comma-separated list of IP addresses or CIDR networks (not 0.0.0.0/0), e.g. 172.30.0.0/24",
+                );
+                TrustedProxies::default()
             }
         };
         let screenshot_dir =
@@ -208,7 +217,7 @@ impl Config {
                     environment,
                     session_ttl,
                     session_rotate,
-                    trust_proxy_headers,
+                    trusted_proxies,
                     screenshot_dir,
                 })
             }
@@ -265,7 +274,7 @@ mod tests {
         assert_eq!(c.session_secret.len(), 32);
         assert_eq!(c.session_ttl, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(c.session_rotate, Duration::from_secs(24 * 3600));
-        assert!(!c.trust_proxy_headers);
+        assert!(c.trusted_proxies.is_empty());
         assert_eq!(c.screenshot_dir, PathBuf::from("data/screenshots"));
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
@@ -285,10 +294,11 @@ mod tests {
             ("ENVIRONMENT", "staging"),
             ("SESSION_TTL_HOURS", "0"),
             ("SESSION_ROTATE_HOURS", "soon"),
-            ("TRUST_PROXY_HEADERS", "yes"),
+            ("TRUST_PROXY_HEADERS", "true"),
+            ("TRUSTED_PROXIES", "0.0.0.0/0"),
         ])
         .unwrap_err();
-        assert_eq!(err.0.len(), 12, "{err}");
+        assert_eq!(err.0.len(), 13, "{err}");
         let text = err.to_string();
         assert!(!text.contains("hunter2") && !text.contains("c2hvcnQ="));
     }
@@ -303,6 +313,13 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 4, "{err}");
+    }
+
+    #[test]
+    fn trusted_proxies_are_parsed() {
+        let c = config(&[("TRUSTED_PROXIES", "172.30.0.0/24,10.0.0.5")]).unwrap();
+        assert!(c.trusted_proxies.contains("172.30.0.200".parse().unwrap()));
+        assert!(!c.trusted_proxies.contains("172.31.0.1".parse().unwrap()));
     }
 
     #[test]

@@ -40,6 +40,7 @@ use crate::{
     AppState,
     api::{ApiError, FieldErrors, Json, Language, Role},
     config::{Config, Environment},
+    security::{Throttle, TrustedProxies, request_client_ip, same_origin},
 };
 
 pub const COOKIE_NAME: &str = "tikkit_session";
@@ -61,7 +62,10 @@ pub struct Settings {
     pub session_ttl: Duration,
     pub session_rotate: Duration,
     pub secure_cookie: bool,
-    pub trust_proxy_headers: bool,
+    /// Peers whose `X-Forwarded-For` is honoured (`TRUSTED_PROXIES`).
+    pub trusted_proxies: TrustedProxies,
+    /// Send `Strict-Transport-Security` (the portal is served over https).
+    pub hsts: bool,
     /// Origin for links in invitations and emails, without trailing slash.
     pub public_origin: String,
     /// Decrypts the stored SMTP password. Never logged.
@@ -77,7 +81,8 @@ impl fmt::Debug for Settings {
             .field("session_ttl", &self.session_ttl)
             .field("session_rotate", &self.session_rotate)
             .field("secure_cookie", &self.secure_cookie)
-            .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("trusted_proxies", &self.trusted_proxies)
+            .field("hsts", &self.hsts)
             .field("public_origin", &self.public_origin)
             .field("encryption_key", &"<redacted>")
             .field(
@@ -94,7 +99,8 @@ impl Default for Settings {
             session_ttl: Duration::from_secs(14 * 24 * 3600),
             session_rotate: Duration::from_secs(24 * 3600),
             secure_cookie: false,
-            trust_proxy_headers: false,
+            trusted_proxies: TrustedProxies::default(),
+            hsts: false,
             public_origin: "http://localhost:3000".into(),
             encryption_key: [0; 32],
             smtp_trust_root_pem: None,
@@ -108,7 +114,8 @@ impl From<&Config> for Settings {
             session_ttl: c.session_ttl,
             session_rotate: c.session_rotate,
             secure_cookie: c.environment == Environment::Production,
-            trust_proxy_headers: c.trust_proxy_headers,
+            trusted_proxies: c.trusted_proxies.clone(),
+            hsts: c.public_origin.scheme() == "https",
             public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
             encryption_key: c.encryption_key,
             smtp_trust_root_pem: None,
@@ -120,23 +127,43 @@ impl From<&Config> for Settings {
 pub struct Auth {
     pub(crate) settings: Settings,
     // ponytail: in-memory limiter, single process; move to Postgres/Redis if multi-instance
-    attempts: Mutex<HashMap<String, (Instant, u32)>>,
+    attempts: Limiter,
+    /// Per-account route budgets ([`crate::security::Throttle`]), kept apart so
+    /// they can never fill the table that guards sign-in.
+    actions: Limiter,
 }
+
+/// Fixed-window counters keyed by string, bounded to [`LIMIT_MAX_KEYS`] live keys.
+#[derive(Default)]
+struct Limiter(Mutex<HashMap<String, (Instant, u32)>>);
 
 impl Auth {
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
-            attempts: Mutex::default(),
+            attempts: Limiter::default(),
+            actions: Limiter::default(),
         }
     }
 
-    /// Fixed-window counters; every listed key counts the attempt.
+    fn hit(&self, key: String, max: u32) -> Result<(), ApiError> {
+        self.attempts.hit(key, max)
+    }
+
+    /// One request against `throttle`'s per-minute budget for `account`.
+    pub(crate) fn limit_account(&self, throttle: Throttle, account: Uuid) -> Result<(), ApiError> {
+        let (scope, max) = throttle.budget();
+        self.actions
+            .hit(format!("{scope}:{}", account.simple()), max)
+    }
+}
+
+impl Limiter {
     /// One fixed-window counter. When the table is full of live keys, new keys
     /// are refused rather than growing memory without bound.
     fn hit(&self, key: String, max: u32) -> Result<(), ApiError> {
         let now = Instant::now();
-        let mut attempts = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut attempts = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if attempts.len() >= LIMIT_MAX_KEYS {
             attempts.retain(|_, (start, _)| now - *start < LIMIT_WINDOW);
             if attempts.len() >= LIMIT_MAX_KEYS && !attempts.contains_key(&key) {
@@ -154,7 +181,9 @@ impl Auth {
         }
         Ok(())
     }
+}
 
+impl Auth {
     /// Whether another denied `action` of `account` on `ticket` may still be
     /// written to the audit log in this window. Repeats beyond it change nothing
     /// for the caller; they are just not recorded again.
@@ -248,8 +277,9 @@ impl<S: Send + Sync> OptionalFromRequestParts<S> for CurrentUser {
     }
 }
 
-/// Client address (from the socket, or the last `X-Forwarded-For` hop when
-/// `TRUST_PROXY_HEADERS=true`) and user agent, for rate limits and session records.
+/// Client address (the socket peer, or the client a `TRUSTED_PROXIES` peer
+/// forwarded for; see [`TrustedProxies::client_ip`]) and user agent, for rate
+/// limits, session records, and audit events.
 pub struct Client {
     pub(crate) ip: Option<String>,
     user_agent: Option<String>,
@@ -259,21 +289,14 @@ impl<S: Send + Sync> FromRequestParts<S> for Client {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        let trust_proxy = parts
+        let none = TrustedProxies::default();
+        let trusted = parts
             .extensions
             .get::<Arc<Auth>>()
-            .is_some_and(|a| a.settings.trust_proxy_headers);
+            .map_or(&none, |a| &a.settings.trusted_proxies);
+        let connect = parts.extensions.get::<ConnectInfo<SocketAddr>>();
+        let ip = request_client_ip(&parts.headers, connect, trusted).map(|ip| ip.to_string());
         let header = |name| parts.headers.get(name).and_then(|v| v.to_str().ok());
-        let forwarded = trust_proxy
-            .then(|| header("x-forwarded-for")?.rsplit(',').next())
-            .flatten()
-            .map(|ip| ip.trim().to_owned());
-        let ip = forwarded.or_else(|| {
-            parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|c| c.0.ip().to_string())
-        });
         let user_agent = header(USER_AGENT.as_str()).map(|ua| ua.chars().take(256).collect());
         Ok(Self { ip, user_agent })
     }
@@ -434,9 +457,11 @@ async fn resolve(
     )))
 }
 
-/// Rejects state-changing requests that lack `X-Requested-With: tikkit`. Browsers
-/// cannot add custom headers cross-site without a CORS preflight, which we never grant.
-pub async fn csrf(request: Request, next: Next) -> Response {
+/// Rejects state-changing requests that lack `X-Requested-With: tikkit`, or
+/// whose browser metadata (`Origin`, `Sec-Fetch-Site`) names another site than
+/// `PUBLIC_ORIGIN`. Browsers cannot add custom headers cross-site without a
+/// CORS preflight, which we never grant; the origin check is the second layer.
+pub async fn csrf(Extension(auth): Extension<Arc<Auth>>, request: Request, next: Next) -> Response {
     let safe = matches!(
         *request.method(),
         Method::GET | Method::HEAD | Method::OPTIONS
@@ -444,7 +469,8 @@ pub async fn csrf(request: Request, next: Next) -> Response {
     let ok = request
         .headers()
         .get(CSRF_HEADER)
-        .is_some_and(|v| v == CSRF_VALUE);
+        .is_some_and(|v| v == CSRF_VALUE)
+        && same_origin(request.headers(), &auth.settings.public_origin);
     if !safe && !ok {
         return ApiError::CsrfRejected.into_response();
     }
@@ -1072,14 +1098,14 @@ mod tests {
             );
         }
         assert!(auth.limit_attempt("login", &client, "fresh").is_err());
-        let keys = auth.attempts.lock().unwrap().len();
+        let keys = auth.attempts.0.lock().unwrap().len();
         assert_eq!(
             keys as u32,
             1 + LIMIT_PER_IP,
             "a blocked IP adds no username key"
         );
 
-        let live = auth.attempts.lock().unwrap().len();
+        let live = auth.attempts.0.lock().unwrap().len();
         for i in live..LIMIT_MAX_KEYS {
             auth.hit(format!("k{i}"), 1).unwrap();
         }

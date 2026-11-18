@@ -44,6 +44,7 @@ pub mod queues;
 pub mod reports;
 pub mod retention;
 pub mod screenshots;
+pub mod security;
 pub mod smtp;
 pub mod submission;
 pub mod submissions;
@@ -87,7 +88,8 @@ impl AppState {
         description = "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; \
                        lists use `limit`/`cursor` and return a Page. Authentication is the \
                        HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send \
-                       `X-Requested-With: tikkit` or is rejected with 403 `csrf_rejected` (docs/auth.md)."
+                       `X-Requested-With: tikkit` and, from a browser, come from the portal's own \
+                       origin, or is rejected with 403 `csrf_rejected` (docs/security.md)."
     ),
     paths(
         health,
@@ -297,7 +299,10 @@ pub fn app(state: AppState) -> Router {
 }
 
 pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
+    use security::Throttle;
+    let throttle = |t: Throttle| axum::middleware::from_fn_with_state(t, security::throttle);
     let metrics = state.metrics.clone();
+    let hsts = settings.hsts;
     let routes = Router::new()
         .route("/api/health", get(health))
         .route("/api/ready", get(ready))
@@ -364,7 +369,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
                 .put(smtp::put_smtp)
                 .delete(smtp::delete_smtp),
         )
-        .route("/api/settings/smtp/test", post(smtp::test_smtp))
+        .route(
+            "/api/settings/smtp/test",
+            post(smtp::test_smtp).layer(throttle(Throttle::ConnectionTest)),
+        )
         .route(
             "/api/settings/ai",
             get(ai_config::get_ai).put(ai_config::put_ai),
@@ -373,7 +381,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/settings/ai/credentials/{provider}",
             put(ai_config::put_credential).delete(ai_config::delete_credential),
         )
-        .route("/api/settings/ai/test", post(ai_config::test_ai))
+        .route(
+            "/api/settings/ai/test",
+            post(ai_config::test_ai).layer(throttle(Throttle::ConnectionTest)),
+        )
         .route(
             "/api/settings/ai/limits",
             get(ai_usage::get_limits).put(ai_usage::put_limits),
@@ -382,7 +393,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/admin/ai/records", get(ai_records::records))
         .route("/api/admin/ai/outcomes", get(ai_records::outcomes))
         .route("/api/admin/reports", get(reports::get_report))
-        .route("/api/admin/reports/export", post(reports::export_report))
+        .route(
+            "/api/admin/reports/export",
+            post(reports::export_report).layer(throttle(Throttle::Export)),
+        )
         .route("/api/admin/submissions", get(submissions::list_submissions))
         .route(
             "/api/admin/submissions/{id}",
@@ -390,7 +404,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route("/api/admin/audit", get(audit::search))
         .route("/api/admin/audit/actions", get(audit::actions))
-        .route("/api/admin/audit/export", post(audit::export))
+        .route(
+            "/api/admin/audit/export",
+            post(audit::export).layer(throttle(Throttle::Export)),
+        )
         .route(
             "/api/admin/retention",
             get(retention::get_retention).put(retention::put_retention),
@@ -435,21 +452,23 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/tickets",
-            get(tickets::list_own_tickets).post(submission::submit_ticket),
+            get(tickets::list_own_tickets)
+                .merge(post(submission::submit_ticket).layer(throttle(Throttle::Submission))),
         )
         .route(
             "/api/ticket-drafts",
-            get(submission::list_drafts).post(submission::create_draft),
+            get(submission::list_drafts)
+                .merge(post(submission::create_draft).layer(throttle(Throttle::Draft))),
         )
         .route(
             "/api/ticket-drafts/{id}",
             get(submission::get_draft)
-                .patch(submission::update_draft)
+                .merge(patch(submission::update_draft).layer(throttle(Throttle::Draft)))
                 .delete(submission::delete_draft),
         )
         .route(
             "/api/ticket-drafts/{id}/submit",
-            post(submission::submit_draft),
+            post(submission::submit_draft).layer(throttle(Throttle::Submission)),
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .route("/api/tickets/{id}/actions", post(tickets::requester_action))
@@ -472,15 +491,21 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/tickets/{id}/replies",
-            post(messages::reply).layer(axum::middleware::map_response(api::private_response)),
+            post(messages::reply)
+                .layer(axum::middleware::map_response(api::private_response))
+                .layer(throttle(Throttle::Message)),
         )
         .route(
             "/api/tickets/{id}/notes",
-            post(messages::note).layer(axum::middleware::map_response(api::private_response)),
+            post(messages::note)
+                .layer(axum::middleware::map_response(api::private_response))
+                .layer(throttle(Throttle::Message)),
         )
         .route(
             "/api/screenshots",
-            post(screenshots::upload).layer(DefaultBodyLimit::max(screenshots::MAX_BYTES)),
+            post(screenshots::upload)
+                .layer(DefaultBodyLimit::max(screenshots::MAX_BYTES))
+                .layer(throttle(Throttle::Upload)),
         )
         .route(
             "/api/screenshots/{id}",
@@ -517,7 +542,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/admin/notifications/retry",
             post(notifications::retry_failed),
         )
-        .route("/api/queue", get(queues::list_queue))
+        .route(
+            "/api/queue",
+            get(queues::list_queue).layer(throttle(Throttle::Search)),
+        )
         .route("/api/queue/counts", get(queues::queue_counts))
         .route("/api/queue/bulk-options", get(bulk::bulk_options))
         .route("/api/tickets/bulk", post(bulk::bulk_change))
@@ -536,7 +564,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .layer(axum::middleware::from_fn(auth::csrf))
         .layer(Extension(Arc::new(auth::Auth::new(settings))))
         .with_state(state);
-    with_conventions(routes, metrics)
+    with_conventions(routes, metrics).layer(axum::middleware::from_fn_with_state(
+        hsts,
+        security::headers,
+    ))
 }
 
 /// Request IDs, tracing, panic safety, body limit, and the error envelope.
@@ -544,6 +575,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
 pub fn with_conventions(router: Router, metrics: metrics::Metrics) -> Router {
     router
         .layer(DefaultBodyLimit::max(api::MAX_JSON_BODY))
+        .layer(axum::middleware::from_fn(security::deadline))
         .layer(CatchPanicLayer::custom(|_| {
             tracing::error!("request handler panicked");
             ApiError::Internal.into_response()
