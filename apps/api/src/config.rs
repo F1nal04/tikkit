@@ -190,7 +190,7 @@ impl Config {
             Some(Ok(proxies)) => proxies,
             Some(Err(())) => {
                 fail(
-                    "TRUSTED_PROXIES must be a comma-separated list of IP addresses or CIDR networks (not 0.0.0.0/0), e.g. 172.30.0.0/24",
+                    "TRUSTED_PROXIES must be a comma-separated list of IP addresses or CIDR networks no wider than /8 (IPv4) or /16 (IPv6), e.g. 172.30.0.0/24",
                 );
                 TrustedProxies::default()
             }

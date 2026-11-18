@@ -39,6 +39,10 @@ impl FromStr for TrustedProxies {
     type Err = ();
 
     /// Comma-separated IP addresses or CIDR networks, e.g. `172.30.0.0/24, 10.0.0.5`.
+    /// Networks wider than [`MIN_PREFIX_V4`] / [`MIN_PREFIX_V6`] are refused: a
+    /// proxy tier never needs them, and two halves of the address space would
+    /// trust every client's own header. IPv4-mapped IPv6 networks
+    /// (`::ffff:10.0.0.0/104`) are stored as the IPv4 network they denote.
     fn from_str(value: &str) -> Result<Self, ()> {
         let mut nets = Vec::new();
         for item in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -55,15 +59,31 @@ impl FromStr for TrustedProxies {
             if prefix > max {
                 return Err(());
             }
-            // A catch-all would trust every client's own header.
-            if prefix == 0 {
+            let (ip, prefix) = match ip {
+                IpAddr::V6(v6) if v6.to_ipv4_mapped().is_some() => {
+                    // The mapped prefix covers the 96 bits of `::ffff:`.
+                    let prefix = prefix.checked_sub(96).ok_or(())?;
+                    (canonical(ip), prefix)
+                }
+                ip => (ip, prefix),
+            };
+            let min = if ip.is_ipv4() {
+                MIN_PREFIX_V4
+            } else {
+                MIN_PREFIX_V6
+            };
+            if prefix < min {
                 return Err(());
             }
-            nets.push((canonical(ip), prefix));
+            nets.push((ip, prefix));
         }
         Ok(Self(nets))
     }
 }
+
+/// Narrowest allowed `TRUSTED_PROXIES` networks: IPv4 /8, IPv6 /16.
+pub const MIN_PREFIX_V4: u8 = 8;
+pub const MIN_PREFIX_V6: u8 = 16;
 
 impl TrustedProxies {
     pub fn is_empty(&self) -> bool {
@@ -97,18 +117,31 @@ impl TrustedProxies {
         }
         let mut client = peer;
         for hop in forwarded_for.iter().rev().flat_map(|h| h.rsplit(',')) {
-            match hop.trim().parse::<IpAddr>() {
-                Ok(ip) => {
+            match forwarded_address(hop) {
+                Some(ip) => {
                     client = canonical(ip);
                     if !self.contains(client) {
                         break;
                     }
                 }
-                Err(_) => break,
+                None => break,
             }
         }
         Some(client)
     }
+}
+
+/// One `X-Forwarded-For` entry: a bare address, or one with a port
+/// (`1.2.3.4:5678`, `[::1]:5678`, `[::1]`) as some proxies write it.
+fn forwarded_address(hop: &str) -> Option<IpAddr> {
+    let hop = hop.trim();
+    if let Ok(ip) = hop.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if let Ok(socket) = hop.parse::<SocketAddr>() {
+        return Some(socket.ip());
+    }
+    hop.strip_prefix('[')?.strip_suffix(']')?.parse().ok()
 }
 
 /// IPv4-mapped IPv6 (`::ffff:a.b.c.d`) is the IPv4 address it carries.
@@ -260,7 +293,7 @@ mod tests {
 
     #[test]
     fn trusted_proxies_parse_addresses_and_networks() {
-        let t: TrustedProxies = "172.30.0.0/24, 10.0.0.5 ,fd00::/8".parse().unwrap();
+        let t: TrustedProxies = "172.30.0.0/24, 10.0.0.5 ,fd12::/16".parse().unwrap();
         assert!(t.contains(ip("172.30.0.9")) && !t.contains(ip("172.30.1.9")));
         assert!(t.contains(ip("10.0.0.5")) && !t.contains(ip("10.0.0.6")));
         assert!(t.contains(ip("fd12::1")) && !t.contains(ip("fe80::1")));
@@ -311,6 +344,23 @@ mod tests {
             Some(ip("172.30.0.7"))
         );
         assert_eq!(t.client_ip(caddy, &[]), caddy);
+        // Entries with ports still name their client, so clients keep separate buckets.
+        assert_eq!(
+            t.client_ip(caddy, &["198.51.100.1:5678"]),
+            Some(ip("198.51.100.1"))
+        );
+        assert_eq!(
+            t.client_ip(caddy, &["[2001:db8::7]:5678"]),
+            Some(ip("2001:db8::7"))
+        );
+        assert_eq!(
+            t.client_ip(caddy, &["[2001:db8::8]"]),
+            Some(ip("2001:db8::8"))
+        );
+        assert_eq!(
+            t.client_ip(caddy, &["198.51.100.1, 172.30.0.9:80"]),
+            Some(ip("198.51.100.1"))
+        );
         assert_eq!(t.client_ip(None, &["198.51.100.1"]), None);
     }
 
