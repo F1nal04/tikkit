@@ -284,7 +284,7 @@ export default {
     stateUnsaved: 'Entwurf, noch nicht gespeichert. Nichts wurde an den Support gesendet.',
     stateSaving: 'Entwurf wird gespeichert…',
     stateSaved: 'Entwurf um {time} gespeichert. Er wurde noch nicht an den Support gesendet.',
-    stateFailed: 'Der Entwurf konnte nicht gespeichert werden. Ihre Eingaben bleiben auf dieser Seite; das Speichern wird bei weiteren Eingaben erneut versucht.',
+    stateFailed: 'Der Entwurf konnte nicht gespeichert werden. Ihre Eingaben bleiben auf dieser Seite; das Speichern wird in wenigen Sekunden erneut versucht.',
     category: 'Kategorie',
     categoryPlaceholder: 'Kategorie wählen',
     subject: 'Betreff',

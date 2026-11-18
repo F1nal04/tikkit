@@ -114,6 +114,30 @@ test('the German interface shows the same form', async ({ page }) => {
   await expect(page.getByText('Dieses Feld ist erforderlich.').first()).toBeVisible()
 })
 
+test('a refused autosave (429) keeps the input and saves again on its own', async ({ page }) => {
+  await open(page)
+  let refused = 0
+  await page.route('**/api/ticket-drafts', async (route) => {
+    if (route.request().method() === 'POST' && refused === 0) {
+      refused++
+      return route.fulfill({
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '3' },
+        body: JSON.stringify({ error: { code: 'rate_limited', message: 'Too many attempts; try again later.' }, request_id: 'x' }),
+      })
+    }
+    return route.fallback()
+  })
+  await page.getByLabel('Subject').fill('Printer jams')
+  await page.getByLabel('Description').fill('Paper stuck in tray 2.')
+  await expect(page.getByRole('status').filter({ hasText: 'could not be saved' })).toBeVisible()
+  await expect(page.getByLabel('Description')).toHaveValue('Paper stuck in tray 2.')
+  // No further typing: the retry saves the same input.
+  await expect(page.getByText(/Draft saved at/)).toBeVisible({ timeout: 15_000 })
+  expect(refused).toBe(1)
+  await expect.poll(async () => (await drafts(page)).items[0]?.intake.description).toBe('Paper stuck in tray 2.')
+})
+
 test('draft recovery: autosaves, resumes after a reload, and keeps text when the category was archived', async ({ page }) => {
   await open(page)
   await page.getByLabel('Subject').fill('Printer jams')

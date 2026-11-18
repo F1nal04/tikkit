@@ -283,7 +283,7 @@ export default {
     stateUnsaved: 'Draft, not saved yet. Nothing has been sent to support.',
     stateSaving: 'Saving draft…',
     stateSaved: 'Draft saved at {time}. It has not been sent to support yet.',
-    stateFailed: 'The draft could not be saved. Your input stays on this page and saving is retried when you keep typing.',
+    stateFailed: 'The draft could not be saved. Your input stays on this page and saving is tried again in a few seconds.',
     category: 'Category',
     categoryPlaceholder: 'Choose a category',
     subject: 'Subject',
