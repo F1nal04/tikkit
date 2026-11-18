@@ -411,6 +411,7 @@ pub async fn upload(
     let filename =
         normalize_filename(params.filename.as_deref(), kind).map_err(|c| field("filename", c))?;
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     // Share the quota across API processes, not just the decoding semaphore.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext('screenshot_upload'), hashtext($1))")
         .bind(user.account_id().to_string())

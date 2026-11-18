@@ -590,7 +590,15 @@ pub async fn request_recovery(
     .bind(found.as_ref().map_or(Uuid::nil(), |f| f.0))
     .fetch_one(&mut *tx)
     .await?;
-    let found = found.filter(|_| !cooling);
+    let mut found = found.filter(|_| !cooling);
+    // Deactivated since the lookup: as if the username were unknown.
+    if let Some((id, ..)) = &found
+        && crate::auth::lock_active_account(&mut tx, *id)
+            .await
+            .is_err()
+    {
+        found = None;
+    }
     let recovery_hash = token_hash(&token);
     if let Some((id, ..)) = &found {
         sqlx::query(&format!(
@@ -705,6 +713,9 @@ pub async fn reset_password(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::ResetTokenInvalid)?;
+    crate::auth::lock_active_account(&mut tx, account_id)
+        .await
+        .map_err(|_| ApiError::ResetTokenInvalid)?;
     // Rejected here, the transaction rolls back and the token stays usable.
     check_password(&body.new_password, &username.trim().to_lowercase())
         .map_err(|code| field_error("new_password", code))?;
@@ -763,6 +774,9 @@ pub async fn update_profile(
         .filter_map(|(name, set)| set.then_some(name))
         .collect();
     let mut tx = state.pool.begin().await?;
+    // The session was checked before this transaction; the account may have
+    // been deactivated and anonymized since.
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     sqlx::query(
         "UPDATE accounts SET email = coalesce($2, email), language = coalesce($3, language)
          WHERE id = $1",

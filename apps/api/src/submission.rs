@@ -214,6 +214,7 @@ pub async fn create_draft(
 ) -> Result<(StatusCode, Json<Draft>), ApiError> {
     body.validate(false)?;
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     screenshots::keep_pending(&mut tx, user.account_id(), &body.screenshot_ids).await?;
     let draft: Draft = sqlx::query_as(&format!("INSERT INTO ticket_drafts (requester_account_id, intake) VALUES ($1, $2) RETURNING {DRAFT_COLUMNS}"))
         .bind(user.account_id()).bind(sqlx::types::Json(body)).fetch_one(&mut *tx).await?;
@@ -285,6 +286,7 @@ pub async fn update_draft(
     Json(body): Json<DraftUpdate>,
 ) -> Result<Json<Draft>, ApiError> {
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     lock_draft(&mut tx, user.account_id(), id, body.version).await?;
     body.intake.validate(false)?;
     screenshots::keep_pending(&mut tx, user.account_id(), &body.intake.screenshot_ids).await?;

@@ -440,12 +440,21 @@ pub async fn update_notification_preferences(
     user: CurrentUser,
     Json(body): Json<NotificationPreferences>,
 ) -> Result<Json<NotificationPreferences>, ApiError> {
-    sqlx::query("UPDATE accounts SET notify_email = $2, notify_in_app = $3 WHERE id = $1")
-        .bind(user.account_id())
-        .bind(body.email)
-        .bind(body.in_app)
-        .execute(&state.pool)
-        .await?;
+    // One statement: it waits for a concurrent anonymization and then finds
+    // the account inactive (docs/retention.md, the account write protocol).
+    let saved = sqlx::query(
+        "UPDATE accounts SET notify_email = $2, notify_in_app = $3
+         WHERE id = $1 AND is_active AND anonymized_at IS NULL",
+    )
+    .bind(user.account_id())
+    .bind(body.email)
+    .bind(body.in_app)
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    if saved == 0 {
+        return Err(ApiError::Unauthorized);
+    }
     Ok(Json(body))
 }
 

@@ -2190,3 +2190,234 @@ async fn work_is_bounded_per_transaction() {
     let done = w.run_counts(run).await;
     assert_eq!((done.ticket_content, done.audit_events), (3, 3));
 }
+
+/// The session of `who` as a handler sees it after authentication.
+async fn authenticated(w: &World, who: &str) -> tikkit_api::auth::CurrentUser {
+    let (session_id, username, email): (Uuid, String, String) = sqlx::query_as(
+        "SELECT s.id, a.username, a.email FROM sessions s JOIN accounts a ON a.id = s.account_id
+         WHERE a.id = $1 ORDER BY s.created_at DESC LIMIT 1",
+    )
+    .bind(w.ids[who])
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    tikkit_api::auth::CurrentUser {
+        session_id,
+        account: tikkit_api::auth::Account {
+            id: w.ids[who],
+            display_name: username.clone(),
+            username,
+            email,
+            role: Role::User,
+            language: tikkit_api::api::Language::En,
+        },
+    }
+}
+
+async fn anonymize(w: &World, who: &str) -> Reply {
+    let id = w.ids[who];
+    let r = w
+        .send(
+            "POST",
+            &format!("/api/accounts/{id}/deactivate"),
+            json!({}),
+            "admin",
+        )
+        .await;
+    assert_eq!(r.status, 204, "{}", r.body);
+    let path = format!("/api/admin/accounts/{id}/anonymize");
+    w.send("POST", &path, json!({ "username": who }), "admin")
+        .await
+}
+
+/// A request that passed session authentication while the account was active
+/// must not write personal data after the account was erased.
+#[tokio::test]
+async fn an_in_flight_request_cannot_restore_erased_personal_data() {
+    use axum::extract::State;
+    use tikkit_api::api::{ApiError, Json};
+    let Some(w) = world().await else { return };
+    let state = support::test_state(w.pool());
+    let owner = w.ids["owner"];
+    // Authenticated: the handler has its CurrentUser. Then the account is
+    // deactivated and anonymized, and both commit.
+    let user = authenticated(&w, "owner").await;
+    let r = anonymize(&w, "owner").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // Now the in-flight handlers reach their write.
+    let profile = tikkit_api::accounts::UpdateProfileRequest {
+        email: Some("owner@example.com".into()),
+        language: None,
+    };
+    let result = tikkit_api::accounts::update_profile(
+        State(state.clone()),
+        tikkit_api::auth::CurrentUser {
+            session_id: user.session_id,
+            account: tikkit_api::auth::Account {
+                id: owner,
+                username: "owner".into(),
+                display_name: "owner".into(),
+                email: "shared@example.com".into(),
+                role: Role::User,
+                language: tikkit_api::api::Language::En,
+            },
+        },
+        Json(profile),
+    )
+    .await;
+    assert!(matches!(result, Err(ApiError::Unauthorized)));
+    let intake: tikkit_api::submission::TicketIntake =
+        serde_json::from_value(json!({ "subject": "My name is on this" })).unwrap();
+    let result =
+        tikkit_api::submission::create_draft(State(state.clone()), user, Json(intake)).await;
+    assert!(matches!(result, Err(ApiError::Unauthorized)));
+
+    let account: Value = w
+        .scalar("SELECT to_jsonb(a) FROM accounts a WHERE a.id = $1", owner)
+        .await;
+    assert_eq!(account["email"], "", "the erased email is not written back");
+    let drafts: i64 = w
+        .scalar(
+            "SELECT count(*) FROM ticket_drafts WHERE requester_account_id = $1",
+            owner,
+        )
+        .await;
+    assert_eq!(drafts, 0);
+    assert_eq!(w.audit("profile_updated").await.len(), 0);
+    // The lock itself, for every other writer that uses it.
+    let mut db = w.pool().acquire().await.unwrap();
+    assert!(
+        tikkit_api::auth::lock_active_account(&mut db, owner)
+            .await
+            .is_err()
+    );
+    assert!(
+        tikkit_api::auth::lock_active_account(&mut db, w.ids["op"])
+            .await
+            .is_ok()
+    );
+}
+
+/// The other order: the write holds the account first. The erasure waits for
+/// it and then removes what it wrote.
+#[tokio::test]
+async fn anonymization_waits_for_a_write_that_holds_the_account() {
+    let Some(w) = world().await else { return };
+    let owner = w.ids["owner"];
+    let mut writer = w.pool().begin().await.unwrap();
+    tikkit_api::auth::lock_active_account(&mut writer, owner)
+        .await
+        .unwrap();
+
+    let (app, cookie) = (w.app.clone(), w.cookies["admin"].clone());
+    let erase = tokio::spawn(async move {
+        let path = format!("/api/accounts/{owner}/deactivate");
+        let r = call(&app, "POST", &path, Some(json!({})), Some(&cookie)).await;
+        assert_eq!(r.status, 204, "{}", r.body);
+        let path = format!("/api/admin/accounts/{owner}/anonymize");
+        call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "username": "owner" })),
+            Some(&cookie),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!erase.is_finished(), "the erasure waits for the writer");
+
+    // The writer stores a draft and an email, and commits.
+    sqlx::query("INSERT INTO ticket_drafts (requester_account_id, intake) VALUES ($1, '{}')")
+        .bind(owner)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE accounts SET email = 'late@example.com' WHERE id = $1")
+        .bind(owner)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    writer.commit().await.unwrap();
+
+    let r = erase.await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["drafts"], 1, "the late draft was seen and deleted");
+    let account: Value = w
+        .scalar("SELECT to_jsonb(a) FROM accounts a WHERE a.id = $1", owner)
+        .await;
+    assert_eq!(account["email"], "");
+    assert_eq!(w.count("SELECT count(*) FROM ticket_drafts").await, 0);
+}
+
+#[tokio::test]
+async fn the_placeholder_namespace_is_reserved_and_a_collision_cannot_block_erasure() {
+    let Some(w) = world().await else { return };
+    // No account can be registered under the reserved prefix.
+    for username in ["anonymized-abc", "Anonymized-ABC", "ANONYMIZED-1"] {
+        let token = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO invitations (token_hash, role, created_by, expires_at)
+             VALUES (sha256(convert_to($1, 'UTF8')), 'user', $2, now() + interval '1 day')",
+        )
+        .bind(&token)
+        .bind(w.ids["admin"])
+        .execute(w.pool())
+        .await
+        .unwrap();
+        let body = json!({ "token": token, "username": username, "email": "shared@example.com",
+                           "password": PASSWORD, "language": "en" });
+        let r = call(&w.app, "POST", "/api/invitations/accept", Some(body), None).await;
+        assert_eq!(r.status, 422, "{username}: {}", r.body);
+        assert_eq!(
+            r.body["error"]["details"]["fields"]["username"],
+            json!(["reserved"])
+        );
+    }
+    // Nor by any other path: the database refuses it.
+    let error = sqlx::query(
+        "INSERT INTO accounts (username, display_name, email, password_hash)
+         VALUES ('Anonymized-x', 'x', 'x@example.com', 'x')",
+    )
+    .execute(w.pool())
+    .await
+    .unwrap_err();
+    assert_eq!(error.as_database_error().unwrap().code().unwrap(), "23514");
+    let error = sqlx::query("UPDATE accounts SET username = 'anonymized-y' WHERE id = $1")
+        .bind(w.ids["op"])
+        .execute(w.pool())
+        .await
+        .unwrap_err();
+    assert_eq!(error.as_database_error().unwrap().code().unwrap(), "23514");
+
+    // A name taken before the rule existed (an upgraded installation) is in
+    // the way of two placeholders. Erasure takes the next free one.
+    let owner = w.ids["owner"];
+    let base = format!("anonymized-{}", owner.simple());
+    for sql in [
+        "ALTER TABLE accounts DROP CONSTRAINT accounts_username_reserved".to_owned(),
+        format!(
+            "INSERT INTO accounts (username, display_name, email, password_hash)
+             VALUES ('{base}', 'squatter', 's@example.com', 'x'), ('{base}-1', 'squatter', 's@example.com', 'x')"
+        ),
+        "ALTER TABLE accounts ADD CONSTRAINT accounts_username_reserved
+             CHECK (anonymized_at IS NOT NULL OR username_normalized NOT LIKE 'anonymized-%') NOT VALID"
+            .to_owned(),
+    ] {
+        sqlx::query(&sql).execute(w.pool()).await.unwrap();
+    }
+    let r = anonymize(&w, "owner").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["username"], json!(format!("{base}-2")));
+    let stored: String = w
+        .scalar("SELECT username FROM accounts WHERE id = $1", owner)
+        .await;
+    assert_eq!(stored, format!("{base}-2"));
+    // The squatters are other accounts and untouched.
+    assert_eq!(
+        w.count("SELECT count(*) FROM accounts WHERE display_name = 'squatter' AND anonymized_at IS NULL")
+            .await,
+        2
+    );
+}
