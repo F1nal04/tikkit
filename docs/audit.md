@@ -48,9 +48,13 @@ issue requires it) and catalog item names in catalog events.
   deadline, and timeout, without its summary. **A new ticket event payload key
   reaches the audit log only after it is added to that list**; add only
   identifiers, codes, and settings.
-- `audit::record` replaces string values under keys containing `password`,
-  `token`, `secret`, `api_key`, `authorization`, or `cookie` with `[redacted]`.
-  This is a backstop, not permission to pass secrets.
+- `audit::record` replaces whatever sits under a key containing (in any
+  casing) `password`, `pass`, `pwd`, `token`, `secret`, `api_key`,
+  `private_key`, `credential`, `bearer`, `authorization`, or `cookie` with
+  `[redacted]`: strings, lists, and nested objects alike. Booleans and numbers
+  under such keys stay, so flags (`password_changed: true`,
+  `credential_replaced`) and numeric settings (`org_token_limit`) remain
+  readable. This is a backstop, not permission to pass secrets.
 
 ## Writing events
 
@@ -107,6 +111,7 @@ allow-listed payload plus `from_status`, `to_status`, `ticket_event_id`, and:
 | `ticket_submit` | `route` (the effective routing reason), `category_id`, and the requester's original `priority_id` / `priority_name` |
 | `ticket_priority_changed` | previous and new priority, ID and name |
 | `ticket_assignment_changed` | `action`, previous and new team and assignee |
+| `ticket_ai_failed` | `outcome`: the attempt's stable outcome code, e.g. `provider_auth_failed`, `timeout`, `credential_missing`, `category_exempt` ([ai-attempts.md](ai-attempts.md)). A code, never a provider message. It is read from the attempt, not from the ticket event payload, which requesters can read |
 | `ticket_propose_resolution` | `proposal_version`, `deadline`, `timeout_hours` |
 | `ticket_confirmation_timeout` | the proposal's `deadline` and `timeout_hours` snapshot, `closure_reason: confirmation_timeout`; actor is the `auto_close` service, never the requester |
 | `ticket_reopen` | `allow_reopening` as it was |
@@ -128,14 +133,32 @@ notifications, and every statistic stay as they were.
 
 | Action | When |
 | --- | --- |
-| `ai_solved_change_denied` | Any failed attempt to change an AI-solved record through the requester actions, staff actions, or assignment endpoints (also bulk), by any role, whatever the response was (`403`, `404`, `409`). Metadata: `attempted`, `status`, `error`. Repeating the committed `ai_solved` decision is a retry and is not recorded |
+| `ai_solved_change_denied` | A failed attempt to reopen, escalate, or otherwise change the status, priority, or assignment of an AI-solved record through the requester actions, staff actions, or assignment endpoints (also bulk), by a caller who can see the record (its requester, an Admin), whatever the response was (`403`, `409`). Metadata: `attempted`, `status`, `error`. Repeating the committed `ai_solved` decision is a retry and is not recorded |
 | `ticket_reopen_denied` | A reopen answered `403`: the toggle is off or the caller may not write. Metadata includes `allow_reopening` |
 | `ticket_cancel_denied` | A cancellation answered `403`: the policy forbids it or the caller is not the requester. Metadata includes `cancellation_policy`, never the reason |
 | `invitation_rejected` | An acceptance with a used, revoked, expired, or unknown token (`reason`, and the invitation ID when it is known), or with a field the contract does not have such as `role` (`reason: unexpected_field`, `field`). The token is never stored |
-| `setup_rejected` | A bootstrap attempt after setup was completed. Rate limited per client |
+| `setup_rejected` | A bootstrap attempt after setup was completed |
 
-Stale or duplicate resolution decisions (`409`) are not recorded and rewrite
-nothing.
+Limits, so that denials cannot be used to learn anything or to flood the log:
+
+- **Only for tickets the caller may see.** A ticket-specific row is written
+  only when the ticket policy lets the caller see that ticket. For a missing
+  ticket and for one the caller cannot see (another requester's ticket, a
+  ticket of another team, an AI-solved record for operators) the response is
+  the same as before and nothing is written, so neither a row nor its absence
+  tells them a ticket exists. Operators never see AI-solved records
+  ([ai-decisions.md](ai-decisions.md#who-sees-what)); their requests get `404`
+  and no row.
+- **Bounded repeats.** One account repeating one action on one ticket is
+  recorded at most 5 times per minute; further repeats get the same response
+  and no row. `invitation_rejected` for unexpected fields and `setup_rejected`
+  are bounded per client IP (10 per minute); the other invitation rejections
+  sit behind the acceptance endpoint's own limiter. The limiter is the
+  in-memory one of `auth.rs` (per process).
+- **Not recorded:** replies, notes, and screenshot attachments aimed at an
+  AI-solved ticket (they are refused, but they are not a reopen, escalation,
+  or status change), and stale or duplicate resolution decisions (`409`),
+  which rewrite nothing.
 
 ## Other actions
 
@@ -150,29 +173,76 @@ replacement is one event with the previous and the new lead). Settings:
 `organization_settings_updated` (reopening toggle, cancellation policy,
 confirmation timeout, requester AI skip; before and after),
 `catalog_item_created`, `catalog_item_updated` (with `before`, e.g. a
-category's `skip_ai`), `catalog_reordered`, `smtp_configured`, `smtp_updated`,
-`smtp_removed`, `smtp_tested`, `notifications_retried`, `ai_settings_updated`,
+category's `skip_ai`), `catalog_reordered`, `smtp_configured`, `smtp_updated` (both with `from`/`to`:
+host, port, security, sender address, and `enabled`, so enabling or disabling
+is one event; `credential_replaced` says whether a username or password was
+replaced, never what it is), `smtp_removed`, `smtp_tested`, `notifications_retried`, `ai_settings_updated`,
 `ai_credential_set`, `ai_credential_removed`, `ai_connection_tested`,
 `ai_limits_updated`. Jobs: `ai_usage_purged`, `ai_attempt_orphaned`,
 `screenshots_expired`. Files and drafts: `screenshot_uploaded`,
 `screenshot_deleted`, `draft_created`, `draft_updated`, `draft_deleted`. The
-log itself: `audit_exported`, `audit_retention_purged`.
+log itself: `audit_exported`, `audit_retention_purged`,
+`audit_account_anonymized`.
 
-## Append-only, and the one retention path
+## Append-only, retention, and anonymization
 
 `UPDATE`, `DELETE`, and `TRUNCATE` on `audit_events` raise `restrict_violation`
-(`23001`) for every database session, including the application's. The only
-exception is the SQL function `audit_retention_purge(cutoff, admin)`, called
-through:
+(`23001`). This holds for every application code path and for plain SQL sent
+through the application's database connection. There are exactly two
+exceptions, both SQL functions of migration `0026` with Rust wrappers, both for
+the data retention feature (#43). Nothing calls them yet, and there is no
+endpoint that edits or deletes events.
+
+**Retention**
 
 ```rust
 audit::purge_before(&mut tx, cutoff, Who::Account(admin_id)).await?; // or Who::Service(audit::RETENTION)
 ```
 
-It deletes events older than `cutoff`, refuses a cutoff in the future, and
-appends `audit_retention_purged` (who, cutoff, count), which stays. Nothing
-calls it yet: the retention settings, preview, and job belong to the data
-retention feature (#43). There is no endpoint that edits or deletes events.
+`audit_retention_purge(cutoff, admin)` deletes events older than `cutoff` and
+appends `audit_retention_purged` (who, cutoff, count) in the same call.
+
+- `admin` must be an active Admin account, or NULL for the `retention`
+  service; anything else is `42501`.
+- **The retention floor is 30 days**: a cutoff less than 30 days in the past
+  is refused (`23514`). The number lives in SQL (`audit_retention_floor()`) and
+  in Rust (`audit::RETENTION_FLOOR_DAYS`); a retention setting must be
+  validated against the same value.
+- `audit_retention_purged` events are never deleted, whatever their age.
+
+**Anonymization**
+
+```rust
+audit::anonymize_account(&mut tx, account_id, Who::Account(admin_id)).await?;
+```
+
+`audit_anonymize_account(account, admin)` sets the username snapshots of that
+account to NULL (`actor_username` where it acted, `subject_username` where it
+is the subject) and removes the `ip` key from those events' metadata. Account
+IDs, actions, timestamps, roles, resources, and all other metadata stay, so
+the history remains attributable to the (anonymized) account ID. It appends
+`audit_account_anonymized` about the account, without a username, and returns
+the number of events changed. Same rule for `admin`. New events snapshot
+`accounts.username` as it is then, so anonymize the account row first.
+
+**How the guard tells these apart, and its limit.** The trigger
+`audit_events_guard` does not look at a setting. It reads the call stack
+(`GET DIAGNOSTICS ... PG_CONTEXT`) and lets a row through only when the
+statement is the one `DELETE` inside `audit_retention_purge` or the one
+`UPDATE` inside `audit_anonymize_account`. It then checks each row itself: a
+delete only of an event older than the floor that is not a purge record; an
+update only if nothing but the username snapshots (to NULL) and the `ip` key
+changed. `SET LOCAL`, a `DO` block, or a function of another name cannot
+produce that stack.
+
+What this does not protect against: the application's database role owns the
+table, the trigger, and these functions. Someone who can run DDL as that role,
+or a superuser, can replace a function or disable the trigger; no trigger can
+stop its owner. Running the application under a separate role that does not
+own the schema would close that gap. It is optional hardening and not part of
+this feature. PostgreSQL 17 is pinned; a change to the `PG_CONTEXT` format in a
+later major version would make the guard refuse the two functions (fail
+closed), which the tests in `apps/api/tests/audit.rs` would catch.
 
 `ticket_events` stays append-only with no retention path. The audit mirror
 holds no foreign key to tickets or teams, so it survives whatever retention
@@ -228,7 +298,9 @@ timestamps and their `request_id` (migration `0025`), where they have one.
 
 `apps/api/tests/audit.rs`: event fields and request correlation, rollback with
 the change (and the change failing when the audit write fails), shared-email
-attribution, redaction, denied mutation and the retention path, AI decision
+attribution, redaction, denied mutation (also with a session setting or a
+`DO` block) and the retention and anonymization paths with their refusals,
+bounded and visibility-limited denial records, AI decision
 timelines and denied changes to AI-solved records, reopen and cancellation,
 resolution, priority, and assignment history with auto-close, privileged
 changes, role denial, paging, filters, and the export.

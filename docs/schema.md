@@ -120,8 +120,9 @@ Rust validates and authorizes first; these constraints are the backstop.
   Status changes go through `lifecycle::transition` only.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
-  by trigger on join, leave, and team change. Audit events have one retention
-  path, `audit_retention_purge` ([Audit events](#audit-events)).
+  by trigger on join, leave, and team change. Audit events have two explicit
+  exceptions, `audit_retention_purge` and `audit_anonymize_account`
+  ([Audit events](#audit-events)).
 
 ## Admin management (0005)
 
@@ -399,14 +400,20 @@ Migration `0026_audit_events.sql`. Behavior and the list of actions:
   and per-event additions, and copies the ticket event's `request_id`. Background ticket events get their service from
   `audit_ticket_service`.
 - `audit_events_guard` replaces the UPDATE/DELETE guard: both raise
-  `restrict_violation`, except a DELETE while the transaction-local setting
-  `tikkit.audit_retention` is `on`. Only `audit_retention_purge(cutoff, admin)`
-  sets it; the function deletes events older than `cutoff` (not in the future)
-  and appends `audit_retention_purged`. TRUNCATE stays rejected.
+  `restrict_violation`, except the one DELETE inside
+  `audit_retention_purge(cutoff, admin)` and the one UPDATE inside
+  `audit_anonymize_account(account, admin)`, recognised by the call stack
+  (`PG_CONTEXT`) and re-checked per row (only events older than
+  `audit_retention_floor()`, 30 days, and never `audit_retention_purged`; only
+  username snapshots to NULL and the `ip` metadata key). `admin` must be an
+  active Admin account or NULL (`audit_require_admin`). Both functions append
+  their own event. TRUNCATE stays rejected. The limit of this guard (the
+  owning role can run DDL) is described in
+  [audit.md](audit.md#append-only-retention-and-anonymization).
 - Indexes: `(actor_account_id, created_at, id)`, `(event_type, created_at, id)`,
   `(ticket_id, created_at, id)`, `(resource_type, resource_id, created_at, id)`,
   and `request_id`, besides the existing `(created_at, id)`.
 - Additional `audit_events.event_type` values: `ticket_*` (one per ticket event
   type), `ai_solved_change_denied`, `ticket_reopen_denied`,
   `ticket_cancel_denied`, `invitation_rejected`, `setup_rejected`,
-  `audit_exported`, `audit_retention_purged`.
+  `audit_exported`, `audit_retention_purged`, `audit_account_anonymized`.

@@ -123,10 +123,12 @@ attempt worker and its sweep only touch `processing` attempts, the auto-close
 worker only `awaiting_confirmation`, and a late provider result finds its
 attempt finished. A denied request writes no ticket event, so statistics, queue
 counts, and notifications do not move. Denied `actions`, `staff-actions`,
-`assignment`, and bulk requests are recorded in the audit log as
+`assignment`, and bulk requests by a caller who can see the record (its
+requester or an Admin) are recorded in the audit log as
 `ai_solved_change_denied` with the account, the attempted action, and the
-response code ([audit.md](audit.md#denied-attempts)); the audit log is not a
-ticket event and feeds no statistic.
+response code, a bounded number of times per account, ticket, and action
+([audit.md](audit.md#denied-attempts)). Callers who get `404` leave no row.
+The audit log is not a ticket event and feeds no statistic.
 
 The database enforces the same (migrations `0008`, `0022`, `0023`): an
 `ai_solved` ticket row cannot change in any column, the attempt cannot change

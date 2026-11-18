@@ -210,8 +210,11 @@ policy under share locks, locks the ticket and the attempt, and then:
   resolves the ticket;
 - failure or guard refusal: hand off with that code.
 
-**Handoff** is `lifecycle::transition(AiFailed)` (system actor, route
-`ai_failed`) plus the attempt update, in one transaction. The transition only
+**Handoff** is `lifecycle::ai_failed` (the `AiFailed` transition by the system
+actor, route `ai_failed`), which also ends the attempt with its outcome code
+under the ticket lock, just before the event is written, so the audit mirror of
+the event can name the reason ([audit.md](audit.md#ticket-events)). One
+transaction. The transition only
 succeeds from `ai_processing` under the ticket lock, so a ticket is queued at
 most once however many paths race.
 
