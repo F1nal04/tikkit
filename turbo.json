@@ -28,6 +28,7 @@
         "SESSION_TTL_HOURS",
         "SESSION_ROTATE_HOURS",
         "TRUST_PROXY_HEADERS",
+        "TRUSTED_PROXIES",
         "ENVIRONMENT",
         "RUST_LOG"
       ]
@@ -56,6 +57,7 @@
         "SESSION_TTL_HOURS",
         "SESSION_ROTATE_HOURS",
         "TRUST_PROXY_HEADERS",
+        "TRUSTED_PROXIES",
         "ENVIRONMENT",
         "RUST_LOG"
       ]
