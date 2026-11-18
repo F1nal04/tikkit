@@ -815,9 +815,74 @@ async fn dns_failure_is_a_bounded_network_error() {
             timeout: Duration::from_secs(2),
             max_attempts: 1,
             allow_disabled: true,
+            ..DeliverOptions::default()
         },
     )
     .await;
     assert_eq!(error, Err(MailError::Network));
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn a_host_resolving_to_a_refused_address_is_never_contacted() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    fixtures::bootstrap_admin(&db.pool).await;
+    let server = listen(Listen::StartTls, Fault::None).await;
+    let app = router(&db.pool, Some(&server.ca_pem));
+    let admin = login(&app, "admin", fixtures::PASSWORD).await.session();
+    save(
+        &app,
+        &admin,
+        write_body(server.port, "starttls", Some(SECRET), true),
+    )
+    .await;
+    let message = OutboundMessage {
+        to: "shared@example.com".into(),
+        subject: "metadata".into(),
+        body: "portal".into(),
+        idempotency_key: None,
+    };
+    let send = |resolve| {
+        mail::deliver(
+            &db.pool,
+            &[0u8; 32],
+            Some(server.ca_pem.as_bytes()),
+            &message,
+            DeliverOptions {
+                allow_disabled: true,
+                max_attempts: 1,
+                resolve,
+                ..DeliverOptions::default()
+            },
+        )
+    };
+    // DNS now answers with metadata or link-local addresses (rebinding after save).
+    const METADATA: &[std::net::IpAddr] = &[
+        std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::new(169, 254, 169, 254)),
+    ];
+    const NAT64: &[std::net::IpAddr] = &[std::net::IpAddr::V6(std::net::Ipv6Addr::new(
+        0x64, 0xff9b, 0, 0, 0, 0, 0xa9fe, 0xa9fe,
+    ))];
+    for refused in [METADATA, NAT64] {
+        assert_eq!(
+            send(mail::Resolve::Fixed(refused)).await,
+            Err(MailError::Network)
+        );
+    }
+    assert!(
+        server.commands.lock().unwrap().is_empty(),
+        "no connection was made"
+    );
+    assert!(server.messages.lock().unwrap().is_empty());
+    // The same relay is used once it resolves to an allowed address.
+    const LOOPBACK: &[std::net::IpAddr] =
+        &[std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))];
+    assert_eq!(
+        send(mail::Resolve::Fixed(LOOPBACK)).await,
+        Ok(Delivered::Sent)
+    );
+    assert_eq!(server.messages.lock().unwrap().len(), 1);
 }

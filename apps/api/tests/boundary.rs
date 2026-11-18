@@ -517,6 +517,10 @@ async fn smtp_settings_refuse_metadata_destinations_and_header_injection() {
         ("169.254.169.254", "Desk", "desk@example.com", "host"),
         ("[fe80::1]", "Desk", "desk@example.com", "host"),
         ("0.0.0.0", "Desk", "desk@example.com", "host"),
+        // 169.254.169.254 in decimal, NAT64, and the AWS IPv6 metadata address.
+        ("2852039166", "Desk", "desk@example.com", "host"),
+        ("64:ff9b::a9fe:a9fe", "Desk", "desk@example.com", "host"),
+        ("fd00:ec2::254", "Desk", "desk@example.com", "host"),
         (
             "smtp.example.com\r\nRCPT TO:<x@evil.example>",
             "Desk",
