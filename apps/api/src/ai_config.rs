@@ -706,7 +706,7 @@ pub async fn delete_credential(
         (status = 200, body = AiTestResult),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
-        (status = 409, description = "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported`", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, `ai_model_unsupported`, or `outbound_disabled` (restore mode)", body = crate::api::ErrorEnvelope),
         (status = 502, description = "`ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed`", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn test_ai(
@@ -715,6 +715,9 @@ pub async fn test_ai(
     user: CurrentUser,
 ) -> Result<Json<AiTestResult>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
+    if !auth.settings.outbound_enabled {
+        return Err(ApiError::OutboundDisabled);
+    }
     let key = &auth.settings.encryption_key;
     // Testing does not require AI to be enabled: an Admin tests first, then enables.
     let (provider, model): (Option<String>, Option<String>) =

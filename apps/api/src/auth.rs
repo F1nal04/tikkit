@@ -87,6 +87,9 @@ pub struct Settings {
     /// Test-only PEM trust anchor for the SMTP client. Production leaves this
     /// empty so verification uses the default WebPKI roots. Never disables checks.
     pub smtp_trust_root_pem: Option<Vec<u8>>,
+    /// False in restore mode: nothing is sent to an SMTP relay or an AI provider
+    /// from a request (the background workers do not run either).
+    pub outbound_enabled: bool,
 }
 
 impl fmt::Debug for Settings {
@@ -104,6 +107,7 @@ impl fmt::Debug for Settings {
                 "smtp_trust_root_pem",
                 &self.smtp_trust_root_pem.as_ref().map(|_| "<set>"),
             )
+            .field("outbound_enabled", &self.outbound_enabled)
             .finish()
     }
 }
@@ -120,6 +124,7 @@ impl Default for Settings {
             public_origin: "http://localhost:3000".into(),
             encryption_key: [0; 32],
             smtp_trust_root_pem: None,
+            outbound_enabled: true,
         }
     }
 }
@@ -136,6 +141,7 @@ impl From<&Config> for Settings {
             public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
             encryption_key: c.encryption_key,
             smtp_trust_root_pem: None,
+            outbound_enabled: !c.restore_mode,
         }
     }
 }

@@ -4574,7 +4574,7 @@
             }
           },
           "409": {
-            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported`",
+            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, `ai_model_unsupported`, or `outbound_disabled` (restore mode)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8750,6 +8750,7 @@
           "payload_too_large",
           "retention_preview_stale",
           "export_too_large",
+          "outbound_disabled",
           "smtp_not_configured",
           "smtp_auth_failed",
           "smtp_tls_failed",

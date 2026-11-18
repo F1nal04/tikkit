@@ -233,7 +233,7 @@ async fn issue_invitation(
         ident_str(language)
     );
     let emailed = match email.as_deref() {
-        Some(to) => {
+        Some(to) if auth.settings.outbound_enabled => {
             let (subject, text) = invitation_email(language, &url, hours);
             mail::queue(
                 state.pool.clone(),
@@ -248,7 +248,7 @@ async fn issue_invitation(
             )
             .await
         }
-        None => false,
+        _ => false,
     };
     let created = CreatedInvitation {
         invitation,
@@ -624,18 +624,19 @@ pub async fn request_recovery(
             ident_str(language)
         );
         let (subject, text) = recovery_email(language, &username, &url);
-        let queued = mail::queue(
-            state.pool.clone(),
-            auth.settings.encryption_key,
-            auth.settings.smtp_trust_root_pem.clone(),
-            OutboundMessage {
-                to: email,
-                subject: subject.to_owned(),
-                body: text,
-                idempotency_key: Some(format!("recovery:{}", hex_bytes(&recovery_hash))),
-            },
-        )
-        .await;
+        let queued = auth.settings.outbound_enabled
+            && mail::queue(
+                state.pool.clone(),
+                auth.settings.encryption_key,
+                auth.settings.smtp_trust_root_pem.clone(),
+                OutboundMessage {
+                    to: email,
+                    subject: subject.to_owned(),
+                    body: text,
+                    idempotency_key: Some(format!("recovery:{}", hex_bytes(&recovery_hash))),
+                },
+            )
+            .await;
         if !queued {
             // Never log the token, link, address, or SMTP credentials.
             tracing::info!("password recovery requested, but no email was sent");

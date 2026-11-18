@@ -48,10 +48,20 @@ async fn main() -> anyhow::Result<()> {
 
     std::fs::create_dir_all(&config.screenshot_dir)
         .context("cannot create SCREENSHOT_DIR (see docs/configuration.md)")?;
-    tokio::spawn(screenshots::cleanup_loop(
-        pool.clone(),
-        config.screenshot_dir.clone(),
-    ));
+    // Restore mode: a restored copy under verification runs no background job
+    // (no mail, no AI calls, no timeouts, no file sweeps) until an operator
+    // restarts it without RESTORE_MODE. See docs/backup-restore.md.
+    let workers = !config.restore_mode;
+    if config.restore_mode {
+        tracing::warn!(
+            "RESTORE_MODE is on: background jobs are not running and nothing is sent to mail relays or AI providers"
+        );
+    } else {
+        tokio::spawn(screenshots::cleanup_loop(
+            pool.clone(),
+            config.screenshot_dir.clone(),
+        ));
+    }
 
     let listener = TcpListener::bind(config.api_addr)
         .await
@@ -67,10 +77,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(address = %listener.local_addr()?, "Tikkit API listening");
     let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
     let settings = auth::Settings::from(&config);
-    let notifier = tokio::spawn(notifications::worker_loop(state.clone(), settings.clone()));
-    let auto_close = tokio::spawn(autoclose::worker_loop(state.clone()));
-    let ai_retention = tokio::spawn(ai_guard::retention_loop(pool.clone()));
-    let data_retention = tokio::spawn(retention::worker_loop(state.clone()));
+    let notifier =
+        workers.then(|| tokio::spawn(notifications::worker_loop(state.clone(), settings.clone())));
+    let auto_close = workers.then(|| tokio::spawn(autoclose::worker_loop(state.clone())));
+    let ai_retention = workers.then(|| tokio::spawn(ai_guard::retention_loop(pool.clone())));
+    let data_retention = workers.then(|| tokio::spawn(retention::worker_loop(state.clone())));
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
@@ -89,10 +100,12 @@ async fn main() -> anyhow::Result<()> {
     };
     // AI suggestion attempts. At shutdown the calls in flight are cancelled and
     // their attempts released for the next start to take over.
-    let ai_worker = tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
-        &state,
-        settings.encryption_key,
-    )));
+    let ai_worker = workers.then(|| {
+        tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
+            &state,
+            settings.encryption_key,
+        )))
+    });
     let app = app_with(state, settings);
     let server = axum::serve(
         listener,
@@ -120,13 +133,18 @@ async fn main() -> anyhow::Result<()> {
     // already running commit, and cancelled AI calls free their provider slots
     // and release their attempts, before the pool closes.
     if tokio::time::timeout(Duration::from_secs(5), async {
-        let _ = tokio::join!(
+        for worker in [
             notifier,
             auto_close,
             ai_retention,
             data_retention,
-            ai_worker
-        );
+            ai_worker,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = worker.await;
+        }
     })
     .await
     .is_err()
