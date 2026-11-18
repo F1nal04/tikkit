@@ -24,7 +24,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     'cache-control': 'private, no-store',
     'x-request-id': event.locals.requestId,
     vary: 'Cookie, Accept-Language',
-    'referrer-policy': 'no-referrer',
+    ...securityHeaders(event.url),
   })
   let done = false
   const response = await resolve(event, {
@@ -37,6 +37,24 @@ export const handle: Handle = async ({ event, resolve }) => {
   })
   log(event, 'info', 'web_request_completed', response.status, Math.round(performance.now() - start))
   return response
+}
+
+/**
+ * Security headers on every rendered page (docs/security.md). The CSP itself
+ * comes from SvelteKit (`csp` in vite.config.ts) because it carries the nonce.
+ * HSTS only when the portal is served over https (`ORIGIN`).
+ */
+export function securityHeaders(url: URL): Record<string, string> {
+  const headers: Record<string, string> = {
+    'referrer-policy': 'no-referrer',
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'cross-origin-opener-policy': 'same-origin',
+    'cross-origin-resource-policy': 'same-origin',
+    'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  }
+  if (url.protocol === 'https:') headers['strict-transport-security'] = 'max-age=31536000'
+  return headers
 }
 
 export const handleError: HandleServerError = ({ event, kind, error }) => {

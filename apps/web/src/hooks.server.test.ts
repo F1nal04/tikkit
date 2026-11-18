@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RequestEvent } from '@sveltejs/kit'
-import { handle, handleFetch } from './hooks.server'
+import { handle, handleFetch, securityHeaders } from './hooks.server'
 
 vi.mock('$app/env/private', () => ({ API_ORIGIN: 'http://api.internal' }))
 
@@ -36,5 +36,40 @@ describe('SSR correlation', () => {
     } finally {
       log.mockRestore()
     }
+  })
+})
+
+describe('page security headers', () => {
+  it('forbid framing and sniffing everywhere and send HSTS only over https', () => {
+    for (const origin of ['http://127.0.0.1:3000', 'https://help.example.com']) {
+      const headers = securityHeaders(new URL('/tickets', origin))
+      expect(headers).toMatchObject({
+        'referrer-policy': 'no-referrer',
+        'x-content-type-options': 'nosniff',
+        'x-frame-options': 'DENY',
+        'cross-origin-opener-policy': 'same-origin',
+      })
+      expect('strict-transport-security' in headers).toBe(origin.startsWith('https:'))
+    }
+  })
+
+  it('forward only the session cookie and never a client-chosen request ID to the API', async () => {
+    const url = new URL('https://help.example.com/tickets')
+    const event = {
+      url,
+      request: new Request(url, {
+        headers: { cookie: 'tikkit_session=abc; other=secret', 'x-request-id': 'forged', host: 'evil' },
+      }),
+      locals: { requestId: '11111111-1111-4111-8111-111111111111' },
+      cookies: { get: (name: string) => (name === 'tikkit_session' ? 'abc' : undefined) },
+    } as unknown as RequestEvent
+    const fetch = vi.fn(async (_request: RequestInfo | URL) => new Response())
+    await handleFetch({ event, request: new Request(new URL('/api/tickets', url)), fetch })
+    const upstream = new Request(fetch.mock.calls[0][0])
+    expect(upstream.headers.get('cookie')).toBe('tikkit_session=abc')
+    expect(upstream.headers.get('x-request-id')).toBe('11111111-1111-4111-8111-111111111111')
+    // Cross-origin fetches during SSR are passed through untouched, without the session.
+    await handleFetch({ event, request: new Request('https://elsewhere.example/api/x'), fetch })
+    expect(new Request(fetch.mock.calls[1][0]).headers.get('cookie')).toBeNull()
   })
 })
