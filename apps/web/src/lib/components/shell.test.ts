@@ -49,7 +49,7 @@ test('Team Lead sees team tools, never administration', () => {
 
 test('Admin sees global controls', () => {
   shell('admin')
-  expect(links()).toEqual(['My tickets', 'New ticket', 'General queue', 'Overview', 'Submissions', 'Audit log', 'Accounts', 'Teams', 'Organization settings', 'Outbound email', 'AI assistance', 'Ticket catalog'])
+  expect(links()).toEqual(['My tickets', 'New ticket', 'General queue', 'Overview', 'Submissions', 'Reports', 'Audit log', 'Accounts', 'Teams', 'Organization settings', 'Outbound email', 'AI assistance', 'Ticket catalog'])
 })
 
 test('names the account, its role, and the current page for assistive technology', () => {

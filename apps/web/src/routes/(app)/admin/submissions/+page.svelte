@@ -13,6 +13,12 @@
   const when = (value: string) => `${date.format(new Date(value))} UTC`
   // Filters without the cursor: the start of the same list.
   let base = $derived({ ...f, cursor: '' })
+  let reportFilters = $derived([
+    f.team_id && s.team,
+    f.priority_id && s.priority,
+    f.ai_disposition && t.reports.aiOutcomes[f.ai_disposition],
+    f.resolution && s.resolutions[f.resolution],
+  ].filter(Boolean))
 </script>
 
 <svelte:head><title>{s.title}</title></svelte:head>
@@ -21,6 +27,11 @@
 <p>{s.intro}</p>
 
 <form method="get" class="filters" aria-label={s.filter}>
+  {#if f.lang}<input type="hidden" name="lang" value={f.lang} />{/if}
+  {#if f.team_id}<input type="hidden" name="team_id" value={f.team_id} />{/if}
+  {#if f.priority_id}<input type="hidden" name="priority_id" value={f.priority_id} />{/if}
+  {#if f.ai_disposition}<input type="hidden" name="ai_disposition" value={f.ai_disposition} />{/if}
+  {#if f.resolution}<input type="hidden" name="resolution" value={f.resolution} />{/if}
   <label>{s.category}
     <select name="category_id" value={f.category_id}>
       <option value="">{s.allCategories}</option>
@@ -51,9 +62,13 @@
   <label>{s.until} <input type="date" name="until" value={f.until} /></label>
   <div class="buttons">
     <button type="submit">{s.apply}</button>
-    <a href="/admin/submissions">{s.clear}</a>
+    <a href={submissionsHref({ lang: f.lang })}>{s.clear}</a>
   </div>
 </form>
+
+{#if reportFilters.length}
+  <p>{t.reports.drillDown} {reportFilters.join(' · ')}</p>
+{/if}
 
 <Table caption={s.title} empty={s.empty} isEmpty={data.submissions.items.length === 0}>
   {#snippet head()}

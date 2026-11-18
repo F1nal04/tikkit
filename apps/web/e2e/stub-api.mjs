@@ -302,6 +302,40 @@ const SUBMISSIONS = [
   submission(305, 'Escalated after the suggestion', { status: 'in_progress', ai_outcome: 'not_solved', team_name: 'Desk', assignee_display_name: 'operator' }),
   submission(306, 'Resolved by the help desk', { status: 'closed', resolution: 'requester_confirmed', resolution_source: 'operator', closure_reason: 'requester_confirmed', route: 'ai_disabled', team_name: 'Desk', assignee_display_name: 'operator' }),
 ]
+const submittedScope = (x, q) =>
+  (!q.get('created_from') || Date.parse(x.created_at) >= Date.parse(q.get('created_from'))) &&
+  (!q.get('created_before') || Date.parse(x.created_at) < Date.parse(q.get('created_before'))) &&
+  (!q.get('team_id') || TEAMS.find((t) => t.name === x.team_name)?.id === q.get('team_id')) &&
+  (!q.get('category_id') || x.category_id === q.get('category_id'))
+const disposition = (x) => x.ai_outcome === 'failed' ? 'provider_failed' : (x.ai_outcome ?? x.route)
+function reportFixture(items) {
+  const counts = (group, key) => Object.entries(Object.groupBy(items, group))
+    .map(([value, rows]) => ({ [key]: value, count: rows.length }))
+  const queued = items.filter((x) => ['failed', 'not_solved', null].includes(x.ai_outcome))
+  const closed = items.filter((x) => x.status === 'closed').length
+  const assigned = queued.filter((x) => x.team_name).length
+  return {
+    submissions: items.length,
+    daily: counts((x) => x.created_at.slice(0, 10), 'day'),
+    categories: counts((x) => x.category_name, 'name').map((row) => ({ id: CATEGORY, ...row })),
+    priorities: counts((x) => x.priority_name, 'name').map((row) => ({ id: PRIORITIES[1].id, ...row })),
+    ai_outcomes: counts(disposition, 'outcome'),
+    ai_attempts: items.filter((x) => x.ai_outcome).length,
+    ai_rate_denominator: items.filter((x) => ['solved', 'not_solved', 'failed'].includes(x.ai_outcome)).length,
+    deflection_rate_denominator: items.filter((x) => x.status !== 'cancelled').length,
+    closures: counts((x) => x.resolution, 'resolution'),
+    awaiting_confirmation: 0,
+    operator: {
+      queued: queued.length, first_response_samples: closed, mean_first_response_seconds: closed ? 1800 : null,
+      initial_closures: closed, subsequent_closures: 0, reopens: 0, rejected_proposals: 0,
+      time_to_proposal_samples: closed, mean_queue_to_proposal_seconds: closed ? 3600 : null,
+      confirmation_wait_samples: closed, mean_proposal_to_closure_seconds: closed ? 5400 : null,
+      resolution_samples: closed, mean_queue_to_closure_seconds: closed ? 9000 : null,
+    },
+    workload: assigned ? [{ team_id: TEAMS[0].id, team_name: TEAMS[0].name, assignee_id: 'op',
+      assignee_name: 'operator', assignee_role: 'operator', queued: assigned, active: assigned - closed, awaiting_confirmation: 0 }] : [],
+  }
+}
 const requesterActor = { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' }
 function submissionDetail(s) {
   const ev = (id, event_type, from_status, to_status, actor = null, payload = {}) => ({ id, event_type, from_status, to_status, actor, payload, created_at: s.created_at })
@@ -430,6 +464,16 @@ createServer(async (req, res) => {
     const next = start + limit < matching.length ? String(start + limit) : null
     return reply(res, 200, { items: matching.slice(start, start + limit), next_cursor: next })
   }
+  if (route === 'GET /api/admin/reports' || route === 'POST /api/admin/reports/export') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const q = new URL(req.url, 'http://stub').searchParams
+    const items = SUBMISSIONS.filter((x) => submittedScope(x, q))
+    if (req.method === 'GET') return reply(res, 200, reportFixture(items))
+    if (req.headers['x-requested-with'] !== 'tikkit') return fail(res, 403, 'csrf_rejected')
+    if (!q.get('created_from') || !q.get('created_before')) return fail(res, 400, 'invalid_query')
+    res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="ticket-report.csv"' })
+    return res.end(['reference,ai_outcome', ...items.map((x) => `${x.reference},${disposition(x)}`)].join('\r\n'))
+  }
   if (pathname.startsWith('/api/admin/submissions')) {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
     if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed')
@@ -440,8 +484,10 @@ createServer(async (req, res) => {
       return found ? reply(res, 200, submissionDetail(found)) : fail(res, 404, 'not_found')
     }
     const items = SUBMISSIONS.filter((x) =>
+      submittedScope(x, q) &&
       (!q.get('status') || x.status === q.get('status')) &&
-      (!q.get('category_id') || x.category_id === q.get('category_id')) &&
+      (!q.get('ai_disposition') || disposition(x) === q.get('ai_disposition')) &&
+      (!q.get('resolution') || x.resolution === q.get('resolution')) &&
       (!q.get('resolution_source') || (x.resolution_source ?? 'none') === q.get('resolution_source')) &&
       (!q.get('ai_outcome') || (x.ai_outcome ?? 'none') === q.get('ai_outcome')))
     return reply(res, 200, { items, next_cursor: null })
@@ -453,7 +499,7 @@ createServer(async (req, res) => {
     const items =
       pathname === '/api/accounts'
         ? Object.keys(ROLES).map((u) => ({ ...account(u, null), is_active: true, expertise: null, team_id: null, is_team_lead: false, created_at: '2026-10-01T00:00:00Z' }))
-        : []
+        : pathname === '/api/teams' ? TEAMS.map((team) => ({ ...team, archived: false })) : []
     return reply(res, 200, { items, next_cursor: null })
   }
   if (pathname === '/api/queue' || pathname === '/api/queue/counts') {
