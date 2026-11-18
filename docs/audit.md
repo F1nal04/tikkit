@@ -17,7 +17,7 @@ export), `apps/api/src/csv.rs`; web `apps/web/src/routes/(app)/admin/audit/` and
 | `action` (`event_type`) | Stable snake_case identifier, the same in every language |
 | `actor` | The account's immutable ID with its username, role, and team **as they were when the event was written**; or, when no account acted, a `service` name |
 | `subject` | The account the event is about, if any (ID and username) |
-| `resource_type`, `resource_id` | What the event is about: `ticket`, `account`, `invitation`, `team`, `category`, `priority`, `intake_field`, `organization`, `smtp`, `ai_settings`, `ai_credential`, `screenshot`, `draft`, `audit_log` |
+| `resource_type`, `resource_id` | What the event is about: `ticket`, `account`, `invitation`, `team`, `category`, `priority`, `intake_field`, `organization`, `smtp`, `ai_settings`, `ai_credential`, `screenshot`, `draft`, `audit_log`, `retention` |
 | `ticket_id`, `ticket_reference` | Set for events about a ticket |
 | `created_at` | UTC |
 | `request_id` | The correlation ID (UUID) of the HTTP request that wrote it, equal to the response's `x-request-id`; for a background job, the ID of the request that caused the job. `null` only where there is none (maintenance jobs, history from before the column) |
@@ -179,7 +179,10 @@ is one event; `credential_replaced` says whether a username or password was
 replaced, never what it is), `smtp_removed`, `smtp_tested`, `notifications_retried`, `ai_settings_updated`,
 `ai_credential_set`, `ai_credential_removed`, `ai_connection_tested`,
 `ai_limits_updated`. Jobs: `ai_usage_purged`, `ai_attempt_orphaned`,
-`screenshots_expired`. Files and drafts: `screenshot_uploaded`,
+`screenshots_expired`, `retention_run_started`, `retention_run_completed`
+(periods and counts per category). Retention and personal data:
+`retention_settings_updated` (before and after), `personal_data_exported`
+(row counts per section), `account_anonymized` (counts). Files and drafts: `screenshot_uploaded`,
 `screenshot_deleted`, `draft_created`, `draft_updated`, `draft_deleted`. The
 log itself: `audit_exported`, `audit_retention_purged`,
 `audit_account_anonymized`.
@@ -189,9 +192,11 @@ log itself: `audit_exported`, `audit_retention_purged`,
 `UPDATE`, `DELETE`, and `TRUNCATE` on `audit_events` raise `restrict_violation`
 (`23001`). This holds for every application code path and for plain SQL sent
 through the application's database connection. There are exactly two
-exceptions, both SQL functions of migration `0026` with Rust wrappers, both for
-the data retention feature (#43). Nothing calls them yet, and there is no
-endpoint that edits or deletes events.
+exceptions, both SQL functions of migration `0026` with Rust wrappers. Only the
+data retention feature calls them ([retention.md](retention.md)): retention
+runs call `purge_before` with the Admin-set audit period, and account
+anonymization calls `anonymize_account`. There is no endpoint that edits or
+deletes individual events.
 
 **Retention**
 
@@ -244,9 +249,12 @@ this feature. PostgreSQL 17 is pinned; a change to the `PG_CONTEXT` format in a
 later major version would make the guard refuse the two functions (fail
 closed), which the tests in `apps/api/tests/audit.rs` would catch.
 
-`ticket_events` stays append-only with no retention path. The audit mirror
-holds no foreign key to tickets or teams, so it survives whatever retention
-later does to them.
+`ticket_events` stays append-only: no event is ever deleted. Ticket content
+retention removes one thing from it, the free-text `reason` of a `cancel`
+event, through its own guarded path (migration `0028`,
+[retention.md](retention.md#how-the-immutability-rules-are-kept)). The copy of
+that reason in the audit mirror stays until the audit period deletes the
+event. The audit mirror holds no foreign key to tickets or teams.
 
 ## Admin API
 

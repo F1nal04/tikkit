@@ -120,6 +120,9 @@ No new environment variables are required. The Admin-only PUT endpoint is
   ([ai-configuration.md](ai-configuration.md)). AI budgets, the concurrency
   limit, the circuit breaker, and usage retention are Admin settings stored in
   the database, not environment variables ([ai-usage.md](ai-usage.md)).
+- Data retention periods and automatic deletion are Admin settings stored in
+  the database as well ([retention.md](retention.md)). Every period defaults
+  to "keep"; there is no environment variable for them.
 
 This issue stores lifecycle policies for the ticket workflows that follow.
 Enforcement, snapshotted proposals and timeout processing belong to their

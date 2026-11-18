@@ -142,3 +142,19 @@ tests:
       - eval_time: 6m
         alertname: TikkitWorkerNotPolling
         exp_alerts: []
+  - name: a retention run that stays pending
+    interval: 1m
+    input_series:
+      - series: 'tikkit_worker_oldest_due_seconds{job="tikkit",worker="retention"}'
+        values: '0 3600 21700+60x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TikkitRetentionRunStuck
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: TikkitRetentionRunStuck
+        exp_alerts:
+          - exp_labels: { job: tikkit, worker: retention }
+            exp_annotations:
+              summary: A data retention run has been pending for more than six hours.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#data-retention

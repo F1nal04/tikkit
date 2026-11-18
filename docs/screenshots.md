@@ -79,6 +79,12 @@ row (a crash between write and insert) and leftover `*.tmp` files. Draft saves
 lock the rows they touch, so cleanup cannot delete an upload that a concurrent
 save keeps. Several API processes may run it at once.
 
+Attached screenshots are deleted only by the Admin retention policy, and only
+for tickets in a final status ([retention.md](retention.md)); the database
+refuses to delete a live ticket's screenshot row. Retention deletes the row
+first and the file after the commit, so a crash in between leaves a file
+without a row, which the sweep above removes.
+
 ## Reading
 
 - `GET /api/screenshots/{id}`: metadata (`Cache-Control: private, no-store`).

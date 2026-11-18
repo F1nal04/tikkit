@@ -122,7 +122,9 @@ Rust validates and authorizes first; these constraints are the backstop.
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
   by trigger on join, leave, and team change. Audit events have two explicit
   exceptions, `audit_retention_purge` and `audit_anonymize_account`
-  ([Audit events](#audit-events)).
+  ([Audit events](#audit-events)). Messages and ticket events have one guarded
+  retention path each, and attached screenshots, AI attempts, and submitted
+  intake likewise ([Data retention](#data-retention)).
 
 ## Admin management (0005)
 
@@ -184,7 +186,8 @@ Migration `0009_ticket_submission.sql` adds:
   version, timestamps, and a unique optional `submitted_ticket_id`. Input is
   present exactly while unsubmitted; successful submission replaces it with a
   tombstone. An owner index supports bounded pagination. Drafts are retained
-  until explicit owner deletion or submission, with no automatic expiry.
+  until explicit owner deletion or submission, or the Admin-set draft period
+  ([Data retention](#data-retention); not set by default).
 - `tickets.intake_snapshot`: immutable original subject/description, catalog
   `IntakeSnapshot` (including original priority and visible answers), and
   screenshot IDs (attached rows in `screenshots`). Nullable for pre-existing records;
@@ -417,3 +420,42 @@ Migration `0026_audit_events.sql`. Behavior and the list of actions:
   type), `ai_solved_change_denied`, `ticket_reopen_denied`,
   `ticket_cancel_denied`, `invitation_rejected`, `setup_rejected`,
   `audit_exported`, `audit_retention_purged`, `audit_account_anonymized`.
+
+## Data retention
+
+Migration `0028_data_retention.sql`. Behavior: [retention.md](retention.md).
+
+- `retention_settings` has exactly one row (inserted by the migration):
+  `draft_days`, `screenshot_days`, `ai_content_days`, `ticket_content_days`
+  (each NULL or 1 to 3,650), `audit_days` (NULL or 30 to 3,650), `automatic`
+  (default false), `updated_at`, `updated_by`. NULL means keep; every period
+  starts NULL.
+- `retention_runs`: one application of the policy. `requested_by` (NULL for an
+  automatic run), `request_id`, `state` (`pending`, `completed`), `as_of` (the
+  clock), a snapshot of the five periods, `counts` (JSON: `drafts`,
+  `screenshots`, `ai_content`, `ticket_content`, `audit_events`),
+  `created_at`, `finished_at` (set exactly when `completed`). A unique partial
+  index allows one `pending` run.
+- `tickets.content_purged_at`, `ai_attempts.content_purged_at`: set when
+  retention removed the content. They change only on the retention path.
+- `accounts.anonymized_at`, with `accounts_anonymized_inactive`: an anonymized
+  account is never active.
+- `retention_marker()` is `—`, the text that replaces removed content.
+  `ticket_final_at(tickets)` is when a ticket reached its current status (the
+  latest event with that `to_status`, else `updated_at`): the retention clock.
+- `retention_delete_screenshots(ticket)`, `retention_purge_ai(ticket)`,
+  `retention_purge_ticket(ticket)` are the only ways past the immutability
+  triggers. `check_ticket_update()`, `check_intake_snapshot()`,
+  `check_screenshot_frozen()`, and `check_ai_attempt_change()` are replaced,
+  and `ticket_messages` / `ticket_events` get their own guards
+  (`check_ticket_message_change()`, `check_ticket_event_change()`) instead of
+  the shared `reject_mutation()`. Each recognises the one statement inside its
+  function by the call stack (`retention_path()`, `PG_CONTEXT`) and rechecks
+  the row: a ticket in a final status, content columns only, the marker only.
+  Everything else still raises `restrict_violation`.
+- `tickets_final_idx`: partial index on tickets in a final status.
+- `audit_resource_of()` gains the resource type `retention` for
+  `retention_*` events.
+- Additional `audit_events.event_type` values: `retention_settings_updated`,
+  `retention_run_started`, `retention_run_completed`,
+  `personal_data_exported`, `account_anonymized`.

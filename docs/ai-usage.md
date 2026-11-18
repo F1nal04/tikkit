@@ -234,6 +234,10 @@ deleted. It also ends abandoned reservations on every poll. Deleted rows are
 gone from reports; no aggregate is kept. Database backups keep their own copy
 until the backup itself expires.
 
+This period covers usage metadata only. The AI input and the stored suggestion
+of a ticket live in `ai_attempts` and follow the Admin retention policy
+([retention.md](retention.md)), which is not set by default.
+
 ## Admin API
 
 All three need `ManageSettings` (Admin). Other roles get 403.

@@ -170,6 +170,20 @@ submission. The page only reads. "Export as CSV" posts the current filters to
 `POST /api/admin/audit/export` and saves the file in the browser; the server
 bounds it and records the export. Details: [audit.md](audit.md).
 
+## Admin data retention (`/admin/retention`)
+
+Retention periods, the deletion preview, runs, and the personal data of one
+account (`src/lib/retention.ts`). An empty period means "keep"; a typo is sent
+as an out-of-range value so it can never silently mean "keep". "Preview
+deletion" shows the server's counts for the periods as typed. A run uses the
+saved periods only, so the page asks to save first, and the "Delete now"
+button stays disabled until the Admin types `DELETE` (the API checks the same
+word; it is not translated). Saving with automatic deletion on needs the same
+word. Export and anonymization of an account need its username typed, and the
+anonymize button is only offered for a deactivated account. Ticket pages show a
+notice when `content_removed_at` (or `ai.content_removed`) is set. Details:
+[retention.md](retention.md).
+
 ## Notifications
 
 The shell's top bar links to `/notifications` with the unread count (`unread`

@@ -42,6 +42,12 @@ groups:
         annotations:
           summary: A staff resolution confirmation deadline expired and auto-close is behind.
           runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#resolution-confirmation-timeouts
+      - alert: TikkitRetentionRunStuck
+        expr: tikkit_worker_oldest_due_seconds{job="tikkit",worker="retention"} > 21600
+        for: 10m
+        annotations:
+          summary: A data retention run has been pending for more than six hours.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#data-retention
       - alert: TikkitNotificationOutboxStuck
         expr: tikkit_worker_oldest_due_seconds{job="tikkit",worker="notifications"} > 300
         for: 2m

@@ -1,7 +1,8 @@
 # Operations runbook
 
-Tikkit runs the notification outbox, AI attempt processor and sweeper, and
-resolution-confirmation timeout worker in the API process. A self-hosted Compose
+Tikkit runs the notification outbox, AI attempt processor and sweeper,
+resolution-confirmation timeout worker, and data retention worker in the API
+process. A self-hosted Compose
 operator can use the health endpoints and service logs directly. Prometheus is
 optional and uses the same database readiness check.
 
@@ -98,6 +99,22 @@ Check database health and use the request ID to trace back to the proposal.
 After recovery, check that overdue count falls and
 `confirmation_timeout_closed` increases. Requester-confirmed closure has
 its own counter. This worker handles the resolution-confirmation policy only.
+
+## Data retention
+
+The `retention` worker applies Admin-started and daily automatic retention
+runs ([retention.md](retention.md)). It is idle unless a run is pending; a
+pending run is its one pending and due job, and
+`tikkit_worker_oldest_due_seconds{worker="retention"}` is the run's age. A run
+works in batches and survives restarts, so a long run on a large database is
+normal. For `TikkitRetentionRunStuck`, check database readiness, then the
+`retention` log lines by the run's request ID (the `x-request-id` of the Admin
+request that started it, also on its `retention_run_started` audit event). A
+batch that fails rolls back and is retried on the next poll; the run's counts
+on the Admin page stop growing while it fails. Never edit `retention_runs` or
+delete screenshot files by hand: a file whose row is gone is removed by the
+hourly screenshot clean-up. After restoring a backup, start a run again
+([retention.md](retention.md#backups)).
 
 ## Private Prometheus dashboard and alerts
 
