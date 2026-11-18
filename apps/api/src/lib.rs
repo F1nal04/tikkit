@@ -371,7 +371,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/settings/smtp/test",
-            post(smtp::test_smtp).layer(throttle(Throttle::ConnectionTest)),
+            post(smtp::test_smtp).route_layer(throttle(Throttle::ConnectionTest)),
         )
         .route(
             "/api/settings/ai",
@@ -383,7 +383,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/settings/ai/test",
-            post(ai_config::test_ai).layer(throttle(Throttle::ConnectionTest)),
+            post(ai_config::test_ai).route_layer(throttle(Throttle::ConnectionTest)),
         )
         .route(
             "/api/settings/ai/limits",
@@ -395,7 +395,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/admin/reports", get(reports::get_report))
         .route(
             "/api/admin/reports/export",
-            post(reports::export_report).layer(throttle(Throttle::Export)),
+            post(reports::export_report).route_layer(throttle(Throttle::Export)),
         )
         .route("/api/admin/submissions", get(submissions::list_submissions))
         .route(
@@ -406,7 +406,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/admin/audit/actions", get(audit::actions))
         .route(
             "/api/admin/audit/export",
-            post(audit::export).layer(throttle(Throttle::Export)),
+            post(audit::export).route_layer(throttle(Throttle::Export)),
         )
         .route(
             "/api/admin/retention",
@@ -453,22 +453,22 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route(
             "/api/tickets",
             get(tickets::list_own_tickets)
-                .merge(post(submission::submit_ticket).layer(throttle(Throttle::Submission))),
+                .merge(post(submission::submit_ticket).route_layer(throttle(Throttle::Submission))),
         )
         .route(
             "/api/ticket-drafts",
             get(submission::list_drafts)
-                .merge(post(submission::create_draft).layer(throttle(Throttle::Draft))),
+                .merge(post(submission::create_draft).route_layer(throttle(Throttle::Draft))),
         )
         .route(
             "/api/ticket-drafts/{id}",
             get(submission::get_draft)
-                .merge(patch(submission::update_draft).layer(throttle(Throttle::Draft)))
+                .merge(patch(submission::update_draft).route_layer(throttle(Throttle::Draft)))
                 .delete(submission::delete_draft),
         )
         .route(
             "/api/ticket-drafts/{id}/submit",
-            post(submission::submit_draft).layer(throttle(Throttle::Submission)),
+            post(submission::submit_draft).route_layer(throttle(Throttle::Submission)),
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .route("/api/tickets/{id}/actions", post(tickets::requester_action))
@@ -493,19 +493,19 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/tickets/{id}/replies",
             post(messages::reply)
                 .layer(axum::middleware::map_response(api::private_response))
-                .layer(throttle(Throttle::Message)),
+                .route_layer(throttle(Throttle::Message)),
         )
         .route(
             "/api/tickets/{id}/notes",
             post(messages::note)
                 .layer(axum::middleware::map_response(api::private_response))
-                .layer(throttle(Throttle::Message)),
+                .route_layer(throttle(Throttle::Message)),
         )
         .route(
             "/api/screenshots",
             post(screenshots::upload)
                 .layer(DefaultBodyLimit::max(screenshots::MAX_BYTES))
-                .layer(throttle(Throttle::Upload)),
+                .route_layer(throttle(Throttle::Upload)),
         )
         .route(
             "/api/screenshots/{id}",
@@ -544,7 +544,7 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/queue",
-            get(queues::list_queue).layer(throttle(Throttle::Search)),
+            get(queues::list_queue).route_layer(throttle(Throttle::Search)),
         )
         .route("/api/queue/counts", get(queues::queue_counts))
         .route("/api/queue/bulk-options", get(bulk::bulk_options))
