@@ -190,7 +190,11 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// request_timeout`. Dropping the handler rolls back its open transaction,
 /// exactly as when the client disconnects.
 pub async fn deadline(request: Request, next: Next) -> Response {
-    match tokio::time::timeout(REQUEST_TIMEOUT, next.run(request)).await {
+    bounded(REQUEST_TIMEOUT, next.run(request)).await
+}
+
+async fn bounded(limit: Duration, response: impl Future<Output = Response>) -> Response {
+    match tokio::time::timeout(limit, response).await {
         Ok(response) => response,
         Err(_) => ApiError::RequestTimeout.into_response(),
     }
@@ -308,6 +312,21 @@ mod tests {
         );
         assert_eq!(t.client_ip(caddy, &[]), caddy);
         assert_eq!(t.client_ip(None, &["198.51.100.1"]), None);
+    }
+
+    #[tokio::test]
+    async fn slow_requests_end_with_request_timeout() {
+        let slow = async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            "late".into_response()
+        };
+        let response = bounded(Duration::from_millis(20), slow).await;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let fast = bounded(Duration::from_secs(5), async { "ok".into_response() }).await;
+        assert_eq!(fast.status(), axum::http::StatusCode::OK);
     }
 
     #[test]
