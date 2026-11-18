@@ -1136,7 +1136,7 @@ export default {
     invalid_credentials: 'Benutzername oder Passwort ist falsch.',
     rate_limited: 'Zu viele Anfragen. Bitte warten Sie eine Minute und versuchen Sie es erneut.',
     request_timeout: 'Die Anfrage hat zu lange gedauert. Bitte versuchen Sie es später erneut.',
-    csrf_rejected: 'Diese Anfrage wurde blockiert, weil sie nicht von dieser Seite stammt. Laden Sie die Seite neu und versuchen Sie es erneut.',
+    csrf_rejected: 'Diese Anfrage wurde blockiert: Öffnen Sie das Portal unter seiner eingerichteten Adresse (dem Link aus Ihrer Einladung oder von Ihrer Administration) und versuchen Sie es erneut. Anfragen von anderen Seiten werden abgelehnt.',
     setup_already_completed: 'Die Einrichtung ist bereits abgeschlossen. Bitte melden Sie sich an.',
     validation_failed: 'Bitte korrigieren Sie die markierten Felder.',
     unavailable: 'Der Dienst ist nicht erreichbar. Bitte versuchen Sie es später erneut.',

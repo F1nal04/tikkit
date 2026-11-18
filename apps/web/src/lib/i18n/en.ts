@@ -1130,7 +1130,7 @@ export default {
     invalid_credentials: 'The username or password is incorrect.',
     rate_limited: 'Too many requests. Please wait a minute and try again.',
     request_timeout: 'The request took too long. Please try again later.',
-    csrf_rejected: 'This request was blocked because it did not come from this site. Reload the page and try again.',
+    csrf_rejected: 'This request was blocked: open the portal at its configured address (the link in your invitation or from your administrator) and try again. Requests from other sites are refused.',
     setup_already_completed: 'Setup has already been completed. Please sign in.',
     validation_failed: 'Please correct the highlighted fields.',
     unavailable: 'The service is unavailable. Please try again later.',
