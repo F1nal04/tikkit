@@ -8033,7 +8033,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `validation_failed` (input bounds; `screenshot_ids` not own pending uploads) */
+            /** @description `validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts) */
             422: {
                 headers: {
                     [name: string]: unknown;

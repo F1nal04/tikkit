@@ -700,3 +700,61 @@ async fn role_payloads_cannot_carry_extra_authority() {
         .unwrap();
     assert_eq!(role, "operator");
 }
+
+#[tokio::test]
+async fn open_drafts_are_capped_per_account() {
+    let Some(t) = TestDb::new().await else { return };
+    let p = &t.pool;
+    fixtures::bootstrap_admin(p).await;
+    let req = fixtures::account(p, Role::User, "req").await;
+    fixtures::account(p, Role::User, "other").await;
+    sqlx::query(
+        "INSERT INTO ticket_drafts (requester_account_id, intake)
+         SELECT $1, '{}'::jsonb FROM generate_series(1, $2)",
+    )
+    .bind(req)
+    .bind(tikkit_api::submission::MAX_OPEN_DRAFTS as i32)
+    .execute(p)
+    .await
+    .unwrap();
+    let app = test_app(p);
+    let cookie = login(&app, "req", PASSWORD).await.session();
+    let r = call(
+        &app,
+        "POST",
+        "/api/ticket-drafts",
+        Some(json!({})),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(
+        r.body["error"]["details"]["fields"]["draft"],
+        json!(["too_many"])
+    );
+    // Another account is unaffected; freeing one slot allows one more.
+    let other = login(&app, "other", PASSWORD).await.session();
+    let r = call(
+        &app,
+        "POST",
+        "/api/ticket-drafts",
+        Some(json!({})),
+        Some(&other),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    sqlx::query("DELETE FROM ticket_drafts WHERE id = (SELECT id FROM ticket_drafts WHERE requester_account_id = $1 LIMIT 1)")
+        .bind(req)
+        .execute(p)
+        .await
+        .unwrap();
+    let r = call(
+        &app,
+        "POST",
+        "/api/ticket-drafts",
+        Some(json!({})),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+}

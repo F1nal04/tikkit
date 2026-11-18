@@ -5261,7 +5261,7 @@
             }
           },
           "422": {
-            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)",
+            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts)",
             "content": {
               "application/json": {
                 "schema": {
