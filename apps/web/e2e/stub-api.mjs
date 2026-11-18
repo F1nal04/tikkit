@@ -308,12 +308,14 @@ const submittedScope = (x, q) =>
   (!q.get('team_id') || TEAMS.find((t) => t.name === x.team_name)?.id === q.get('team_id')) &&
   (!q.get('category_id') || x.category_id === q.get('category_id'))
 const disposition = (x) => x.ai_outcome === 'failed' ? 'provider_failed' : (x.ai_outcome ?? x.route)
-function reportFixture(items) {
+const enteredQueue = (x) => ['failed', 'not_solved', null].includes(x.ai_outcome)
+function reportFixture(items, teamFiltered) {
   const counts = (group, key) => Object.entries(Object.groupBy(items, group))
     .map(([value, rows]) => ({ [key]: value, count: rows.length }))
-  const queued = items.filter((x) => ['failed', 'not_solved', null].includes(x.ai_outcome))
+  const queued = items.filter(enteredQueue)
   const closed = items.filter((x) => x.status === 'closed').length
   const assigned = queued.filter((x) => x.team_name).length
+  const solved = items.filter((x) => x.ai_outcome === 'solved').length
   return {
     submissions: items.length,
     daily: counts((x) => x.created_at.slice(0, 10), 'day'),
@@ -321,18 +323,20 @@ function reportFixture(items) {
     priorities: counts((x) => x.priority_name, 'name').map((row) => ({ id: PRIORITIES[1].id, ...row })),
     ai_outcomes: counts(disposition, 'outcome'),
     ai_attempts: items.filter((x) => x.ai_outcome).length,
-    ai_rate_denominator: items.filter((x) => ['solved', 'not_solved', 'failed'].includes(x.ai_outcome)).length,
-    deflection_rate_denominator: items.filter((x) => x.status !== 'cancelled').length,
+    ai_rate_numerator: teamFiltered ? null : solved,
+    ai_rate_denominator: teamFiltered ? null : items.filter((x) => ['solved', 'not_solved', 'failed'].includes(x.ai_outcome)).length,
+    deflection_rate_numerator: teamFiltered ? null : solved,
+    deflection_rate_denominator: teamFiltered ? null : items.filter((x) => x.status !== 'cancelled').length,
     closures: counts((x) => x.resolution, 'resolution'),
     awaiting_confirmation: 0,
     operator: {
       queued: queued.length, first_response_samples: closed, mean_first_response_seconds: closed ? 1800 : null,
-      initial_closures: closed, subsequent_closures: 0, reopens: 0, rejected_proposals: 0,
+      initial_closures: closed, initial_requester_confirmed: closed, initial_confirmation_timeout: 0, subsequent_closures: 0, reopens: 0, rejected_proposals: 0,
       time_to_proposal_samples: closed, mean_queue_to_proposal_seconds: closed ? 3600 : null,
       confirmation_wait_samples: closed, mean_proposal_to_closure_seconds: closed ? 5400 : null,
       resolution_samples: closed, mean_queue_to_closure_seconds: closed ? 9000 : null,
     },
-    workload: assigned ? [{ team_id: TEAMS[0].id, team_name: TEAMS[0].name, assignee_id: 'op',
+    workload: assigned ? [{ team_id: TEAMS[0].id, team_name: TEAMS[0].name, assignee_id: account('operator', null).id,
       assignee_name: 'operator', assignee_role: 'operator', queued: assigned, active: assigned - closed, awaiting_confirmation: 0 }] : [],
   }
 }
@@ -467,10 +471,11 @@ createServer(async (req, res) => {
   if (route === 'GET /api/admin/reports' || route === 'POST /api/admin/reports/export') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
     const q = new URL(req.url, 'http://stub').searchParams
+    const duration = Date.parse(q.get('created_before')) - Date.parse(q.get('created_from'))
+    if (!(duration > 0 && duration <= 366 * 86_400_000)) return fail(res, 400, 'invalid_query')
     const items = SUBMISSIONS.filter((x) => submittedScope(x, q))
-    if (req.method === 'GET') return reply(res, 200, reportFixture(items))
+    if (req.method === 'GET') return reply(res, 200, reportFixture(items, q.has('team_id')))
     if (req.headers['x-requested-with'] !== 'tikkit') return fail(res, 403, 'csrf_rejected')
-    if (!q.get('created_from') || !q.get('created_before')) return fail(res, 400, 'invalid_query')
     res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="ticket-report.csv"' })
     return res.end(['reference,ai_outcome', ...items.map((x) => `${x.reference},${disposition(x)}`)].join('\r\n'))
   }
@@ -485,6 +490,8 @@ createServer(async (req, res) => {
     }
     const items = SUBMISSIONS.filter((x) =>
       submittedScope(x, q) &&
+      (!q.get('assignee_id') || (x.assignee_display_name && account(x.assignee_display_name, null).id === q.get('assignee_id'))) &&
+      (!q.has('entered_queue') || enteredQueue(x) === (q.get('entered_queue') === 'true')) &&
       (!q.get('status') || x.status === q.get('status')) &&
       (!q.get('ai_disposition') || disposition(x) === q.get('ai_disposition')) &&
       (!q.get('resolution') || x.resolution === q.get('resolution')) &&

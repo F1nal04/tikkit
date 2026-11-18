@@ -2,7 +2,7 @@
   import { CSRF_HEADER } from '@tikkit/api-client'
   import Table from '#lib/components/Table.svelte'
   import { messages, errorText } from '#lib/i18n.ts'
-  import { canExport, reportQuery } from '#lib/reports.ts'
+  import { reportQuery } from '#lib/reports.ts'
   import { DISPOSITIONS, RESOLUTIONS, submissionsHref, type SubmissionFilters } from '#lib/submissions.ts'
   import type { PageProps } from './$types'
 
@@ -18,10 +18,8 @@
   let hours = $derived(new Intl.NumberFormat(data.locale, { style: 'unit', unit: 'hour', maximumSignificantDigits: 3 }))
   let exporting = $state(false)
   let exportError = $state('')
-  let exportAllowed = $derived(canExport(f))
   let counts = $derived(new Map(r.ai_outcomes.map(({ outcome, count }) => [outcome, count])))
   let closures = $derived(new Map(r.closures.map(({ resolution, count }) => [resolution, count])))
-  let solved = $derived(counts.get('solved') ?? 0)
   let timings = $derived([
     [s.firstResponse, operator.first_response_samples, operator.mean_first_response_seconds],
     [s.queueToProposal, operator.time_to_proposal_samples, operator.mean_queue_to_proposal_seconds],
@@ -30,8 +28,8 @@
   ] satisfies [string, number, number | null][])
   const drill = (filters: Partial<SubmissionFilters> = {}) =>
     submissionsHref({ ...f, lang: data.locale, ...filters })
-  const ratio = (numerator: number, denominator: number) =>
-    denominator ? `${percent.format(numerator / denominator)} (${numeric.format(numerator)} / ${numeric.format(denominator)})` : s.unavailable
+  const ratio = (numerator: number | null, denominator: number | null) =>
+    numerator !== null && denominator ? `${percent.format(numerator / denominator)} (${numeric.format(numerator)} / ${numeric.format(denominator)})` : s.unavailable
 
   async function exportCsv() {
     exporting = true
@@ -71,8 +69,8 @@
 
 <form method="get" class="filters" aria-label={s.filter}>
   <input type="hidden" name="lang" value={data.locale} />
-  <label>{t.submissions.from}<input type="date" name="from" value={f.from} /></label>
-  <label>{t.submissions.until}<input type="date" name="until" value={f.until} /></label>
+  <label>{t.submissions.from}<input type="date" name="from" value={f.from} min="0001-01-01" max="9999-12-30" required /></label>
+  <label>{t.submissions.until}<input type="date" name="until" value={f.until} min="0001-01-01" max="9999-12-30" required /></label>
   <label>{t.submissions.category}
     <select name="category_id" value={f.category_id}>
       <option value="">{t.submissions.allCategories}</option>
@@ -93,7 +91,7 @@
 </form>
 
 <div class="export">
-  <button type="button" onclick={exportCsv} disabled={!exportAllowed || exporting}>
+  <button type="button" onclick={exportCsv} disabled={exporting}>
     {exporting ? s.exporting : s.export}
   </button>
   <p>{s.exportRange}</p>
@@ -141,9 +139,12 @@
     <h2 id="ai-outcomes">{s.ai}</h2>
     <dl>
       <dt>{s.attempts}</dt><dd>{numeric.format(r.ai_attempts)}</dd>
-      <dt>{s.confirmationRate}</dt><dd>{ratio(solved, r.ai_rate_denominator)}</dd>
-      <dt>{s.deflectionRate}</dt><dd>{ratio(solved, r.deflection_rate_denominator)}</dd>
+      {#if !f.team_id}
+        <dt>{s.confirmationRate}</dt><dd>{ratio(r.ai_rate_numerator, r.ai_rate_denominator)}</dd>
+        <dt>{s.deflectionRate}</dt><dd>{ratio(r.deflection_rate_numerator, r.deflection_rate_denominator)}</dd>
+      {/if}
     </dl>
+    {#if f.team_id}<p>{s.teamRatesUnavailable}</p>{/if}
     <Table caption={s.ai} empty={s.empty} isEmpty={false}>
       {#snippet head()}{@render countHead(t.submissions.aiOutcome)}{/snippet}
       {#each DISPOSITIONS as outcome (outcome)}
@@ -157,8 +158,11 @@
   <section aria-labelledby="closures">
     <h2 id="closures">{s.closures}</h2>
     <dl>
-      <dt>{s.humanClosed}</dt><dd>{numeric.format((closures.get('requester_confirmed') ?? 0) + (closures.get('confirmation_timeout') ?? 0))}</dd>
+      <dt><a href={drill({ status: 'closed' })}>{s.humanClosed}</a></dt>
+      <dd>{numeric.format((closures.get('requester_confirmed') ?? 0) + (closures.get('confirmation_timeout') ?? 0))}</dd>
       <dt>{s.initialClosures}</dt><dd>{numeric.format(operator.initial_closures)}</dd>
+      <dt class="subcount">{s.initialConfirmed}</dt><dd>{numeric.format(operator.initial_requester_confirmed)}</dd>
+      <dt class="subcount">{s.initialTimeout}</dt><dd>{numeric.format(operator.initial_confirmation_timeout)}</dd>
       <dt>{s.subsequentClosures}</dt><dd>{numeric.format(operator.subsequent_closures)}</dd>
       <dt>{s.reopens}</dt><dd>{numeric.format(operator.reopens)}</dd>
       <dt>{s.rejected}</dt><dd>{numeric.format(operator.rejected_proposals)}</dd>
@@ -173,9 +177,19 @@
   </section>
 </div>
 
+{#snippet workloadCount(count: number, label: string, assignee: string | null, scope?: Partial<SubmissionFilters>)}
+  <td class="measure">
+    {#if count && scope}
+      <a href={drill(scope)} aria-label={`${label} · ${assignee} · ${numeric.format(count)}`}>{numeric.format(count)}</a>
+    {:else}
+      {numeric.format(count)}
+    {/if}
+  </td>
+{/snippet}
+
 <section aria-labelledby="workload">
   <h2 id="workload">{s.workload}</h2>
-  <p>{s.workloadBasis} <strong>{numeric.format(operator.queued)}</strong></p>
+  <p>{s.workloadBasis} <a href={drill({ entered_queue: 'true' })}>{s.queued} ({numeric.format(operator.queued)})</a></p>
   <Table caption={s.workload} empty={s.empty} isEmpty={!r.workload.length}>
     {#snippet head()}
       <tr>
@@ -185,15 +199,18 @@
       </tr>
     {/snippet}
     {#each r.workload as row (`${row.team_id}/${row.assignee_id}`)}
+      {@const scope = row.team_id && row.assignee_id
+        ? { team_id: row.team_id, assignee_id: row.assignee_id, entered_queue: 'true' } as const
+        : undefined}
       <tr>
         <th scope="row">{row.team_name ?? t.submissions.generalQueue}</th>
         <td>
           {row.assignee_name ?? t.submissions.unassigned}
           {#if row.assignee_role}<small>{t.roles[row.assignee_role]}</small>{/if}
         </td>
-        <td class="measure">{numeric.format(row.queued)}</td>
-        <td class="measure">{numeric.format(row.active)}</td>
-        <td class="measure">{numeric.format(row.awaiting_confirmation)}</td>
+        {@render workloadCount(row.queued, s.queued, row.assignee_name, scope)}
+        {@render workloadCount(row.active, s.active, row.assignee_name, scope && { ...scope, resolution: 'open' })}
+        {@render workloadCount(row.awaiting_confirmation, s.awaiting, row.assignee_name, scope && { ...scope, status: 'awaiting_confirmation' })}
       </tr>
     {/each}
   </Table>
@@ -223,6 +240,7 @@
   .breakdowns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem; align-items: start; }
   dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 0.75rem; }
   dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .subcount { padding-inline-start: 1rem; }
   small { display: block; }
   .measure { text-align: right; font-variant-numeric: tabular-nums; }
 </style>

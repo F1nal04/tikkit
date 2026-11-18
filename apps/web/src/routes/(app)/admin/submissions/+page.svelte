@@ -15,6 +15,8 @@
   let base = $derived({ ...f, cursor: '' })
   let reportFilters = $derived([
     f.team_id && s.team,
+    f.assignee_id && s.assignee,
+    f.entered_queue && (f.entered_queue === 'true' ? t.reports.queued : s.notHuman),
     f.priority_id && s.priority,
     f.ai_disposition && t.reports.aiOutcomes[f.ai_disposition],
     f.resolution && s.resolutions[f.resolution],
@@ -29,6 +31,8 @@
 <form method="get" class="filters" aria-label={s.filter}>
   {#if f.lang}<input type="hidden" name="lang" value={f.lang} />{/if}
   {#if f.team_id}<input type="hidden" name="team_id" value={f.team_id} />{/if}
+  {#if f.assignee_id}<input type="hidden" name="assignee_id" value={f.assignee_id} />{/if}
+  {#if f.entered_queue}<input type="hidden" name="entered_queue" value={f.entered_queue} />{/if}
   {#if f.priority_id}<input type="hidden" name="priority_id" value={f.priority_id} />{/if}
   {#if f.ai_disposition}<input type="hidden" name="ai_disposition" value={f.ai_disposition} />{/if}
   {#if f.resolution}<input type="hidden" name="resolution" value={f.resolution} />{/if}
