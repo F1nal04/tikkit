@@ -310,11 +310,9 @@ async fn hand_off(
     usage_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
     // Locks the ticket row, then checks its status under that lock.
-    match lifecycle::transition(tx, ticket_id, By::System, &Transition::AiFailed).await {
-        Ok(_) => {
-            close(tx, ticket_id, "handed_off", outcome, usage_id).await?;
-            Ok(true)
-        }
+    // Ends the attempt with `outcome` under the same lock, before the event.
+    match lifecycle::ai_failed(tx, ticket_id, outcome, usage_id).await {
+        Ok(_) => Ok(true),
         Err(ApiError::Conflict) => Ok(false),
         Err(error) => Err(error),
     }

@@ -6,7 +6,9 @@
 //! event with the actor and the previous and new team and assignee. Nothing routes
 //! automatically: every change here is an explicit staff action.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -17,7 +19,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     api::{ApiError, Json, Path},
-    auth::{CurrentUser, ident},
+    auth::{Auth, CurrentUser, ident},
     authz::{self, Permission, TicketScope},
     lifecycle,
     management::invalid,
@@ -90,11 +92,12 @@ pub struct AssignmentReceipt {
         (status = 422, description = "`team_id` or `assignee_account_id` is not an eligible target", body = crate::api::ErrorEnvelope)))]
 pub async fn change_assignment(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<AssignmentAction>,
 ) -> Result<Json<AssignmentReceipt>, ApiError> {
-    apply(&state.pool, user.account_id(), id, action)
+    apply(&state.pool, &auth, user.account_id(), id, action)
         .await
         .map(Json)
 }
@@ -103,6 +106,7 @@ pub async fn change_assignment(
 /// each item of a bulk action (`bulk.rs`) run exactly this.
 pub(crate) async fn apply(
     pool: &PgPool,
+    auth: &Auth,
     account_id: Uuid,
     id: Uuid,
     action: AssignmentAction,
@@ -119,7 +123,7 @@ pub(crate) async fn apply(
     if let Err(error) = &result {
         // The transaction is gone: a denied attempt on an AI-solved record is
         // recorded on its own, and the ticket stays untouched.
-        crate::audit::ticket_denied(pool, account_id, id, attempted, error).await;
+        crate::audit::ticket_denied(pool, auth, account_id, id, attempted, error).await;
     }
     result
 }

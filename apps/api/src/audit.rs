@@ -12,7 +12,10 @@
 //! - [`purge_before`] is the one way audit rows are ever deleted (retention).
 //! - [`search`], [`actions`], and [`export`] are the Admin read side.
 
+use std::sync::Arc;
+
 use axum::{
+    Extension,
     extract::{Request, State},
     http::{HeaderValue, header},
     middleware::Next,
@@ -28,7 +31,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     api::{ApiError, Cursor, Json, Page, Pagination, Query, Role},
-    auth::{Client, CurrentUser, ident},
+    auth::{Auth, Client, CurrentUser, ident},
     authz::{Permission, require_permission},
     csv, telemetry,
 };
@@ -110,23 +113,34 @@ pub async fn system<'c>(
     record(db, entry).await
 }
 
-/// Backstop, not the rule: string values under secret-looking keys are
-/// replaced. Flags such as `password_changed: true` stay.
+/// Key fragments that mark a value as secret, matched case-insensitively.
+const SENSITIVE: [&str; 11] = [
+    "password",
+    "pass",
+    "pwd",
+    "token",
+    "secret",
+    "api_key",
+    "private_key",
+    "credential",
+    "bearer",
+    "authorization",
+    "cookie",
+];
+
+/// Backstop, not the rule: whatever sits under a secret-looking key is
+/// replaced, whether it is a string, a list, or an object. Booleans and
+/// numbers stay: flags such as `password_changed: true` and numeric settings
+/// such as `org_token_limit` are not secrets.
 fn redact(value: &mut Value) {
-    const SENSITIVE: [&str; 6] = [
-        "password",
-        "token",
-        "secret",
-        "api_key",
-        "authorization",
-        "cookie",
-    ];
     match value {
         Value::Object(map) => {
             for (key, item) in map.iter_mut() {
                 let key = key.to_lowercase();
-                if item.is_string() && SENSITIVE.iter().any(|s| key.contains(s)) {
-                    *item = Value::String(REDACTED.into());
+                if SENSITIVE.iter().any(|s| key.contains(s)) {
+                    if !matches!(item, Value::Bool(_) | Value::Number(_) | Value::Null) {
+                        *item = Value::String(REDACTED.into());
+                    }
                 } else {
                     redact(item);
                 }
@@ -139,10 +153,15 @@ fn redact(value: &mut Value) {
 
 /// Records a denied ticket action where the spec asks for it, and nothing else:
 ///
-/// - any failed change attempt on an AI-solved record (`ai_solved_change_denied`),
-///   whoever tried and whatever the response was;
+/// - a failed attempt to change an AI-solved record (`ai_solved_change_denied`);
 /// - a reopen or requester cancellation the current policy or the caller's
 ///   access denied (`ticket_reopen_denied`, `ticket_cancel_denied`).
+///
+/// Only for a ticket the caller may see. For a ticket that is missing or
+/// invisible to them nothing is written, exactly as for a ticket that does not
+/// exist, so a denial never confirms that a ticket exists. Repeats of one
+/// action by one account on one ticket are recorded a bounded number of times
+/// per window ([`Auth::allow_denial_record`]).
 ///
 /// Call it after the failed transaction is rolled back. It writes one audit
 /// row and never a ticket event, so the ticket, its history, and every
@@ -150,22 +169,61 @@ fn redact(value: &mut Value) {
 /// the caller still answers with the original error.
 pub async fn ticket_denied(
     pool: &PgPool,
+    auth: &Auth,
     account: Uuid,
     ticket: Uuid,
     attempted: &str,
     error: &ApiError,
 ) {
     let result = async {
-        let row: Option<(String, bool, String)> = sqlx::query_as(
-            "SELECT t.status::text, o.allow_reopening, o.requester_cancellation_policy
-             FROM tickets t, organization o WHERE t.id = $1",
+        // One statement for a missing, an invisible, and a visible ticket alike.
+        type Found = (
+            Option<String>,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<Uuid>,
+            bool,
+            String,
+            Option<String>,
+        );
+        let row: Option<Found> = sqlx::query_as(
+            "SELECT t.status::text, t.requester_account_id, t.team_id, t.assignee_account_id,
+                    o.allow_reopening, o.requester_cancellation_policy,
+                    (SELECT a.role::text FROM accounts a WHERE a.id = $2 AND a.is_active)
+             FROM organization o LEFT JOIN tickets t ON t.id = $1",
         )
         .bind(ticket)
+        .bind(account)
         .fetch_optional(pool)
         .await?;
-        let Some((status, allow_reopening, cancellation_policy)) = row else {
+        let team = crate::authz::team_of(pool, account).await?;
+        // No such ticket: its columns are NULL.
+        let Some((
+            Some(status),
+            Some(requester),
+            team_id,
+            assignee,
+            allow_reopening,
+            policy,
+            Some(role),
+        )) = row
+        else {
             return Ok(());
         };
+        let actor = crate::authz::Actor {
+            id: account,
+            role: ident(role).map_err(|_| sqlx::Error::RowNotFound)?,
+            team,
+        };
+        let scope = crate::authz::TicketScope {
+            requester_account_id: requester,
+            team_id,
+            assignee_account_id: assignee,
+            status: ident(status.clone()).map_err(|_| sqlx::Error::RowNotFound)?,
+        };
+        if crate::authz::ticket_view(&actor, &scope).is_none() {
+            return Ok(());
+        }
         let denied = matches!(error, ApiError::Forbidden);
         let mut metadata = json!({
             "attempted": attempted,
@@ -178,11 +236,14 @@ pub async fn ticket_denied(
             metadata["allow_reopening"] = json!(allow_reopening);
             "ticket_reopen_denied"
         } else if attempted == "cancel" && denied {
-            metadata["cancellation_policy"] = json!(cancellation_policy);
+            metadata["cancellation_policy"] = json!(policy);
             "ticket_cancel_denied"
         } else {
             return Ok(());
         };
+        if !auth.allow_denial_record(account, ticket, attempted) {
+            return Ok(());
+        }
         let entry = Entry {
             action,
             who: Who::Account(account),
@@ -194,7 +255,12 @@ pub async fn ticket_denied(
     }
     .await;
     if let Err(error) = result {
-        tracing::error!(%error, "could not record a denied ticket action");
+        // The code only: database errors can carry statement text.
+        let _ = error;
+        tracing::error!(
+            error_code = "audit_denial_not_recorded",
+            "could not record a denied ticket action"
+        );
     }
 }
 
@@ -204,12 +270,17 @@ pub async fn ticket_denied(
 /// The token is not read and never stored.
 pub async fn invitation_tampering(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     client: Client,
     request: Request,
     next: Next,
 ) -> Response {
     let response = next.run(request).await;
-    if let Some(ApiError::UnknownField(field)) = response.extensions().get::<ApiError>() {
+    if let Some(ApiError::UnknownField(field)) = response.extensions().get::<ApiError>()
+        // The extractor rejects these before the handler's own limiter runs:
+        // bound the rows one client can write. The response stays the same.
+        && auth.limit_ip("invitation_rejected", &client).is_ok()
+    {
         // The name is the caller's text: keep it only when it looks like a field name.
         let plain = field.len() <= 64
             && field
@@ -233,10 +304,17 @@ pub async fn invitation_tampering(
     response
 }
 
+/// Shortest retention the database accepts: [`purge_before`] refuses a cutoff
+/// less than this many days in the past (`audit_retention_floor()` in SQL).
+pub const RETENTION_FLOOR_DAYS: i64 = 30;
+
 /// Retention (#43): deletes audit events older than `cutoff` through the one
 /// database path that may (`audit_retention_purge`) and appends
 /// `audit_retention_purged` with the cutoff, the count, and who ran it. Returns
-/// the number of deleted events. A cutoff in the future is rejected.
+/// the number of deleted events. `who` must be an active Admin account or
+/// [`RETENTION`]; `cutoff` must be at least [`RETENTION_FLOOR_DAYS`] in the
+/// past; `audit_retention_purged` events are never deleted. Violations are
+/// database errors (`42501`, `23514`).
 pub async fn purge_before(
     tx: &mut sqlx::PgConnection,
     cutoff: OffsetDateTime,
@@ -248,6 +326,31 @@ pub async fn purge_before(
     };
     sqlx::query_scalar("SELECT audit_retention_purge($1, $2)")
         .bind(cutoff)
+        .bind(admin)
+        .fetch_one(tx)
+        .await
+}
+
+/// Anonymization (#43): blanks the username snapshots of `account` in the log
+/// and removes the `ip` key from the events it acted in or is the subject of,
+/// through the one database path that may update audit rows
+/// (`audit_anonymize_account`). Account IDs, actions, timestamps, and all other
+/// metadata stay. Appends `audit_account_anonymized` and returns the number of
+/// events changed. `who` must be an active Admin account or [`RETENTION`].
+///
+/// New events snapshot `accounts.username` as it is then, so anonymize the
+/// account row first.
+pub async fn anonymize_account(
+    tx: &mut sqlx::PgConnection,
+    account: Uuid,
+    who: Who,
+) -> Result<i64, sqlx::Error> {
+    let admin = match who {
+        Who::Account(id) => Some(id),
+        Who::Service(_) => None,
+    };
+    sqlx::query_scalar("SELECT audit_anonymize_account($1, $2)")
+        .bind(account)
         .bind(admin)
         .fetch_one(tx)
         .await
@@ -737,25 +840,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secret_looking_strings_are_redacted_and_flags_kept() {
+    fn everything_under_a_secret_looking_key_is_redacted_and_flags_kept() {
+        // Assembled at runtime: nothing here is a real credential.
+        let secret = ["not", "a", "real", "value"].join("-");
         let mut value = json!({
             "password_changed": true,
-            "password": "hunter-two",
-            "nested": [{ "reset_token": "abc", "count": 3 }],
-            "API_KEY": "k",
+            "credential_replaced": false,
+            "org_token_limit": 5000,
+            "password": secret,
+            "nested": [{ "reset_token": secret, "count": 3 }],
+            "API_KEY": secret,
+            "Api_Keys": [secret, secret],
+            "smtp_password": { "value": secret },
+            "SMTP_PWD": secret,
+            "passphrase": secret,
+            "private_key": [{ "pem": secret }],
+            "provider_credential": { "key": secret, "hint": "abcd" },
+            "Bearer": secret,
+            "session_cookie": null,
             "host": "mail.example",
+            "to": { "enabled": true, "Authorization": [secret] },
         });
         redact(&mut value);
         assert_eq!(
             value,
             json!({
                 "password_changed": true,
+                "credential_replaced": false,
+                "org_token_limit": 5000,
                 "password": REDACTED,
                 "nested": [{ "reset_token": REDACTED, "count": 3 }],
                 "API_KEY": REDACTED,
+                "Api_Keys": REDACTED,
+                "smtp_password": REDACTED,
+                "SMTP_PWD": REDACTED,
+                "passphrase": REDACTED,
+                "private_key": REDACTED,
+                "provider_credential": REDACTED,
+                "Bearer": REDACTED,
+                "session_cookie": null,
                 "host": "mail.example",
+                "to": { "enabled": true, "Authorization": REDACTED },
             })
         );
+        assert!(!value.to_string().contains(&secret));
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! Ticket read API. Status changes go through [`crate::lifecycle`]; visibility
 //! is [`authz::ticket_view`]. See docs/lifecycle.md.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -16,7 +18,7 @@ use crate::{
         ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketAssignmentView,
         TicketStatus,
     },
-    auth::{CurrentUser, ident},
+    auth::{Auth, CurrentUser, ident},
     authz::{self, Actor, Permission, TicketScope, TicketView},
     lifecycle::{self, By, ClosureReason, ResolutionSource, Transition},
     submission::SubmittedIntake,
@@ -629,6 +631,7 @@ pub struct ActionResult {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn requester_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<RequesterAction>,
@@ -695,7 +698,8 @@ pub async fn requester_action(
         // Denied cancellations and reopens, and any attempt to change an
         // AI-solved record, are recorded without touching the ticket.
         let attempted = transition.event_type();
-        crate::audit::ticket_denied(&state.pool, user.account_id(), id, attempted, error).await;
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, attempted, error).await;
     }
     Ok(Json(ActionResult { status: result? }))
 }
@@ -801,6 +805,7 @@ impl StaffAction {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn staff_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<StaffAction>,
@@ -809,10 +814,10 @@ pub async fn staff_action(
         // A role that can never do staff work still leaves a trace when it
         // aims at an AI-solved record or tries to reopen a ticket.
         let (pool, account) = (&state.pool, user.account_id());
-        crate::audit::ticket_denied(pool, account, id, action.name(), &error).await;
+        crate::audit::ticket_denied(pool, &auth, account, id, action.name(), &error).await;
         return Err(error);
     }
-    let status = apply_staff_action(&state.pool, user.account_id(), id, action).await?;
+    let status = apply_staff_action(&state.pool, &auth, user.account_id(), id, action).await?;
     Ok(Json(ActionResult { status }))
 }
 
@@ -820,6 +825,7 @@ pub async fn staff_action(
 /// item of a bulk action (`bulk.rs`) run exactly this.
 pub(crate) async fn apply_staff_action(
     pool: &PgPool,
+    auth: &Auth,
     account_id: Uuid,
     id: Uuid,
     action: StaffAction,
@@ -829,7 +835,7 @@ pub(crate) async fn apply_staff_action(
     if let Err(error) = &result {
         // The transaction is gone: denied reopens and attempts on AI-solved
         // records are recorded on their own, and the ticket stays untouched.
-        crate::audit::ticket_denied(pool, account_id, id, attempted, error).await;
+        crate::audit::ticket_denied(pool, auth, account_id, id, attempted, error).await;
     }
     result
 }

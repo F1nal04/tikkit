@@ -51,6 +51,8 @@ const LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const LIMIT_PER_IP: u32 = 10;
 const LIMIT_PER_USERNAME: u32 = 5;
 const LIMIT_MAX_KEYS: usize = 10_000;
+/// Audit rows one account may cause per window by repeating one denied action on one ticket.
+const LIMIT_DENIALS: u32 = 5;
 /// How long a rotated-away token keeps working, for requests already in flight.
 const ROTATION_GRACE: &str = "interval '1 minute'";
 
@@ -151,6 +153,14 @@ impl Auth {
             return Err(ApiError::RateLimited(left.max(1)));
         }
         Ok(())
+    }
+
+    /// Whether another denied `action` of `account` on `ticket` may still be
+    /// written to the audit log in this window. Repeats beyond it change nothing
+    /// for the caller; they are just not recorded again.
+    pub(crate) fn allow_denial_record(&self, account: Uuid, ticket: Uuid, action: &str) -> bool {
+        let key = format!("denied:{}:{}:{action}", account.simple(), ticket.simple());
+        self.hit(key, LIMIT_DENIALS).is_ok()
     }
 
     /// Per-IP only, for endpoints keyed by an unguessable token rather than a username.

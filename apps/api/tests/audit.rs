@@ -767,26 +767,87 @@ async fn audit_history_cannot_be_changed_outside_the_retention_path() {
     .unwrap();
     assert_eq!(both, (Some(w.ids["admin"]), None));
 
-    // Retention: the one path that deletes, itself recorded.
+    // The guard is not a setting: flipping a session variable, or wrapping the
+    // statement in a block, does not get a DELETE or UPDATE through.
+    for sql in [
+        "DELETE FROM audit_events",
+        "UPDATE audit_events SET actor_username = NULL",
+        "UPDATE audit_events SET metadata = metadata - 'ip'",
+        "DO $$ BEGIN DELETE FROM audit_events; END $$",
+        "DO $$ BEGIN UPDATE audit_events SET actor_username = NULL; END $$",
+    ] {
+        let mut tx = w.pool().begin().await.unwrap();
+        sqlx::query("SET LOCAL tikkit.audit_retention = 'on'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let error = sqlx::query(sql).execute(&mut *tx).await.unwrap_err();
+        assert!(restricted(&error), "{sql}: {error}");
+    }
+
+    // Retention: the one path that deletes, itself recorded. Old events, and an
+    // old record of an earlier purge.
     sqlx::query(
         "INSERT INTO audit_events (event_type, actor_service, created_at)
-         SELECT 'old_event', 'system', now() - interval '400 days' FROM generate_series(1, 3)",
+         SELECT kind, 'system', now() - interval '400 days'
+         FROM unnest(ARRAY['old_event', 'old_event', 'old_event', 'audit_retention_purged']) kind",
     )
     .execute(w.pool())
     .await
     .unwrap();
     let total = w.count().await;
-    let cutoff = OffsetDateTime::now_utc() - time::Duration::days(365);
-    let mut tx = w.pool().begin().await.unwrap();
-    let future = OffsetDateTime::now_utc() + time::Duration::hours(1);
-    let who = Who::Account(w.ids["admin"]);
-    assert!(audit::purge_before(&mut tx, future, who).await.is_err());
-    tx.rollback().await.unwrap();
+    let now = OffsetDateTime::now_utc();
+    let cutoff = now - time::Duration::days(365);
+    let admin = Who::Account(w.ids["admin"]);
+    let code = |error: sqlx::Error| {
+        let code = error.as_database_error().and_then(|e| e.code());
+        code.map(|c| c.into_owned()).unwrap_or_default()
+    };
+    // A cutoff younger than the 30-day floor is refused: now, the future, 29 days.
+    assert_eq!(audit::RETENTION_FLOOR_DAYS, 30);
+    for recent in [
+        now,
+        now + time::Duration::hours(1),
+        now - time::Duration::days(29),
+    ] {
+        let mut tx = w.pool().begin().await.unwrap();
+        let error = audit::purge_before(&mut tx, recent, admin)
+            .await
+            .unwrap_err();
+        assert_eq!(code(error), "23514", "{recent}");
+        let service = Who::Service(audit::RETENTION);
+        let error = audit::purge_before(&mut tx, recent, service).await;
+        assert!(error.is_err(), "{recent}");
+    }
+    // Only an active Admin (or the retention service) may purge.
+    let former = fixtures::account(w.pool(), Role::Admin, "former").await;
+    sqlx::query("UPDATE accounts SET is_active = false WHERE id = $1")
+        .bind(former)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    for who in [
+        w.ids["op"],
+        w.ids["lead"],
+        w.ids["owner"],
+        former,
+        Uuid::new_v4(),
+    ] {
+        let mut tx = w.pool().begin().await.unwrap();
+        let error = audit::purge_before(&mut tx, cutoff, Who::Account(who))
+            .await
+            .unwrap_err();
+        assert_eq!(code(error), "42501");
+    }
     assert_eq!(w.count().await, total);
 
     let mut tx = w.pool().begin().await.unwrap();
-    assert_eq!(audit::purge_before(&mut tx, cutoff, who).await.unwrap(), 3);
-    // The permission ends with the purge, inside the same transaction.
+    assert_eq!(
+        audit::purge_before(&mut tx, cutoff, admin).await.unwrap(),
+        3
+    );
+    // The permission is the function, not the transaction: right after the
+    // purge, in the same transaction, a DELETE is refused again.
     sqlx::query("SAVEPOINT s").execute(&mut *tx).await.unwrap();
     let error = sqlx::query("DELETE FROM audit_events")
         .execute(&mut *tx)
@@ -800,30 +861,254 @@ async fn audit_history_cannot_be_changed_outside_the_retention_path() {
     tx.commit().await.unwrap();
     assert_eq!(w.count().await, total - 3 + 1);
     assert!(w.events("action=old_event").await.is_empty());
-    let purged = w.one("audit_retention_purged").await;
+    // The earlier purge record is older than the cutoff and is still there,
+    // next to the new one: who, the cutoff, the count.
+    let purges = w.events("action=audit_retention_purged").await;
+    assert_eq!(purges.len(), 2);
+    assert_eq!(purges[0]["actor"]["service"], "system");
+    let purged = &purges[1];
     assert_eq!(purged["actor"]["account_id"], json!(w.ids["admin"]));
     assert_eq!(purged["metadata"]["deleted"], 3);
     assert!(purged["metadata"]["cutoff"].is_string());
     assert_eq!(purged["resource_type"], "audit_log");
 
-    // The retention job is a named service.
+    // The retention job is a named service. Nothing recent is ever deleted.
     let mut tx = w.pool().begin().await.unwrap();
     let job = Who::Service(audit::RETENTION);
-    assert_eq!(audit::purge_before(&mut tx, cutoff, job).await.unwrap(), 0);
+    let floor = now - time::Duration::days(audit::RETENTION_FLOOR_DAYS + 1);
+    assert_eq!(audit::purge_before(&mut tx, floor, job).await.unwrap(), 0);
     tx.commit().await.unwrap();
-    let services: Vec<Option<String>> = sqlx::query_scalar(
-        "SELECT actor_service FROM audit_events WHERE event_type = 'audit_retention_purged' ORDER BY id",
-    )
-    .fetch_all(w.pool())
-    .await
-    .unwrap();
-    assert_eq!(services, [None, Some("retention".to_owned())]);
+    let purges = w.events("action=audit_retention_purged").await;
+    assert_eq!(purges.len(), 3);
+    assert_eq!(purges[2]["actor"]["service"], "retention");
     // Still no other way.
     let error = sqlx::query("DELETE FROM audit_events")
         .execute(w.pool())
         .await
         .unwrap_err();
     assert!(restricted(&error));
+}
+
+#[tokio::test]
+async fn anonymizing_an_account_blanks_its_usernames_and_ips_only() {
+    let Some(w) = world().await else { return };
+    let (op, admin) = (w.ids["op"], w.ids["admin"]);
+    // History of `op`: a sign-in (actor and subject, with IP), a failed sign-in
+    // (subject, with IP), ticket work, and an Admin change about the account.
+    assert_eq!(login(&w.app, "op", "not the password").await.status, 401);
+    let id = w.claimed("Printer jam").await;
+    let update = json!({ "role": "specialist", "expertise": "Printers", "team_id": w.desk });
+    let r = w
+        .send("PUT", &format!("/api/accounts/{op}"), update, "admin")
+        .await;
+    assert_eq!(r.status, 204, "{}", r.body);
+
+    // Everything that must not change: identity, action, time, and all other accounts' rows.
+    let fixed = |pool: &PgPool| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Value>(
+                "SELECT jsonb_agg(jsonb_build_array(a.id, a.event_type, a.created_at, a.actor_account_id,
+                            a.subject_account_id, a.actor_role, a.actor_team_id, a.request_id,
+                            a.resource_type, a.resource_id, a.ticket_id, a.metadata - 'ip',
+                            CASE WHEN a.actor_account_id IS DISTINCT FROM $1 THEN a.actor_username END,
+                            CASE WHEN a.subject_account_id IS DISTINCT FROM $1 THEN a.subject_username END,
+                            CASE WHEN a.actor_account_id IS DISTINCT FROM $1
+                                  AND a.subject_account_id IS DISTINCT FROM $1 THEN a.metadata END)
+                        ORDER BY a.id)
+                 FROM audit_events a WHERE a.event_type <> 'audit_account_anonymized'",
+            )
+            .bind(op)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = fixed(w.pool()).await;
+    let named: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events
+         WHERE (actor_account_id = $1 AND actor_username IS NOT NULL)
+            OR (subject_account_id = $1 AND subject_username IS NOT NULL)
+            OR ((actor_account_id = $1 OR subject_account_id = $1) AND metadata ? 'ip')",
+    )
+    .bind(op)
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    assert!(named >= 4, "{named}");
+
+    // Not an Admin, an unknown account, or plain SQL: refused, nothing changes.
+    for (account, who) in [(op, w.ids["lead"]), (op, op), (Uuid::new_v4(), admin)] {
+        let mut tx = w.pool().begin().await.unwrap();
+        let result = audit::anonymize_account(&mut tx, account, Who::Account(who)).await;
+        assert!(result.is_err());
+    }
+    for sql in [
+        "UPDATE audit_events SET actor_username = NULL WHERE actor_account_id = $1",
+        "UPDATE audit_events SET metadata = metadata - 'ip' WHERE subject_account_id = $1",
+    ] {
+        let error = sqlx::query(sql)
+            .bind(op)
+            .execute(w.pool())
+            .await
+            .unwrap_err();
+        assert!(restricted(&error), "{sql}");
+    }
+    assert_eq!(fixed(w.pool()).await, before);
+
+    let mut tx = w.pool().begin().await.unwrap();
+    let changed = audit::anonymize_account(&mut tx, op, Who::Account(admin))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(changed, named);
+    assert_eq!(fixed(w.pool()).await, before);
+
+    // The account's events are still found by its ID, without a name or an IP.
+    let acted = w.events(&format!("actor={op}")).await;
+    assert_eq!(
+        actions(&acted),
+        ["login_succeeded", "ticket_assignment_changed"]
+    );
+    for event in &acted {
+        assert_eq!(event["actor"]["account_id"], json!(op));
+        assert_eq!(event["actor"]["username"], Value::Null);
+        assert!(event["metadata"].get("ip").is_none(), "{event}");
+        assert!(event["actor"]["role"].is_string());
+    }
+    let about = w
+        .events(&format!("resource_type=account&resource_id={op}"))
+        .await;
+    for event in about.iter().filter(|e| !e["subject"].is_null()) {
+        assert_eq!(event["subject"]["account_id"], json!(op));
+        assert_eq!(event["subject"]["username"], Value::Null);
+        assert!(event["metadata"].get("ip").is_none());
+    }
+    assert!(about.iter().any(|e| e["action"] == "login_failed"));
+    assert!(about.iter().any(|e| e["action"] == "account_updated"));
+    assert!(!w.dump().await.contains("\"op\""));
+    // Others keep their names and IPs, also on the same ticket.
+    let trail = w.trail(id).await;
+    assert_eq!(trail[1]["actor"]["username"], "free");
+    assert_eq!(trail[2]["actor"]["username"], Value::Null);
+    let admin_login = w
+        .events(&format!("actor={admin}&action=login_succeeded"))
+        .await;
+    assert_eq!(admin_login[0]["actor"]["username"], "admin");
+    assert!(admin_login[0]["metadata"]["ip"].is_string());
+
+    // The anonymization is itself an event about the account, without its name.
+    let event = w.one("audit_account_anonymized").await;
+    assert_eq!(event["actor"]["account_id"], json!(admin));
+    assert_eq!(event["resource_type"], "account");
+    assert_eq!(event["resource_id"], json!(op));
+    assert_eq!(event["subject"], Value::Null);
+    assert_eq!(event["metadata"]["events"], json!(changed));
+    // Running it again finds nothing left, and the service may run it too.
+    let mut tx = w.pool().begin().await.unwrap();
+    let again = audit::anonymize_account(&mut tx, op, Who::Service(audit::RETENTION))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(again, 0);
+}
+
+#[tokio::test]
+async fn rejected_and_denied_attempts_cannot_flood_the_log() {
+    let Some(w) = world().await else { return };
+    // Anonymous: bodies the extractor rejects never reach the handler's limiter.
+    let tampered = json!({ "token": "t", "username": "climber", "email": "a@example.com",
+                           "password": PASSWORD, "language": "en", "role": "admin" });
+    for _ in 0..40 {
+        let r = call(
+            &w.app,
+            "POST",
+            "/api/invitations/accept",
+            Some(tampered.clone()),
+            None,
+        )
+        .await;
+        assert_eq!((r.status.as_u16(), r.code()), (422, "unknown_field"));
+    }
+    let rejected: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE event_type = 'invitation_rejected'",
+    )
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(rejected, 10, "bounded per client");
+
+    // Signed in: one account repeating one denied action on one ticket.
+    let solved = w.suggested("Solved by AI").await;
+    let r = w
+        .action(solved, json!({ "action": "ai_solved" }), "owner")
+        .await;
+    assert_eq!(r.status, 200);
+    let cancel = json!({ "action": "cancel", "reason": "Escalate" });
+    for _ in 0..12 {
+        let r = w.action(solved, cancel.clone(), "owner").await;
+        assert_eq!(r.status, 409, "the answer never changes");
+    }
+    assert_eq!(w.events("action=ai_solved_change_denied").await.len(), 5);
+    // Another action, or another account, has its own bound.
+    assert_eq!(
+        w.action(solved, json!({ "action": "reopen" }), "owner")
+            .await
+            .status,
+        409
+    );
+    assert_eq!(w.action(solved, cancel.clone(), "admin").await.status, 403);
+    assert_eq!(w.events("action=ai_solved_change_denied").await.len(), 7);
+
+    // Tickets the caller may not see leave no ticket-specific row, whatever
+    // the endpoint: a missing ticket and an invisible one look the same.
+    let other = fixtures::account(w.pool(), Role::User, "other").await;
+    let other_cookie = login(&w.app, "other", PASSWORD).await.session();
+    let closed = w.proposed("Printer jam").await;
+    let accept = json!({ "action": "accept_resolution", "proposal_version": 1 });
+    assert_eq!(w.action(closed, accept, "owner").await.status, 200);
+    let before = w.count().await;
+    let missing = Uuid::new_v4();
+    for ticket in [solved, closed, missing] {
+        // A User on the staff endpoint: the role is refused before anything else.
+        let body = json!({ "action": "reopen", "expected_updated_at": "2026-01-01T00:00:00Z" });
+        let path = format!("/api/tickets/{ticket}/staff-actions");
+        let r = call(&w.app, "POST", &path, Some(body), Some(&other_cookie)).await;
+        assert_eq!(r.status, 403, "{ticket}");
+        for action in ["reopen", "cancel", "ai_not_solved"] {
+            let mut body = json!({ "action": action });
+            if action == "cancel" {
+                body["reason"] = json!("Not mine");
+            }
+            let path = format!("/api/tickets/{ticket}/actions");
+            let r = call(&w.app, "POST", &path, Some(body), Some(&other_cookie)).await;
+            assert_eq!(r.status, 404, "{ticket} {action}");
+        }
+    }
+    // Operators never see AI-solved records: their attempts get 404 and no row.
+    for who in ["op", "lead", "free"] {
+        let dispatch = json!({ "action": "dispatch", "team_id": w.desk });
+        assert_eq!(
+            w.work(solved, "assignment", dispatch, who).await.status,
+            404
+        );
+        let reopen = json!({ "action": "reopen" });
+        assert_eq!(
+            w.work(solved, "staff-actions", reopen, who).await.status,
+            404
+        );
+    }
+    assert_eq!(w.count().await, before);
+    let by_other = w.events(&format!("actor={other}")).await;
+    assert_eq!(actions(&by_other), ["login_succeeded"]);
+    // The owner's own denied reopen of the closed ticket is still recorded.
+    assert_eq!(
+        w.action(closed, json!({ "action": "reopen" }), "owner")
+            .await
+            .status,
+        403
+    );
+    assert_eq!(w.events("action=ticket_reopen_denied").await.len(), 1);
 }
 
 #[tokio::test]
@@ -897,12 +1182,20 @@ async fn ai_decisions_can_be_reconstructed_and_solved_records_stay_final() {
     assert_eq!(trail[1]["metadata"]["route"], "requester_skip");
     assert_eq!(trail[1]["actor"]["username"], "owner");
 
-    // Failed generation: the service hands off.
+    // Failed generation: the service hands off, and the event says why with
+    // the attempt's stable outcome code.
     let failed = w.submit(w.software, "Provider down", true).await;
-    w.system(failed, Transition::AiFailed).await;
+    let mut tx = w.pool().begin().await.unwrap();
+    let outcome = tikkit_api::ai_attempts::CREDENTIAL_MISSING;
+    let handed_off = tikkit_api::ai_attempts::invalidate(&mut tx, None, outcome)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(handed_off, 1);
     let trail = w.trail(failed).await;
     assert_eq!(actions(&trail), ["ticket_submit", "ticket_ai_failed"]);
     assert_eq!(trail[1]["metadata"]["route"], "ai_failed");
+    assert_eq!(trail[1]["metadata"]["outcome"], "credential_missing");
     assert_eq!(trail[1]["actor"]["service"], "ai_attempts");
 
     // Category exemption and AI off: the effective routing reason, no provider.
@@ -955,7 +1248,8 @@ async fn ai_decisions_can_be_reconstructed_and_solved_records_stay_final() {
         w.get("/api/admin/ai/outcomes", "admin").await.body,
         outcomes
     );
-    assert_eq!(w.count().await, before + 6);
+    // Operators cannot see the record: `404`, and no row that would confirm it exists.
+    assert_eq!(w.count().await, before + 5);
     let denied = w.events("action=ai_solved_change_denied").await;
     let seen: Vec<(&str, &str, &str)> = denied
         .iter()
@@ -975,7 +1269,6 @@ async fn ai_decisions_can_be_reconstructed_and_solved_records_stay_final() {
             ("owner", "ai_not_solved", "conflict"),
             ("admin", "reopen", "forbidden"),
             ("admin", "reopen", "forbidden"),
-            ("op", "dispatch", "not_found"),
         ]
     );
     for event in &denied {
@@ -983,9 +1276,9 @@ async fn ai_decisions_can_be_reconstructed_and_solved_records_stay_final() {
         assert_eq!(event["metadata"]["status"], "ai_solved");
         assert!(event["request_id"].is_string());
     }
-    // The trail of the record reads: decided once, then six refused attempts.
+    // The trail of the record reads: decided once, then five refused attempts.
     let trail = w.trail(solved).await;
-    assert_eq!(trail.len(), 9);
+    assert_eq!(trail.len(), 8);
     assert_eq!(trail[2]["action"], "ticket_ai_solved");
     // Tickets the caller cannot see leave no trace when they are not AI-solved.
     let before = w.count().await;

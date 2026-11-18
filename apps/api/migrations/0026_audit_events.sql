@@ -3,8 +3,9 @@
 -- `audit_events` (migration 0002) stays the one audit log. This migration adds
 -- the context every event needs (request ID, actor snapshot or service name,
 -- resource), mirrors every `ticket_events` row into it in the writer's
--- transaction, and replaces the append-only guard with one that leaves a single
--- explicit retention path (`audit_retention_purge`).
+-- transaction, and replaces the append-only guard with one that leaves two
+-- explicit paths for the retention feature (`audit_retention_purge`,
+-- `audit_anonymize_account`).
 
 ALTER TABLE audit_events
     -- The correlation ID of the request that wrote the event, or that caused the
@@ -102,6 +103,11 @@ CREATE FUNCTION audit_ticket_metadata(e ticket_events) RETURNS jsonb LANGUAGE sq
                    FROM ticket_events p
                    WHERE p.ticket_id = e.ticket_id AND p.event_type = 'propose_resolution' AND p.id < e.id
                    ORDER BY p.id DESC LIMIT 1), '{}')
+               -- Why AI handed off: the attempt's stable outcome code (never a
+               -- provider message). The attempt is ended before the event is written.
+               WHEN 'ai_failed' THEN COALESCE((
+                   SELECT jsonb_build_object('outcome', a.outcome)
+                   FROM ai_attempts a WHERE a.ticket_id = e.ticket_id AND a.outcome IS NOT NULL), '{}')
                ELSE '{}'::jsonb END
 $$;
 
@@ -190,12 +196,54 @@ END $$;
 CREATE TRIGGER ticket_events_audit AFTER INSERT ON ticket_events
     FOR EACH ROW EXECUTE FUNCTION audit_ticket_event();
 
--- Append-only: no UPDATE, no TRUNCATE (trigger of 0002), and no DELETE except
--- inside `audit_retention_purge`, the one retention path.
+-- Append-only. UPDATE, DELETE, and TRUNCATE (trigger of 0002) are refused, with
+-- two exceptions that are functions of this migration, not settings:
+--
+--   * `audit_retention_purge` may delete events older than the retention floor;
+--   * `audit_anonymize_account` may blank one account's username snapshots and
+--     the `ip` key of its events.
+--
+-- The guard recognises them by the call stack (PG_CONTEXT): the row change
+-- must come from the one statement inside that function. A session cannot put
+-- that frame on the stack by setting a variable or wrapping its own statement
+-- in a block or function; it would have to replace the function or the
+-- trigger, which is DDL. On top of that the guard checks every row itself, so
+-- even from inside those functions nothing else can change.
+--
+-- Limit: the application's database role owns these objects. Whoever can run
+-- DDL as that role (or a superuser) can drop or replace the trigger. Separate
+-- owner and runtime roles would close that; it is not part of this migration.
+CREATE FUNCTION audit_retention_floor() RETURNS interval LANGUAGE sql IMMUTABLE AS $$
+    SELECT interval '30 days'
+$$;
+
 CREATE FUNCTION audit_events_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE stack text;
 BEGIN
-    IF TG_OP = 'DELETE' AND current_setting('tikkit.audit_retention', true) = 'on' THEN
+    GET DIAGNOSTICS stack = PG_CONTEXT;
+    IF TG_OP = 'DELETE'
+        AND stack ~ ('^PL/pgSQL function audit_events_guard\(\) line \d+ at GET DIAGNOSTICS\n'
+                     || 'SQL statement "DELETE FROM audit_events [^\n]*"\n'
+                     || 'PL/pgSQL function audit_retention_purge\(timestamp with time zone,uuid\) line \d+ at SQL statement(\n|$)')
+        AND OLD.event_type <> 'audit_retention_purged'
+        AND OLD.created_at < now() - audit_retention_floor() THEN
         RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE'
+        AND stack ~ ('^PL/pgSQL function audit_events_guard\(\) line \d+ at GET DIAGNOSTICS\n'
+                     || 'SQL statement "UPDATE audit_events [^\n]*"\n'
+                     || 'PL/pgSQL function audit_anonymize_account\(uuid,uuid\) line \d+ at SQL statement(\n|$)')
+        -- Only the username snapshots may become NULL and only `ip` may go.
+        AND (NEW.actor_username IS NULL OR NEW.actor_username IS NOT DISTINCT FROM OLD.actor_username)
+        AND (NEW.subject_username IS NULL OR NEW.subject_username IS NOT DISTINCT FROM OLD.subject_username)
+        AND NEW.metadata IN (OLD.metadata, OLD.metadata - 'ip')
+        AND (NEW.id, NEW.event_type, NEW.created_at) = (OLD.id, OLD.event_type, OLD.created_at)
+        AND (NEW.actor_account_id, NEW.actor_role, NEW.actor_team_id, NEW.actor_service,
+             NEW.subject_account_id, NEW.request_id, NEW.resource_type, NEW.resource_id, NEW.ticket_id)
+            IS NOT DISTINCT FROM
+            (OLD.actor_account_id, OLD.actor_role, OLD.actor_team_id, OLD.actor_service,
+             OLD.subject_account_id, OLD.request_id, OLD.resource_type, OLD.resource_id, OLD.ticket_id) THEN
+        RETURN NEW;
     END IF;
     RAISE EXCEPTION 'audit_events is append-only' USING ERRCODE = 'restrict_violation';
 END $$;
@@ -203,25 +251,57 @@ CREATE TRIGGER audit_events_append_only
     BEFORE UPDATE OR DELETE ON audit_events
     FOR EACH ROW EXECUTE FUNCTION audit_events_guard();
 
--- Retention (#43): deletes events older than `cutoff` and records who did it,
--- how many, and the cutoff, as an event that itself stays. `admin` NULL means
--- the retention job.
+-- Who may run retention and anonymization: an active Admin account, or NULL
+-- for the named retention service.
+CREATE FUNCTION audit_require_admin(admin uuid) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    IF admin IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM accounts WHERE id = admin AND role = 'admin' AND is_active) THEN
+        RAISE EXCEPTION 'only an active Admin may change audit history'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+END $$;
+
+-- Retention (#43): deletes events older than `cutoff`, which must itself be at
+-- least `audit_retention_floor()` (30 days) in the past, and appends who did
+-- it, the cutoff, and the count in the same call. `audit_retention_purged`
+-- events are never deleted. `admin` NULL means the retention job.
 CREATE FUNCTION audit_retention_purge(cutoff timestamptz, admin uuid) RETURNS bigint
 LANGUAGE plpgsql AS $$
 DECLARE removed bigint;
 BEGIN
-    IF cutoff IS NULL OR cutoff > now() THEN
-        RAISE EXCEPTION 'audit retention cutoff must not be in the future'
+    PERFORM audit_require_admin(admin);
+    IF cutoff IS NULL OR cutoff > now() - audit_retention_floor() THEN
+        RAISE EXCEPTION 'audit retention cutoff must be at least % in the past', audit_retention_floor()
             USING ERRCODE = 'check_violation';
     END IF;
-    PERFORM set_config('tikkit.audit_retention', 'on', true);
-    DELETE FROM audit_events WHERE created_at < cutoff;
+    DELETE FROM audit_events WHERE created_at < cutoff AND event_type <> 'audit_retention_purged';
     GET DIAGNOSTICS removed = ROW_COUNT;
-    PERFORM set_config('tikkit.audit_retention', 'off', true);
     INSERT INTO audit_events (event_type, actor_account_id, actor_service, metadata)
     VALUES ('audit_retention_purged', admin, CASE WHEN admin IS NULL THEN 'retention' END,
             jsonb_build_object('cutoff', cutoff, 'deleted', removed));
     RETURN removed;
+END $$;
+
+-- Anonymization (#43): blanks the username snapshots of `account` and removes
+-- the `ip` key from the events it acted in or is the subject of. Account IDs,
+-- actions, timestamps, and everything else stay. Appends
+-- `audit_account_anonymized` (about the account, without a username snapshot)
+-- and returns the number of events changed.
+CREATE FUNCTION audit_anonymize_account(account uuid, admin uuid) RETURNS bigint
+LANGUAGE plpgsql AS $$
+DECLARE changed bigint;
+BEGIN
+    PERFORM audit_require_admin(admin);
+    IF account IS NULL OR NOT EXISTS (SELECT 1 FROM accounts WHERE id = account) THEN
+        RAISE EXCEPTION 'unknown account' USING ERRCODE = 'check_violation';
+    END IF;
+    UPDATE audit_events SET actor_username = CASE WHEN actor_account_id = account THEN NULL ELSE actor_username END, subject_username = CASE WHEN subject_account_id = account THEN NULL ELSE subject_username END, metadata = metadata - 'ip' WHERE (actor_account_id = account OR subject_account_id = account) AND (actor_username IS NOT NULL AND actor_account_id = account OR subject_username IS NOT NULL AND subject_account_id = account OR metadata ? 'ip');
+    GET DIAGNOSTICS changed = ROW_COUNT;
+    INSERT INTO audit_events (event_type, actor_account_id, actor_service, metadata, resource_type, resource_id)
+    VALUES ('audit_account_anonymized', admin, CASE WHEN admin IS NULL THEN 'retention' END,
+            jsonb_build_object('events', changed), 'account', account::text);
+    RETURN changed;
 END $$;
 
 CREATE INDEX audit_events_actor_idx ON audit_events (actor_account_id, created_at, id)

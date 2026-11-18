@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::{Extension, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
@@ -174,6 +174,14 @@ pub async fn put_smtp(
 ) -> Result<Json<SmtpSettings>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
     let mut tx = state.pool.begin().await?;
+    // The previous connection for the audit event: settings only, no credentials.
+    let before: Option<Value> = sqlx::query_scalar(
+        "SELECT jsonb_build_object('host', host, 'port', port, 'security', security,
+                                   'sender_address', sender_address, 'enabled', enabled)
+         FROM smtp_connection FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     let existing: Option<(String, Vec<u8>, Vec<u8>)> = sqlx::query_as(
         "SELECT host, username_ciphertext, password_ciphertext FROM smtp_connection FOR UPDATE",
     )
@@ -229,14 +237,26 @@ pub async fn put_smtp(
         },
         Some(user.account_id()),
         None,
+        // The new values stay at the top level; `from`/`to` show the change,
+        // including enable/disable, in one event. Never a credential: only
+        // whether one was replaced.
         json!({
             "host": write.host,
             "port": write.port,
             "security": security_name(write.security),
             "sender_address": write.sender_address,
             "enabled": write.enabled,
+            "from": before,
+            "to": {
+                "host": write.host,
+                "port": write.port,
+                "security": security_name(write.security),
+                "sender_address": write.sender_address,
+                "enabled": write.enabled,
+            },
             "username_changed": write.username.is_some(),
             "password_changed": body.password.is_some(),
+            "credential_replaced": write.username.is_some() || body.password.is_some(),
         }),
     )
     .await?;
