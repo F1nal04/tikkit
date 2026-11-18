@@ -46,6 +46,7 @@ labels!(Worker {
     AiSweep => "ai_attempt_sweep",
     Notifications => "notifications",
     AutoClose => "auto_close",
+    Retention => "retention",
 });
 
 labels!(Event {
@@ -251,6 +252,9 @@ struct Backlogs {
     close_pending: i64,
     close_due: i64,
     close_lag: f64,
+    retention_pending: i64,
+    retention_due: i64,
+    retention_lag: f64,
 }
 
 async fn backlogs(pool: &PgPool, call_timeout: Duration) -> Result<Backlogs, sqlx::Error> {
@@ -266,10 +270,14 @@ async fn backlogs(pool: &PgPool, call_timeout: Duration) -> Result<Backlogs, sql
          ), closing AS (
              SELECT confirmation_deadline AS due FROM tickets
              WHERE status = 'awaiting_confirmation' AND confirmation_deadline IS NOT NULL
+         ), retention AS (
+             SELECT created_at AS due FROM retention_runs WHERE state = 'pending'
          )
          SELECT ai_count.pending AS ai_pending, ai_count.due AS ai_due, ai_count.lag AS ai_lag,
                 mail_count.pending AS mail_pending, mail_count.due AS mail_due, mail_count.lag AS mail_lag,
-                close_count.pending AS close_pending, close_count.due AS close_due, close_count.lag AS close_lag
+                close_count.pending AS close_pending, close_count.due AS close_due, close_count.lag AS close_lag,
+                retention_count.pending AS retention_pending, retention_count.due AS retention_due,
+                retention_count.lag AS retention_lag
          FROM (
              SELECT count(*) AS pending, count(*) FILTER (WHERE due <= statement_timestamp()) AS due,
                     GREATEST(0, EXTRACT(EPOCH FROM statement_timestamp() - min(due)))::float8 AS lag
@@ -282,7 +290,11 @@ async fn backlogs(pool: &PgPool, call_timeout: Duration) -> Result<Backlogs, sql
              SELECT count(*) AS pending, count(*) FILTER (WHERE due <= statement_timestamp()) AS due,
                     GREATEST(0, EXTRACT(EPOCH FROM statement_timestamp() - min(due)))::float8 AS lag
              FROM closing
-         ) close_count"
+         ) close_count CROSS JOIN (
+             SELECT count(*) AS pending, count(*) FILTER (WHERE due <= statement_timestamp()) AS due,
+                    GREATEST(0, EXTRACT(EPOCH FROM statement_timestamp() - min(due)))::float8 AS lag
+             FROM retention
+         ) retention_count"
     );
     sqlx::query_as(&query)
         .bind(MAX_CLAIMS)
@@ -331,6 +343,12 @@ async fn scrape(State(state): State<AppState>) -> impl IntoResponse {
                 s.mail_lag,
             ),
             (Worker::AutoClose, s.close_pending, s.close_due, s.close_lag),
+            (
+                Worker::Retention,
+                s.retention_pending,
+                s.retention_due,
+                s.retention_lag,
+            ),
         ];
         worker_family(
             &mut output,

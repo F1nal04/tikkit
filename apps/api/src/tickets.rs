@@ -81,6 +81,11 @@ pub struct TicketDetail {
     /// AI-stage and AI-solved records).
     #[schema(required = true)]
     pub ai: Option<TicketAi>,
+    /// Set when retention removed the ticket's text (subject, description,
+    /// answers, messages): those fields then hold the marker `—`.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(value_type = Option<String>, format = DateTime, required = true)]
+    pub content_removed_at: Option<OffsetDateTime>,
 }
 
 /// Affordances for the staff view, from the same rules the write endpoints
@@ -208,6 +213,7 @@ struct DetailRow {
     confirmation_deadline: Option<OffsetDateTime>,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
+    content_purged_at: Option<OffsetDateTime>,
 }
 
 type TransitionRow = (
@@ -265,7 +271,7 @@ pub async fn ticket_detail(
                 r.display_name AS requester_display_name, t.team_id, tm.name AS team_name,
                 t.assignee_account_id, a.display_name AS assignee_display_name,
                 t.resolution_source, t.closure_reason, t.proposal_version,
-                t.confirmation_deadline, t.created_at, t.updated_at
+                t.confirmation_deadline, t.created_at, t.updated_at, t.content_purged_at
          FROM tickets t
          JOIN categories c ON c.id = t.category_id
          JOIN priorities p ON p.id = t.priority_id
@@ -458,6 +464,7 @@ pub async fn ticket_detail(
         assignment_changes,
         staff_access,
         ai,
+        content_removed_at: row.content_purged_at,
     }))
 }
 

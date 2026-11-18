@@ -39,8 +39,10 @@ pub mod management;
 pub mod messages;
 pub mod metrics;
 pub mod notifications;
+pub mod personal_data;
 pub mod queues;
 pub mod reports;
+pub mod retention;
 pub mod screenshots;
 pub mod smtp;
 pub mod submission;
@@ -138,6 +140,13 @@ impl AppState {
         audit::search,
         audit::actions,
         audit::export,
+        retention::overview,
+        retention::update,
+        retention::preview_policy,
+        retention::start,
+        personal_data::summary,
+        personal_data::export,
+        personal_data::anonymize,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -382,6 +391,24 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/admin/audit", get(audit::search))
         .route("/api/admin/audit/actions", get(audit::actions))
         .route("/api/admin/audit/export", post(audit::export))
+        .route(
+            "/api/admin/retention",
+            get(retention::overview).put(retention::update),
+        )
+        .route(
+            "/api/admin/retention/preview",
+            post(retention::preview_policy),
+        )
+        .route("/api/admin/retention/runs", post(retention::start))
+        .route("/api/admin/personal-data", get(personal_data::summary))
+        .route(
+            "/api/admin/accounts/{id}/personal-data/export",
+            post(personal_data::export),
+        )
+        .route(
+            "/api/admin/accounts/{id}/anonymize",
+            post(personal_data::anonymize),
+        )
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))
