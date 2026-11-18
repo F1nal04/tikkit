@@ -35,7 +35,7 @@ test('shows outcome counts and failure reasons with translated codes', () => {
 test('lists records with a link to the read-only ticket and escapes ticket text', () => {
   show({ records: { items: [record(), record({ id: 'attempt-2', ticket_id: 'ticket-2', reference: 43, status: 'queued', outcome: 'failed', outcome_code: 'timeout', decided_at: null })], next_cursor: null } })
   const link = screen.getByRole('link', { name: '#42 Printer <b>jams</b>' })
-  expect(link.getAttribute('href')).toBe('/queue/ticket-1')
+  expect(link.getAttribute('href')).toBe('/admin/submissions/ticket-1')
   expect(document.querySelector('td b, th b')).toBeNull()
   const solved = document.querySelector('tr[data-outcome="solved"]') as HTMLElement
   expect(within(solved).getAllByText('Solved by AI').length).toBe(2) // outcome and status badge

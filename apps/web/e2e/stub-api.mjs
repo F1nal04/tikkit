@@ -252,6 +252,48 @@ function seedHistory(st, user) {
   return { queued: queued.id, pending: pending.id, closed: closed.id, timeout: timeout.id, ai: ai.id, screenshot: screenshot.id, privateShot }
 }
 
+
+// Admin submission view (docs/admin-submissions.md): mixed outcomes, Admin only. The suggestion is
+// untrusted text, and the AI settings carry a credential hint that must never reach these pages.
+const submission = (reference, subject, extra = {}) => ({
+  id: `60000000-0000-4000-8000-${String(reference).padStart(12, '0')}`,
+  reference, subject, status: 'queued', category_id: CATEGORY, category_name: 'Hardware', priority_name: 'Normal',
+  requester: { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' },
+  team_name: null, assignee_display_name: null, resolution_source: null, closure_reason: null, resolution: 'open',
+  route: 'ai', ai_outcome: null, created_at: `2026-10-${String(30 - (reference % 30)).padStart(2, '0')}T08:00:00Z`, updated_at: '2026-10-30T08:00:00Z',
+  ...extra,
+})
+const SUBMISSIONS = [
+  submission(301, 'Solved by the AI suggestion', { status: 'ai_solved', resolution: 'ai_confirmed', resolution_source: 'ai', closure_reason: 'requester_confirmed', ai_outcome: 'solved' }),
+  submission(302, 'Suggestion waiting for a decision', { status: 'awaiting_ai_decision', ai_outcome: 'awaiting_decision' }),
+  submission(303, 'Suggestion abandoned', { status: 'cancelled', resolution: 'cancelled', ai_outcome: 'cancelled' }),
+  submission(304, 'AI timed out', { ai_outcome: 'failed' }),
+  submission(305, 'Escalated after the suggestion', { status: 'in_progress', ai_outcome: 'not_solved', team_name: 'Desk', assignee_display_name: 'operator' }),
+  submission(306, 'Resolved by the help desk', { status: 'closed', resolution: 'requester_confirmed', resolution_source: 'operator', closure_reason: 'requester_confirmed', route: 'ai_disabled', team_name: 'Desk', assignee_display_name: 'operator' }),
+]
+const requesterActor = { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' }
+function submissionDetail(s) {
+  const ev = (id, event_type, from_status, to_status, actor = null, payload = {}) => ({ id, event_type, from_status, to_status, actor, payload, created_at: s.created_at })
+  const events = [ev(1, 'submit', 'draft', s.route === 'ai' ? 'ai_processing' : 'queued', requesterActor, { route: s.route })]
+  const suggested = ['solved', 'awaiting_decision', 'cancelled', 'not_solved'].includes(s.ai_outcome)
+  if (suggested) events.push(ev(2, 'ai_suggestion_ready', 'ai_processing', 'awaiting_ai_decision'))
+  if (s.ai_outcome === 'solved') events.push(ev(3, 'ai_solved', 'awaiting_ai_decision', 'ai_solved', requesterActor, { resolution_source: 'ai', closure_reason: 'requester_confirmed' }))
+  if (s.ai_outcome === 'not_solved') events.push(ev(3, 'ai_not_solved', 'awaiting_ai_decision', 'queued', requesterActor, { route: 'not_solved' }))
+  if (s.ai_outcome === 'cancelled') events.push(ev(3, 'cancel', 'awaiting_ai_decision', 'cancelled', requesterActor, { reason: 'Found it myself' }))
+  if (s.ai_outcome === 'failed') events.push(ev(2, 'ai_failed', 'ai_processing', 'queued', null, { route: 'ai_failed' }))
+  if (s.resolution === 'requester_confirmed') events.push(ev(5, 'propose_resolution', 'in_progress', 'awaiting_confirmation', { id: 'op', username: 'operator', display_name: 'operator' }, { summary: 'Replaced the toner.' }), ev(6, 'accept_resolution', 'awaiting_confirmation', 'closed', requesterActor))
+  const decision = s.ai_outcome === 'solved' ? 'solved' : s.ai_outcome === 'not_solved' ? 'not_solved' : null
+  const ai = s.ai_outcome && {
+    attempt_id: randomUUID(), outcome: s.ai_outcome, state: suggested ? 'suggestion_ready' : 'handed_off', outcome_code: s.ai_outcome === 'failed' ? 'timeout' : null,
+    provider: 'openai', model: 'openai-vision', language: 'en', suggestion: suggested ? SUGGESTION : null,
+    decision, decision_event_id: decision ? 3 : null, decided_at: decision ? s.created_at : null, created_at: s.created_at, finished_at: s.created_at,
+  }
+  return {
+    summary: s, description: 'Printer jams on page two.', confirmation_deadline: null, ai: ai || null, events,
+    intake_snapshot: { subject: s.subject, description: 'Printer jams on page two.', catalog: { category_id: CATEGORY, category_name: 'Hardware', skip_ai: false, priority_id: PRIORITIES[1].id, priority_name: 'Normal', answers: [] }, screenshot_ids: [] },
+  }
+}
+
 createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://stub')
   const route = `${req.method} ${pathname}`
@@ -330,6 +372,23 @@ createServer(async (req, res) => {
         { status: 'refused', outcome: 'budget_user_requests', count: 1 },
       ],
     })
+  }
+  if (route === 'GET /api/catalog/all') return ROLES[user] === 'admin' ? reply(res, 200, CATALOG) : fail(res, 403, 'forbidden')
+  if (pathname.startsWith('/api/admin/submissions')) {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed')
+    const q = new URL(req.url, 'http://stub').searchParams
+    const id = /^\/api\/admin\/submissions\/([^/]+)$/.exec(pathname)?.[1]
+    if (id) {
+      const found = SUBMISSIONS.find((x) => x.id === id)
+      return found ? reply(res, 200, submissionDetail(found)) : fail(res, 404, 'not_found')
+    }
+    const items = SUBMISSIONS.filter((x) =>
+      (!q.get('status') || x.status === q.get('status')) &&
+      (!q.get('category_id') || x.category_id === q.get('category_id')) &&
+      (!q.get('resolution_source') || (x.resolution_source ?? 'none') === q.get('resolution_source')) &&
+      (!q.get('ai_outcome') || (x.ai_outcome ?? 'none') === q.get('ai_outcome')))
+    return reply(res, 200, { items, next_cursor: null })
   }
   if (route === 'GET /api/settings/smtp') return ROLES[user] === 'admin' ? reply(res, 200, { connection: null }) : fail(res, 403, 'forbidden')
   if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
