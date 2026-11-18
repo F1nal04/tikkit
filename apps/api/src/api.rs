@@ -222,7 +222,7 @@ impl ApiError {
             CsrfRejected => (
                 StatusCode::FORBIDDEN,
                 ErrorCode::CsrfRejected,
-                "Cross-site request or missing X-Requested-With: tikkit header.",
+                "Open the portal at its configured address (PUBLIC_ORIGIN); cross-site requests and requests without X-Requested-With: tikkit are refused.",
             ),
             RequestTimeout => (
                 StatusCode::SERVICE_UNAVAILABLE,
