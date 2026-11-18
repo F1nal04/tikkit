@@ -47,5 +47,9 @@ export function submissionsHref(f: Partial<SubmissionFilters>) {
 /** Only an explicit requester confirmation is an AI resolution; everything else stays distinguishable from it. */
 export const isAiResolution = (outcome: Schemas['AiRecordOutcome'] | null | undefined) => outcome === 'solved'
 
-/** Statuses whose ticket is help desk work an Admin can also open in the staff view. */
-export const inHelpDesk = (status: TicketStatus) => !['ai_processing', 'awaiting_ai_decision', 'ai_solved', 'draft'].includes(status)
+/**
+ * Whether the ticket is help desk work an Admin can also open in the staff view. A ticket
+ * cancelled before any handoff (AI outcome `cancelled`) never reached the help desk.
+ */
+export const inHelpDesk = (s: Pick<Schemas['SubmissionSummary'], 'status' | 'ai_outcome'>) =>
+  !['ai_processing', 'awaiting_ai_decision', 'ai_solved', 'draft'].includes(s.status) && !(s.status === 'cancelled' && s.ai_outcome === 'cancelled')

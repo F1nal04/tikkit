@@ -37,7 +37,7 @@
     <Alert kind={isAiResolution(ai.outcome) ? 'success' : 'info'}>{s.notices[ai.outcome]}</Alert>
   </div>
 {/if}
-{#if inHelpDesk(summary.status)}<p><a href={`/queue/${summary.id}`}>{s.staffView}</a></p>{/if}
+{#if inHelpDesk(summary)}<p><a href={`/queue/${summary.id}`}>{s.staffView}</a></p>{/if}
 
 <section aria-labelledby="facts-title">
   <h2 id="facts-title">{s.facts}</h2>
@@ -45,7 +45,7 @@
     <div><dt>{s.requester}</dt><dd>{summary.requester.display_name} ({summary.requester.username})</dd></div>
     <div><dt>{s.category}</dt><dd>{summary.category_name}</dd></div>
     <div><dt>{s.priority}</dt><dd>{summary.priority_name}</dd></div>
-    <div><dt>{s.team}</dt><dd>{summary.team_name ?? (inHelpDesk(summary.status) ? s.generalQueue : s.notHuman)}</dd></div>
+    <div><dt>{s.team}</dt><dd>{summary.team_name ?? (inHelpDesk(summary) ? s.generalQueue : s.notHuman)}</dd></div>
     <div><dt>{s.assignee}</dt><dd>{summary.assignee_display_name ?? s.unassigned}</dd></div>
     <div><dt>{s.route}</dt><dd>{summary.route ? s.routes[summary.route] : '—'}</dd></div>
     <div><dt>{s.aiOutcome}</dt><dd>{summary.ai_outcome ? s.aiOutcomes[summary.ai_outcome] : s.noAi}</dd></div>

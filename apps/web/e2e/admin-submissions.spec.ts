@@ -75,6 +75,11 @@ test('unconfirmed and failed attempts read as not solved; the page source holds 
     await expect(page.getByTestId('ai-notice')).toContainText(text)
     await expect(page.getByTestId('decision')).toHaveText('No decision')
     await expect(page.getByText('Confirmation event')).toHaveCount(0)
+    if (reference === '303') {
+      // Cancelled before any handoff: it never was help desk work.
+      await expect(page.getByText('Not sent to the help desk')).toBeVisible()
+      await expect(page.getByRole('link', { name: 'Open in the help desk view' })).toHaveCount(0)
+    }
     // Server-rendered HTML and its serialized data, then the hydrated document.
     for (const source of [await response!.text(), await page.content()]) {
       for (const secret of ['WXYZ', 'key_hint', 'ciphertext', 'api_key', 'credential_set_at']) expect(source).not.toContain(secret)

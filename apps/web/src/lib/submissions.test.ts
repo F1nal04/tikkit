@@ -31,8 +31,12 @@ test('links keep the filters and drop empty ones', () => {
 test('only a confirmed AI outcome is an AI resolution; AI-stage records are not help desk work', () => {
   expect(isAiResolution('solved')).toBe(true)
   for (const outcome of ['awaiting_decision', 'processing', 'cancelled', 'failed', 'skipped', 'not_solved', null] as const) expect(isAiResolution(outcome)).toBe(false)
-  expect(inHelpDesk('ai_solved')).toBe(false)
-  expect(inHelpDesk('awaiting_ai_decision')).toBe(false)
-  expect(inHelpDesk('queued')).toBe(true)
-  expect(inHelpDesk('closed')).toBe(true)
+  expect(inHelpDesk({ status: 'ai_solved', ai_outcome: 'solved' })).toBe(false)
+  expect(inHelpDesk({ status: 'awaiting_ai_decision', ai_outcome: 'awaiting_decision' })).toBe(false)
+  expect(inHelpDesk({ status: 'queued', ai_outcome: null })).toBe(true)
+  expect(inHelpDesk({ status: 'closed', ai_outcome: 'not_solved' })).toBe(true)
+  // Cancelled before any handoff: never help desk work. Cancelled after a failed attempt: it was.
+  expect(inHelpDesk({ status: 'cancelled', ai_outcome: 'cancelled' })).toBe(false)
+  expect(inHelpDesk({ status: 'cancelled', ai_outcome: 'failed' })).toBe(true)
+  expect(inHelpDesk({ status: 'cancelled', ai_outcome: null })).toBe(true)
 })
