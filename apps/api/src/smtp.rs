@@ -478,8 +478,8 @@ fn valid_sender_name(name: &str) -> bool {
 }
 
 pub(crate) fn valid_host(host: &str) -> bool {
-    if host.parse::<std::net::IpAddr>().is_ok() {
-        return true;
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return !forbidden_destination(ip);
     }
     if host.is_empty() || host.len() > 253 {
         return false;
@@ -492,6 +492,23 @@ pub(crate) fn valid_host(host: &str) -> bool {
             && !label.starts_with('-')
             && !label.ends_with('-')
     })
+}
+
+/// Addresses that are never a mail relay: unspecified, link-local (which
+/// includes cloud metadata services such as 169.254.169.254), multicast, and
+/// broadcast. Loopback and private networks stay allowed for internal relays.
+pub(crate) fn forbidden_destination(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        v4 => v4,
+    };
+    ip.is_unspecified()
+        || ip.is_multicast()
+        || match ip {
+            IpAddr::V4(v4) => v4.is_link_local() || v4.is_broadcast(),
+            IpAddr::V6(v6) => v6.is_unicast_link_local(),
+        }
 }
 
 fn security_name(security: SmtpSecurity) -> &'static str {
@@ -519,5 +536,17 @@ mod tests {
         assert!(!valid_host("-bad.example"));
         assert!(!valid_host("has space.example"));
         assert!(!valid_host("user:pass@smtp.example.com"));
+        for blocked in [
+            "0.0.0.0",
+            "::",
+            "169.254.169.254",
+            "fe80::1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::ffff:169.254.169.254",
+        ] {
+            assert!(!valid_host(blocked), "{blocked}");
+        }
+        assert!(valid_host("10.0.0.25") && valid_host("fd00::25"));
     }
 }

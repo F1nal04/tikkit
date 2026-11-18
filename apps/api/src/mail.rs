@@ -325,6 +325,16 @@ async fn send_once(
     timeout: Duration,
 ) -> Result<(), Attempt> {
     let email = build_message(ready, message)?;
+    // A saved host name may resolve somewhere a relay never is (link-local
+    // metadata services and the like). Checked again here because DNS changes;
+    // certificate verification remains the second layer against rebinding.
+    if let Ok(addresses) = tokio::net::lookup_host((ready.host.as_str(), ready.port)).await
+        && addresses
+            .into_iter()
+            .any(|a| crate::smtp::forbidden_destination(a.ip()))
+    {
+        return Err(Attempt::Fatal(MailError::Network));
+    }
     let transport = build_transport(ready, trust_root_pem, timeout)?;
     match transport.send(email).await {
         Ok(_) => Ok(()),
