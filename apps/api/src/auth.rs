@@ -751,12 +751,12 @@ pub async fn login(
     .bind(&normalized)
     .fetch_optional(&state.pool)
     .await?;
-    // Verify against a dummy hash for unknown users so timing does not reveal them.
-    let hash = found
-        .as_ref()
-        .map_or_else(|| DUMMY_HASH.clone(), |f| f.1.clone());
+    // Verify against a dummy hash for unknown users so timing does not reveal
+    // them, and for accounts whose stored hash is unusable on purpose (an
+    // anonymized account's `!`), which would otherwise fail without any work.
+    let (hash, usable) = verification_hash(found.as_ref().map(|f| f.1.as_str()));
     let password = body.password;
-    let verified = blocking(move || verify_password(&password, &hash)).await?;
+    let verified = blocking(move || verify_password(&password, &hash)).await? && usable;
     let failure = match &found {
         None => Some("unknown_username"),
         Some(_) if !verified => Some("wrong_password"),
@@ -1093,6 +1093,16 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
     })
 }
 
+/// The hash a sign-in verifies against, and whether a match may count: the
+/// stored one if it is a real password hash, otherwise the dummy (same cost,
+/// never a success).
+fn verification_hash(stored: Option<&str>) -> (String, bool) {
+    match stored {
+        Some(hash) if PasswordHash::new(hash).is_ok() => (hash.to_owned(), true),
+        _ => (DUMMY_HASH.clone(), false),
+    }
+}
+
 /// Usernames starting with this belong to anonymized accounts
 /// (docs/retention.md). Nobody can register one, so the placeholder of an
 /// erased account is always free; the database enforces the same
@@ -1218,6 +1228,20 @@ mod tests {
         assert!(verify_password("correct horse battery", &hash));
         assert!(!verify_password("wrong", &hash));
         assert!(!verify_password("x", "not a hash"));
+    }
+
+    #[test]
+    fn unusable_hashes_cost_a_full_verification_and_never_match() {
+        let real = hash_password("correct horse battery");
+        assert_eq!(verification_hash(Some(&real)), (real.clone(), true));
+        for unusable in [Some("!"), Some(""), Some("not a hash"), None] {
+            let (hash, usable) = verification_hash(unusable);
+            assert!(!usable, "{unusable:?}");
+            assert_eq!(
+                hash, *DUMMY_HASH,
+                "{unusable:?}: same Argon2 work as an unknown user"
+            );
+        }
     }
 
     #[test]
