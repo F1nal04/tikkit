@@ -4,7 +4,7 @@ What protects the portal at the web/API boundary, where it lives, and which
 test proves it. Feature-level rules stay in their own pages
 ([auth](auth.md), [authorization](authorization.md), [screenshots](screenshots.md),
 [AI providers](ai-providers.md), [audit](audit.md)); this page is the
-threat-oriented inventory and the record of the release review (#44).
+threat-oriented inventory and the record of the release reviews (the dated sections below).
 
 Deployment shape: one public reverse proxy (TLS) sends `/api/*` to the Rust API
 and everything else to the SvelteKit server. The SSR server calls the API
@@ -109,7 +109,7 @@ IPv4 network they denote. All of this means so a forged header cannot reset a ra
 audit event. `X-Forwarded-Proto` and `X-Forwarded-Host` are never read by the
 API: links, cookies and HSTS derive from `PUBLIC_ORIGIN`.
 
-### Requirements for the production stack (#46)
+### Requirements for the production stack
 
 1. Proxy, web, and API share a network with a fixed subnet; the API's
    `TRUSTED_PROXIES` is that subnet (the example Compose file uses

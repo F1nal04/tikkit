@@ -19,9 +19,9 @@ Open <http://localhost:3000>, exactly that address: `PUBLIC_ORIGIN` in `.env`
 is the only origin the API accepts state-changing browser requests from, so
 <http://127.0.0.1:3000> or a LAN address answers every save with
 `403 csrf_rejected`. To use another address, set `PUBLIC_ORIGIN` to it and
-restart the API. The page checks the Rust API through Vite's
-`/api` proxy. Add `?lang=de` for German. The API listens on `127.0.0.1:3001` and exposes
-`GET /api/health`, returning `{"status":"ok"}`.
+restart the API. Vite proxies `/api` to the Rust API, which listens on
+`127.0.0.1:3001` and answers `GET /api/health` (`{"status":"ok"}`) and
+`GET /api/ready`. Add `?lang=de` for German.
 
 On a fresh database every page redirects to <http://localhost:3000/setup>:
 create the first Admin there (username, contact email, password, language) and
@@ -44,9 +44,9 @@ cp .env.example .env
 # then replace both CHANGE_ME values in .env with `openssl rand -base64 32` output
 ```
 
-All API settings, probes (`/api/health`, `/api/ready`), graceful shutdown, and a
-production Compose sketch are described in
-[docs/configuration.md](docs/configuration.md).
+All API settings, probes (`/api/health`, `/api/ready`) and graceful shutdown are
+described in [docs/configuration.md](docs/configuration.md); the production
+Compose stack is in [docs/deployment.md](docs/deployment.md).
 
 The API applies migrations from `apps/api/migrations/` on startup, so
 `bun run dev` or `cargo run -p tikkit-api` migrates a fresh database; it exits
@@ -121,13 +121,12 @@ Changing the API's development port also requires updating the proxy in
 
 ## Production deployment and guides
 
-Install, upgrade and back up with the [Docker Compose install guide](docs/guides/install.md);
-the reference is the [single-host deployment page](docs/deployment.md).
-
-## Guides
-
-[docs/guides](docs/guides/README.md) has the task-oriented guides for people who
-run or use Tikkit: [install](docs/guides/install.md), [requesters](docs/guides/requester.md),
-[help desk](docs/guides/operator.md), [administrators](docs/guides/admin.md),
-[AI assistance](docs/guides/ai.md) and [troubleshooting](docs/guides/troubleshooting.md),
-with supported versions and what is not in this release.
+Install, upgrade, back up and restore with the
+[Docker Compose install guide](docs/guides/install.md); the reference is the
+[single-host deployment page](docs/deployment.md). [docs/guides](docs/guides/README.md)
+has the task-oriented guides for people who run or use Tikkit:
+[install](docs/guides/install.md), [architecture](docs/guides/architecture.md),
+[requesters](docs/guides/requester.md), [help desk](docs/guides/operator.md),
+[administrators](docs/guides/admin.md), [AI assistance](docs/guides/ai.md) and
+[troubleshooting](docs/guides/troubleshooting.md), with supported versions and what
+is not in this release.
