@@ -170,9 +170,10 @@ After dispatch, only that team's members and Admins have staff access.
 With **Allow reopening human-closed tickets** off (the default), closed tickets stay
 closed; requesters open a new ticket instead. When you switch it on:
 
-- The requester of a closed ticket and a staff member who may work that ticket (its
-  assignee, team lead or an Admin, never its own requester as staff) can reopen it,
-  which returns it to In progress.
+- The requester of a closed ticket can reopen it. So can a staff member who could
+  write to that ticket: on an unclaimed ticket any member of its team, otherwise the
+  assignee, their Team Lead, or an Admin (never the ticket's own requester acting as
+  staff). Reopening returns it to In progress.
 - It never reopens anything by itself, and it applies to tickets closed by the help
   desk, whether confirmed or closed automatically.
 - Tickets **solved by AI can never be reopened or escalated by any role**, whatever

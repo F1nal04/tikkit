@@ -24,7 +24,7 @@ Rules that apply to all of them:
 
 - A non-Admin account belongs to **at most one team** and can lead only that
   team. Each active team has **exactly one** Team Lead. Admins never join or lead
-  teams. A person who is both an Admin and a team lead uses **two accounts**
+  teams. A person who is both an Admin and a Team Lead uses **two accounts**
   (they may share an email); an Admin's organization-wide view is not team
   membership.
 - Neither the Specialist label nor the Team Lead role bypasses team visibility,
@@ -144,9 +144,13 @@ its status.
 | --- | --- |
 | **Queued** | **Start work** (marks it In progress). |
 | **In progress** | Reply publicly, add internal notes, **Wait for requester**, propose a resolution, change priority. |
-| **Waiting for requester information** | Wait for the reply. The requester's reply moves it back to In progress. You can also propose a resolution. |
-| **Awaiting requester confirmation** | The requester confirms or rejects; you can replace the proposal. |
+| **Waiting for requester** | Wait for the reply. The requester's reply moves it back to In progress. You can also **Resume work** or propose a resolution. |
+| **Awaiting confirmation** | The requester confirms or rejects; you can replace the proposal. |
 | **Closed**, **Cancelled**, **Solved by AI** | Read-only (see reopening below). |
+
+Staff pages use these short status labels. Requesters see longer ones for the same
+statuses, for example "Waiting for requester information" and "Awaiting requester
+confirmation" ([requester guide](requester.md#statuses)).
 
 **Public reply or internal note.** In **Reply or note**, **Send as** a public
 reply (the requester sees it and its screenshots) or an internal note (**Only
@@ -157,7 +161,7 @@ screenshots. Use **Wait for requester** after asking the requester a question.
 
 **Propose resolution.** Write a **Resolution summary (visible to the requester)**
 (required, up to 5,000 characters) and choose **Propose resolution**. You cannot
-close a ticket yourself. The ticket becomes **Awaiting requester confirmation**
+close a ticket yourself. The ticket becomes **Awaiting confirmation**
 with a deadline.
 
 - The requester can **Confirm resolved** (closed, confirmed) or choose **Still
@@ -174,8 +178,9 @@ with a deadline.
 
 **Reopening.** Reopening a closed ticket handled by the help desk is off by
 default. When an Admin turns on **Allow reopening human-closed tickets**, the
-requester sees **Reopen ticket**, and a staff member who may work the ticket
-sees it as **Reopen ticket** too; the ticket returns to In progress. Do not
+requester sees **Reopen ticket**, and a staff member who could write to the ticket
+(on an unclaimed ticket any member of its team, otherwise the assignee, their Team
+Lead, or an Admin) sees **Reopen ticket** too; the ticket returns to In progress. Do not
 promise requesters that they can reopen; check the setting. Tickets solved by AI
 can never be reopened or escalated by anyone, and neither can a ticket whose
 content was removed by the retention policy.

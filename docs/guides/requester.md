@@ -21,8 +21,9 @@ described here does not appear.
   operational account and an Admin account signs in separately to each.
 - **Forgot password?** Enter your username. If the account exists and your
   organization has set up email, a reset link goes to the email stored on that
-  account. It is valid for one hour and works once. Without email setup, ask
-  an Admin.
+  account. It is valid for one hour and works once. Without outbound email
+  there is no recovery: an Admin cannot reset a password, and can only invite you to
+  a new account, which does not carry your ticket history.
 - **Language:** the language selector switches between English and Deutsch,
   also before you sign in. Your choice is saved on your account, with English
   as the fallback. Switching never changes a ticket, and unsent text stays in
@@ -42,14 +43,17 @@ a ticket belongs to.
    (for example, choosing a software category can ask for the program, with a
    list and an **Other (type your own answer)** option). The category never
    chooses a support team.
-2. **Subject** and **Description.** Say what happened, what you expected, and any
-   error message.
+2. **Subject** (up to 200 characters) and **Description** (up to 20,000
+   characters). Say what happened, what you expected, and any error message. Answers
+   to the extra questions are up to 500 characters each, and a form holds at most 100.
 3. **Priority.** You choose the starting priority from the levels your Admin
    defined. Staff may raise or lower it later; you see the **Current priority**
    and your **Original priority**.
 4. **Screenshots (optional).** PNG, JPEG or WebP images, up to 10 MiB each and 10
-   per ticket. Animated images, other file types and documents are not accepted.
-   Metadata such as location data is stripped when the image is stored.
+   per ticket, at most 16,384 pixels per side and 40 megapixels. Animated images,
+   other file types and documents are not accepted, and the file is checked by its
+   content, not its name. You can hold at most 50 unsent uploads. Metadata such as
+   location data is stripped when the image is stored.
 5. Choose **Submit request**.
 
 Drafts: the form saves a draft about a second after you stop typing, so you can
@@ -68,17 +72,24 @@ When it applies to your category:
 - **What is sent.** After you submit, your subject and description, the answers
   to the extra questions (such as the program), and any screenshots you attached
   are sent to the external AI provider your organization configured. Screenshots
-  go as images. Your name and account, other tickets, and internal notes are not
+  go as images; if one is larger than the provider accepts (5 MiB or 8,000 pixels per
+  side, 12 MiB for all together) it is scaled down or re-compressed to fit, never
+  left out, and if one cannot be prepared the AI step ends and your request goes to
+  the support team. Your name and account, other tickets, and internal notes are not
   sent. Do not include passwords or keys in text or screenshots. Known secret
   patterns in text are removed before sending, but screenshots are not inspected.
 - **It comes first.** For enabled categories, the AI suggestion happens before
   your request reaches the support team. You cannot skip it unless your
-  organization allows skipping, in which case the form shows **Skip the AI
-  suggestion and send this request straight to the support team**. Some
+  organization allows skipping. Then the form shows **Skip the AI suggestion and
+  send this request straight to the support team**, and the waiting page offers
+  **Skip the AI suggestion and send to support** while the suggestion is being
+  prepared. Some
   categories are set to go straight to the support team without AI; the form says
   so, and nothing is sent to the provider.
 - **One suggestion.** You get one proposed solution, shown as "AI-generated
-  suggestion" in the language you used. It may be wrong. There is no chat, no
+  suggestion". It is written in your account's language (English or German) at the
+  time you submit, whatever language your ticket text is in, and stays that way
+  if you switch language later. It may be wrong. There is no chat, no
   follow-up questions and no second suggestion. Refreshing the page, switching
   language, or adding replies later never creates another one.
 - **You decide.** Choose **Solved** or **Still need help**.
@@ -125,8 +136,9 @@ you always keep access to your own ticket. Staff cannot handle a ticket
 
 ## Reply and add information
 
-Open the ticket from **My tickets**. You can add **public replies**, with
-screenshots, while the ticket is open (queued, in progress, waiting for
+Open the ticket from **My tickets**. This page does not refresh by itself except
+during the AI step; choose **Refresh** to see new replies and status changes. You
+can add **public replies** (up to 10,000 characters), with screenshots, while the ticket is open (queued, in progress, waiting for
 information, or awaiting confirmation). Replies are permanent: you cannot edit
 or delete earlier content, and later replies do not trigger new AI suggestions.
 A reply while the status is Waiting for requester information moves the ticket
@@ -203,6 +215,7 @@ When something fails, your work is kept:
 
 ## If something looks wrong
 
-- "Open the portal at its configured address…": use the link your administrator
-  gave you, not an IP address or another hostname.
+- "This request was blocked: open the portal at its configured address (the link in
+  your invitation or from your administrator) and try again. Requests from other
+  sites are refused.": use that link, not an IP address or another hostname.
 - "Too many requests": wait a minute and try again.

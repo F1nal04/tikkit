@@ -10,9 +10,13 @@ and `curl -fsS https://<PUBLIC_HOST>/api/ready`. Every API response carries an
 
 ## Every save is refused with `csrf_rejected`
 
-**Symptom.** Signing in, saving or submitting fails with "Open the portal at its
-configured address (PUBLIC_ORIGIN); cross-site requests … are refused." (HTTP 403,
-code `csrf_rejected`). Pages load fine.
+**Symptom.** Signing in, saving or submitting fails in the portal with "This request
+was blocked: open the portal at its configured address (the link in your invitation
+or from your administrator) and try again. Requests from other sites are refused."
+(HTTP 403, code `csrf_rejected`). Pages load fine. In the API response the same
+refusal reads "Open the portal at its configured address (PUBLIC_ORIGIN);
+cross-site requests and requests without X-Requested-With: tikkit are refused."
+(visible in browser developer tools or in `curl` output).
 
 **Cause.** The API accepts a state-changing browser request only from the exact
 origin `https://<PUBLIC_HOST>`. Opening the portal by IP address, a second
