@@ -143,9 +143,10 @@ session**.
   the dump, `SELECT pg_advisory_unlock(screenshot_files_lock_key())` after the
   screenshot copy. Background work that deletes screenshot files (data
   retention and the stray-file sweep, #43) defers those deletions while it is
-  held, so no file the dump references can vanish before it is archived. The
-  function is created by the retention work. Where it does not exist yet, the
-  backup detects that (`to_regprocedure`), logs
+  held, so no file the dump references can vanish before it is archived (the
+  [contract](retention.md#backups) is defined by migration `0028`, which creates
+  the function: use the function, never its number). A database that predates the
+  migration has no function; the backup detects that (`to_regprocedure`), logs
   `level=warn … running WITHOUT the screenshot-files lock`, records
   `screenshot_lock_held=no` in the manifest, and takes the backup without it.
 - **Lock loss is a failed backup.** The unlock must return `t` from the original
@@ -160,7 +161,7 @@ session**.
 
 | Situation | What it means | What happens |
 |---|---|---|
-| A file with no row in the restored database | An upload arrived after the dump (or an abandoned upload). Harmless. | Restore reports the count and the ids. The stray-file sweep removes such files 24 hours after the API leaves restore mode. |
+| A file with no row in the restored database | An upload arrived after the dump (or an abandoned upload). Harmless. | Restore reports the count and the ids. The stray-file sweep (hourly, and at every API start) removes such files once they are older than 24 hours and the API is out of restore mode; the lock defers it while a backup runs. |
 | A row whose file is missing from the archive | A pending upload expired between the dump and the copy, or, for an attached screenshot, the source volume lost the file. | The backup logs `level=warn` and exposes `tikkit_backup_screenshots_missing`. `restore.sh` **refuses** such a backup unless you pass `--allow-missing-files`. Ticket content is intact; that screenshot's preview and download return `500` and are logged, as for any record whose file is missing ([screenshots](screenshots.md#storage-backup-and-restore)). |
 | A volume older than the database | Cannot happen: both come from the same backup directory. Restoring a mismatched pair by hand is what leaves rows whose previews fail. | Always restore with `restore.sh`. |
 
@@ -329,7 +330,12 @@ send a notification or call an AI provider:
   `db` networks only) and publishes the proxy on `127.0.0.1` only.
 - In restore mode the API still serves requests, but starts **no background
   job**: no notification outbox delivery, no AI attempt or sweep processing, no
-  resolution-confirmation timeouts, no usage retention or screenshot sweeps. It
+  resolution-confirmation timeouts, no AI usage retention, no data retention
+  worker (neither the daily automatic run nor the audit purge) and no screenshot
+  sweeps. It also refuses to start destructive jobs: `POST
+  /api/admin/retention/runs` and account anonymization answer `409
+  restore_mode_blocked` with a localized message, because a copy under
+  verification must not change (previews, reports and exports still work). It
   sends no invitation or recovery email (the Admin still gets the link to
   copy), and it refuses the SMTP and AI connection tests with
   `409 outbound_disabled`; password recovery answers the same refusal for every
@@ -471,7 +477,7 @@ Check `docker compose … up -d --wait` reaches healthy before you announce it.
 
 ## Post-restore checklist (before any live work)
 
-Do these in restore mode, in order. The jobs do not run until step 6.
+Do steps 1 to 5 in restore mode, in order. The jobs do not run until step 6.
 
 1. **Verify consistency.** `restore.sh` finished without errors. Sign in as an
    Admin, open the most recent tickets, a closed one, an AI-solved one (visible
@@ -506,17 +512,40 @@ Do these in restore mode, in order. The jobs do not run until step 6.
    during the outage cannot reopen it unless the Admin reopening toggle is on.
    After a long outage consider turning that toggle on for a few days, and
    telling requesters.
-6. **Retention and deletion.** Anything deleted or anonymized after the backup
-   exists again in the restored copy; follow the
-   <!-- TODO(#43): replace with the final link when docs/retention.md lands -->
-   [data retention and deletion guide](retention.md) to re-apply
-   deletion and anonymization requests made since the backup **before** the
-   copy serves users. Deletion never rewrites backups; see
-   [Backups and deleted data](#backups-and-deleted-data).
-7. **Leave restore mode.** For a drill, stop here and remove the project. For a
-   real recovery, recreate the stack without the overlay (see above), then watch
-   the logs for worker start-up, the Admin Email page for outbox counts, and
-   the [operations runbook](operations.md) metrics for falling queue lag.
+6. **Leave restore mode, still closed to users.** Retention runs and
+   anonymization are destructive jobs, so a copy in restore mode refuses them
+   (`409 restore_mode_blocked`, localized) and its retention worker does not run:
+   the copy is under verification and nothing may change it. When the checks above
+   are done, recreate the stack without the restore overlay (see
+   [going live](#going-live-after-a-recovery)) but keep the proxy on loopback
+   (`PROXY_BIND=127.0.0.1`) and DNS off the host, so only you can reach it. The
+   workers now start: outbox rows after the cutoff are delivered, AI attempts and
+   confirmation timeouts are handled (steps 4 and 5).
+7. **Redo what was removed since the backup, before users arrive.** A restore
+   brings back everything [retention](retention.md#backups) had removed and
+   everything anonymized after the backup was taken. As an Admin on the closed
+   copy:
+   - **Retention:** the policy is part of the restored database (check
+     `/admin/retention`; if it was changed after the backup, set it again). Preview
+     and **start a run** now, and wait until it completes (or, with "apply
+     automatically" on, the worker does it within a day). It removes expired
+     drafts, screenshots, AI content, ticket content and audit events again
+     ([how a run works](retention.md#preview-and-runs)). Audit events are only
+     removed once they are past the period you set and the 30-day floor, so a
+     restored audit log may keep entries the live system had already purged until
+     the run does it. A file deferred by the lock is swept within the hour.
+   - **Anonymizations are not replayed.** Anonymize again every account that was
+     anonymized after the backup, from the record you keep outside the database
+     (the `account_anonymized` audit events list them; note the IDs before a
+     restore loses them). Accounts anonymized before the backup stay anonymized:
+     the drill checks it.
+   - Details and the reasoning are on the [retention page](retention.md#backups),
+     which says the same from the other side.
+8. **Open to users and take a fresh backup.** Point DNS and the public bind at the
+   host, watch the logs for worker start-up, the Admin Email page for outbox
+   counts, and the [operations runbook](operations.md) metrics for falling queue
+   lag. Take a fresh backup straight away and confirm the first scheduled run.
+
 8. **Take a fresh backup** straight away and confirm the first scheduled run.
 
 ## Restore drill
@@ -563,10 +592,17 @@ What it does and checks:
    that bogus directories cannot crowd out the newest complete copies and that a
    degraded run rotates nothing; two simultaneous runs (exactly one is refused
    with 75) and back-to-back runs (distinct, never nested); that the encrypted
-   files contain no plaintext secret; the **lock**: without the retention
-   function the backup says so and runs, with it the backup holds the
-   advisory lock while `pg_dump` is running, and a backup whose session is
-   terminated mid-run **fails** and publishes nothing; the scheduler catching up
+   files contain no plaintext secret; the **lock**: with the function hidden (an
+   older database) the backup warns and runs; with the real
+   `screenshot_files_lock_key()` of migration `0028` the backup session holds
+   the advisory lock **whose key is that function's value** while `pg_dump` runs,
+   a backup whose session is terminated mid-run **fails** and publishes nothing,
+   and a file deletion through the product's own path (anonymizing an account
+   with purge of its final tickets, which goes through the retention routine and
+   `screenshots::remove_files`) is **deferred while the backup holds the lock**
+   (row gone, file still on the volume, backup not degraded, file in the
+   archive) and **happens after the release** (the stray-file sweep at API
+   start); the scheduler catching up
    with a due time 10 minutes ago after a backup 20 hours ago; and
    `offsite.sh`, which ships the copy, is idempotent and reports freshness. The
    copy is verified by checksum **without the key**, and a damaged copy, a copy
@@ -580,13 +616,16 @@ What it does and checks:
    and counts are identical; the **AI-solved ticket** is read-only for the
    requester, refused for staff, and absent from **each** operator queue;
    report and aggregate statistics (ticket status/resolution/closure counts,
-   event counts, AI attempts and usage, account roles) are equal; every
+   event counts, AI attempts and usage, account roles, the audit log by action,
+   the retention settings and the Admin report totals) are equal, and the
+   account anonymized before the backup is still anonymized; every
    screenshot matches by SHA-256 on the volume **and** through the API
    download; the **email cutover** suppressed exactly the email rows that were
    pending, left the in-portal rows pending, and left one audit event; after 25
    seconds nothing moved (the in-flight AI attempt is untouched and no usage was
    recorded); password recovery is refused the same for a known and an unknown
-   user and creates no token; `/api/ready`, the metric and the Admin banner show
+   user and creates no token; a retention run and an anonymization are refused
+   (`restore_mode_blocked`) and change nothing; `/api/ready`, the metric and the Admin banner show
    restore mode and the source shows none; the work created after the backup is
    absent (the RPO); the restored API has no egress network; and the backup
    directory was not written to.
@@ -687,19 +726,33 @@ destination, then write your own numbers down.
 ## Backups and deleted data
 
 Backups are point-in-time copies. Retention, deletion and anonymization in the
-application (see the <!-- TODO(#43): link --> [retention guide](retention.md))
-operate on the live database and **do not rewrite existing backups**:
+application ([retention.md](retention.md#backups) is the same story from the
+other side) operate on the live database and **do not rewrite existing backups**:
 
-- A deleted or anonymized person's data stays in every backup taken before the
-  deletion until that backup expires (`BACKUP_RETENTION_DAYS` locally, plus the
-  retention of your off-host destination). The backup is encrypted, and
-  restoring it is a deliberate, access-controlled act, but the data is there.
-  Set the off-host retention with this in mind, and keep it as short as your
-  recovery needs allow.
-- After restoring a backup taken **before** a deletion or anonymization, the
-  data is back. Re-apply every deletion request made since the backup before
-  letting the copy serve users (checklist step 6). Keep a record of deletion
-  requests outside the application database so this is possible.
+- **Backup retention bounds real deletion.** A deleted or anonymized person's data
+  stays in every backup taken before the deletion until that backup expires
+  (`BACKUP_RETENTION_DAYS` locally, plus the retention of your off-host
+  destination). Data is gone for good only once every backup that contains it has
+  expired: "ticket content 365 days, backups 35 days" means removed content can
+  exist for up to 400 days. The backup is encrypted, and restoring it is a
+  deliberate, access-controlled act, but the data is there. Keep the off-host
+  retention as short as your recovery needs allow.
+- **A restore of an older backup brings it all back:** removed drafts,
+  screenshots, ticket and AI content, audit events past their period, and the
+  identity of an account anonymized after that backup. Redo them before users
+  arrive: [checklist step 7](#post-restore-checklist-before-any-live-work) (run
+  retention again, anonymize again from the record you keep outside the database).
+  Retention is idempotent and its state is in the database, so a policy saved
+  before the backup is still in force. Anonymizations are the one thing that is not
+  replayed automatically.
+- **Audit retention floor.** Audit events cannot be purged younger than 30 days
+  ([audit.md](audit.md)), so a backup holds at least the last 30 days of the audit
+  trail even where the configured period is shorter; a restore brings back whatever
+  the live system had purged since, and the next run purges it again.
+- **The backup does not delete anything either.** It holds the screenshot-files
+  lock while it runs, which only defers file deletions (retention itself, and
+  every other change, proceed) so a backup never contains a row without its file
+  because of retention.
 - To remove a specific person from backups sooner, delete the affected backup
   directories locally and at the destination (they are plain directories) once
   a newer backup exists, accepting the loss of that restore point.
