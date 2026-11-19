@@ -167,13 +167,16 @@ pub struct Report {
     pub workload: Vec<Workload>,
 }
 
+fn scoped(alias: &str) -> String {
+    format!(
+        "WHERE {alias}.created_at >= $1 AND {alias}.created_at < $2
+           AND ($3::uuid IS NULL OR {alias}.category_id = $3)
+           AND ($4::uuid IS NULL OR {alias}.team_id = $4)"
+    )
+}
+
 fn cohort(limit: &str) -> String {
-    submissions::summaries(&format!(
-        "WHERE x.created_at >= $1 AND x.created_at < $2
-           AND ($3::uuid IS NULL OR x.category_id = $3)
-           AND ($4::uuid IS NULL OR x.team_id = $4)
-         {limit}"
-    ))
+    submissions::summaries(&format!("{} {limit}", scoped("x")))
 }
 
 // The first queue entry and first human closure come from immutable transition
@@ -275,20 +278,27 @@ async fn report(db: &mut PgConnection, scope: &Scope) -> Result<Report, ApiError
         })
         .collect::<Result<_, ApiError>>()?;
 
+    // Volume aggregates only need ticket scope and catalog names. Avoid
+    // repeating attempt, event and account lookups from the detail cohort.
+    let volume = format!(
+        "SELECT t.created_at, t.category_id, t.priority_id
+         FROM tickets t {} AND t.status <> 'draft'",
+        scoped("t")
+    );
     let daily = scope
         .bind(sqlx::query_as(&format!(
             "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*)
-         FROM ({cohort}) c GROUP BY 1 ORDER BY 1"
+         FROM ({volume}) c GROUP BY 1 ORDER BY 1"
         )))
         .fetch_all(&mut *db)
         .await?;
     let categories = scope.bind(sqlx::query_as(&format!(
-        "SELECT cat.id, cat.name, count(*) FROM ({cohort}) c JOIN categories cat ON cat.id = c.category_id
+        "SELECT cat.id, cat.name, count(*) FROM ({volume}) c JOIN categories cat ON cat.id = c.category_id
          GROUP BY cat.id, cat.name ORDER BY cat.name, cat.id"
     ))).fetch_all(&mut *db).await?;
     let priorities = scope
         .bind(sqlx::query_as(&format!(
-            "SELECT priority_id AS id, priority_name AS name, count(*) FROM ({cohort}) c
+            "SELECT p.id, p.name, count(*) FROM ({volume}) c JOIN priorities p ON p.id = c.priority_id
          GROUP BY 1, 2 ORDER BY 2, 1"
         )))
         .fetch_all(&mut *db)
@@ -359,6 +369,9 @@ pub async fn get_report(
     require_permission(&user, Permission::ViewReports)?;
     let scope = Scope::try_from(query)?;
     let mut tx = submissions::read_only(&state).await?;
+    // JIT added hundreds of milliseconds to the reference report request.
+    // Keep this setting local to the report transaction.
+    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
     let result = report(&mut tx, &scope).await?;
     tx.commit().await?;
     Ok(Json(result))
