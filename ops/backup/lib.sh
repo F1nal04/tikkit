@@ -59,3 +59,23 @@ tikkit_backup_copies $copies
 METRICS
   mv "$STATUS_DIR/.metrics.$$" "$STATUS_DIR/metrics"
 }
+
+BACKUP_FILES="database.pgdump.age screenshots.tar.age config.tar.age manifest.txt.age"
+
+# A backup directory is complete only when SHA256SUMS has exactly one entry for
+# each expected file, nothing else, and every checksum matches. Prints the reason
+# on failure. Run inside the backup directory.
+checksums_ok() {
+  [ -f SHA256SUMS ] || { echo "SHA256SUMS is missing"; return 1; }
+  for f in $BACKUP_FILES; do
+    n=$(awk -v f="$f" '$2 == f' SHA256SUMS | wc -l | tr -d ' ')
+    [ "$n" = 1 ] || { echo "SHA256SUMS has $n entries for $f (expected exactly 1)"; return 1; }
+  done
+  [ "$(wc -l < SHA256SUMS | tr -d ' ')" = 4 ] || { echo "SHA256SUMS has unexpected entries"; return 1; }
+  sha256sum -c SHA256SUMS > /dev/null 2>&1 || { echo "a file does not match SHA256SUMS"; return 1; }
+}
+
+# A copy that counts toward the retention minimum: complete, verified, not degraded.
+backup_is_good() {
+  [ ! -e "$1/DEGRADED" ] && (cd "$1" && checksums_ok > /dev/null)
+}
