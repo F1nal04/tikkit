@@ -202,6 +202,8 @@ export default {
   revoke: 'Revoke',
   actions: 'Actions',
   skipToContent: 'Skip to main content',
+  restoreModeBanner:
+    'Restore mode is on: this is a restored copy. No email is sent, no AI provider is called and no background job runs. Finish the post-restore checklist, then restart without RESTORE_MODE.',
   loading: 'Loading…',
   menu: 'Menu',
   mainNavigation: 'Main navigation',

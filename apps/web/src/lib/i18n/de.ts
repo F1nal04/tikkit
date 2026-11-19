@@ -203,6 +203,8 @@ export default {
   revoke: 'Widerrufen',
   actions: 'Aktionen',
   skipToContent: 'Zum Hauptinhalt springen',
+  restoreModeBanner:
+    'Der Wiederherstellungsmodus ist aktiv: Dies ist eine wiederhergestellte Kopie. Es werden keine E-Mails gesendet, keine KI-Anbieter aufgerufen und keine Hintergrundjobs ausgeführt. Arbeiten Sie die Checkliste nach der Wiederherstellung ab und starten Sie dann ohne RESTORE_MODE neu.',
   loading: 'Wird geladen …',
   menu: 'Menü',
   mainNavigation: 'Hauptnavigation',
