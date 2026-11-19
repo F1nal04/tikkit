@@ -1,0 +1,64 @@
+# Optional overlay for docker-compose.prod.example.yml: scheduled, encrypted backups of
+# PostgreSQL, the screenshot volume and the non-secret deployment configuration.
+# See docs/backup-restore.md. Use it with the same project name and env file:
+#   docker compose --env-file .env.production -p tikkit \
+#     -f docker-compose.prod.example.yml -f docker-compose.backup.example.yml up -d --build backup
+services:
+  backup:
+    build:
+      context: .
+      dockerfile: ops/backup/Dockerfile
+    image: ${TIKKIT_BACKUP_IMAGE:-tikkit-backup:local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # The API image's UID, which owns the private screenshot volume.
+    user: "10001:10001"
+    environment:
+      # Public age keys only. The matching private key is never given to this host.
+      BACKUP_AGE_RECIPIENTS: ${BACKUP_AGE_RECIPIENTS:?set one or more age public keys (age1...), see docs/backup-restore.md}
+      BACKUP_TIMES_UTC: ${BACKUP_TIMES_UTC:-03:15}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_MIN_KEEP: ${BACKUP_MIN_KEEP:-3}
+      PGHOST: postgres
+      PGUSER: tikkit
+      PGDATABASE: tikkit
+      PGPASSWORD: ${TIKKIT_DB_PASSWORD:?set a hex application DB password}
+      # Non-secret deployment values recorded in the backup (an allowlist, see backup.sh).
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+      TIKKIT_WEB_IMAGE: ${TIKKIT_WEB_IMAGE:-}
+      TIKKIT_API_IMAGE: ${TIKKIT_API_IMAGE:-}
+      PROXY_BIND: ${PROXY_BIND:-}
+      HTTP_PORT: ${HTTP_PORT:-}
+      HTTPS_PORT: ${HTTPS_PORT:-}
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+      METRICS_PORT: ${METRICS_PORT:-}
+    volumes:
+      - screenshots-data:/var/lib/tikkit/screenshots:ro
+      # A named volume by default. Set BACKUP_VOLUME to an absolute host path (owned by
+      # UID 10001, mode 0700) to keep backups on a separate disk or mount.
+      - ${BACKUP_VOLUME:-backup-data}:/backups
+      - ./docker-compose.prod.example.yml:/config/docker-compose.prod.example.yml:ro
+      - ./docker-compose.backup.example.yml:/config/docker-compose.backup.example.yml:ro
+      - ./docker-compose.restore.example.yml:/config/docker-compose.restore.example.yml:ro
+    configs:
+      - source: caddyfile
+        target: /config/ops/caddy/Caddyfile
+      - source: postgres-init
+        target: /config/ops/compose/init-postgres.sql
+    tmpfs:
+      - /tmp
+    networks: [db]
+    depends_on:
+      postgres: { condition: service_healthy }
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9092/metrics"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  backup-data:
