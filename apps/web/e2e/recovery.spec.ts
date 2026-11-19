@@ -56,7 +56,6 @@ function arm(page: Page, match: (url: string, method: string, body: Record<strin
     hits.push({
       key: typeof body?.idempotency_key === 'string' ? body.idempotency_key : undefined,
       action: typeof body?.action === 'string' ? body.action : undefined,
-      fields: body ? Object.keys(body) : [],
     })
     if (mode === 'pass') return route.fallback()
     if (mode === 'slow') {
