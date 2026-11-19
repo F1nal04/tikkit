@@ -415,13 +415,13 @@ async fn costly_routes_have_per_account_budgets() {
         (
             "POST",
             "/api/admin/retention/preview".to_owned(),
-            10,
+            30,
             Some(json!({})),
         ),
         (
             "POST",
             "/api/admin/retention/runs".to_owned(),
-            10,
+            30,
             Some(json!({})),
         ),
         (

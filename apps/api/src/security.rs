@@ -269,7 +269,8 @@ impl Throttle {
             Self::Search => ("search", 120),
             Self::Export => ("export", 6),
             Self::ConnectionTest => ("connection_test", 5),
-            Self::Retention => ("retention", 10),
+            // An Admin checking several periods in a row stays well below this.
+            Self::Retention => ("retention", 30),
             Self::Anonymize => ("anonymize", 10),
         }
     }
