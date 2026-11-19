@@ -17,3 +17,7 @@ test-results/
 # Development screenshot storage (SCREENSHOT_DIR default).
 data/
 playwright-report/
+
+# Full-stack Playwright artifacts
+apps/web/test-results-full/
+apps/web/playwright-report-full/
