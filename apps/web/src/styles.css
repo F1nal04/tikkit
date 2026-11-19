@@ -64,6 +64,7 @@ a { color: inherit; }
   border-bottom: 1px solid var(--line);
 }
 .brand { font-weight: 700; font-size: 1.125rem; text-decoration: none; }
+.topbar a { min-width: 0; overflow-wrap: anywhere; }
 
 .body { display: grid; grid-template-columns: 16rem minmax(0, 1fr); min-height: calc(100vh - 3.5rem); }
 
@@ -71,6 +72,8 @@ a { color: inherit; }
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0;
+  max-width: 100%;
   padding: 1.25rem 1rem;
   background: var(--surface);
   border-right: 1px solid var(--line);
@@ -81,6 +84,7 @@ a { color: inherit; }
   padding: 0.5rem 0.75rem;
   border-radius: 0.375rem;
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 .sidebar nav a:hover { background: #eef1ec; }
 /* Current page: bold and underlined as well as tinted, so it is not colour alone. */
@@ -122,7 +126,11 @@ input, select, textarea, button {
   border: 1px solid #6f7d73;
   border-radius: 0.375rem;
 }
-input[type='file'], select, textarea { width: 100%; }
+input[type='file'], textarea { width: 100%; }
+/* Bare selects in a flex filter row stay as wide as their label. Selects in a form fill that form. */
+form:not(.filters) select { width: 100%; min-width: 0; }
+.filters > * { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
+.filters select, .filters input { width: 100%; max-width: 100%; min-width: 0; }
 .field, form, fieldset { min-width: 0; max-width: 100%; }
 input, select, textarea { background: var(--surface); color: var(--ink); }
 textarea { min-height: 8rem; resize: vertical; }

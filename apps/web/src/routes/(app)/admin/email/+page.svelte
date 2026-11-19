@@ -2,7 +2,9 @@
   import { ApiError } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -27,23 +29,26 @@
   let busy = $state(false)
   let notice = $state<string | null>(null)
   let error = $state<unknown>(null)
+  let errorOn = $state<'save' | 'test' | 'remove'>('save')
   let fields = $state<Record<string, string[]>>({})
 
   let request = $derived(apiClient(data.locale).request)
   const problem = (code: string | null | undefined) =>
     code && code in t.errors ? t.errors[code as keyof typeof t.errors] : null
 
-  async function run(action: () => Promise<string>) {
+  async function run(action: () => Promise<string>, on: 'save' | 'test' | 'remove') {
     if (busy) return
     busy = true
     error = null
     notice = null
     fields = {}
+    errorOn = on
     try {
       notice = await action()
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -61,7 +66,7 @@
       form.username = ''
       form.password = ''
       return t.saved
-    })
+    }, 'save')
   }
 
   const remove = () =>
@@ -69,7 +74,7 @@
       await request('delete', '/api/settings/smtp')
       connection = null
       return t.smtpRemoved
-    })
+    }, 'remove')
 
   function sendTest(event: SubmitEvent) {
     event.preventDefault()
@@ -83,7 +88,7 @@
           connection = { ...connection, last_test_error: e.code, last_test_at: new Date().toISOString() }
         throw e
       }
-    })
+    }, 'test')
   }
 </script>
 
@@ -91,11 +96,20 @@
 
 <h1>{t.emailSettingsTitle}</h1>
 <p>{t.emailSettingsIntro}</p>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
+{#if error && errorOn === 'remove'}<ErrorSummary title={errorText(t, error)} />{/if}
 {#if notice}<Alert kind="success">{notice}</Alert>{/if}
 {#if !connection}<Alert kind="info">{t.smtpNotConfigured}</Alert>{/if}
 
 <form onsubmit={save} novalidate aria-busy={busy}>
+  {#if error && errorOn === 'save'}
+    <ErrorSummary
+      title={errorText(t, error)}
+      items={fieldItems(fields, {
+        host: t.smtpHost, port: t.smtpPort, security: t.smtpSecurity, sender_name: t.smtpSenderName,
+        sender_address: t.smtpSenderAddress, username: t.smtpUsername, password: t.smtpPassword,
+      }, (code) => fieldText(t, code))}
+    />
+  {/if}
   <Field name="host" label={t.smtpHost} bind:value={form.host} autocomplete="off" error={fieldText(t, fields.host?.[0])} />
   <Field name="port" type="number" label={t.smtpPort} bind:value={form.port} error={fieldText(t, fields.port?.[0])} />
   <Field
@@ -146,6 +160,9 @@
 
   <h2>{t.smtpTest}</h2>
   <form onsubmit={sendTest} novalidate aria-busy={busy}>
+    {#if error && errorOn === 'test'}
+      <ErrorSummary title={errorText(t, error)} items={fieldItems(fields, { to: t.smtpTestTo }, (code) => fieldText(t, code))} />
+    {/if}
     <Field name="to" type="email" label={t.smtpTestTo} bind:value={testTo} hint={t.smtpTestHint} error={fieldText(t, fields.to?.[0])} />
     <div class="actions"><button type="submit" disabled={busy}>{t.smtpTest}</button></div>
   </form>

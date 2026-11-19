@@ -3,7 +3,9 @@
   import { ApiError, type AccountSummary, type Role, type Schemas } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages, type Locale } from '#lib/i18n.ts'
 
   let { account, teams, locale }: { account: AccountSummary; teams: Schemas['Team'][]; locale: Locale } = $props()
@@ -34,6 +36,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -65,7 +68,16 @@
   <details>
     <summary>{t.editAccount}: {account.username}</summary>
     <form onsubmit={save} novalidate aria-busy={busy}>
-      {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
+      {#if error}
+        <ErrorSummary
+          title={errorText(t, error)}
+          items={fieldItems(fields, { role: t.role, expertise: t.expertise, team_id: t.team }, (code) => fieldText(t, code), {
+            role: `role-${account.id}`,
+            expertise: `expertise-${account.id}`,
+            team_id: `team-${account.id}`,
+          })}
+        />
+      {/if}
       {#if saved}<Alert kind="success">{t.saved}</Alert>{/if}
       <Field
         name="role-{account.id}"

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { AccountSummary, Schemas } from '@tikkit/api-client'
 import AccountEditor from './AccountEditor.svelte'
@@ -28,7 +28,7 @@ test('a rejected lead demotion preserves input and explains replacement in Germa
   await fireEvent.click(screen.getByText('Konto bearbeiten: operator.one'))
   await fireEvent.change(screen.getByLabelText('Rolle'), { target: { value: 'operator' } })
   await fireEvent.submit(screen.getByRole('button', { name: 'Speichern' }).closest('form')!)
-  expect((await screen.findByRole('alert')).textContent).toContain('andere Teamleitung')
+  await waitFor(() => expect(document.getElementById('form-errors')?.textContent).toContain('andere Teamleitung'))
   expect((screen.getByLabelText('Rolle') as HTMLSelectElement).value).toBe('operator')
 })
 

@@ -1,7 +1,30 @@
 import de from './i18n/de'
 import en from './i18n/en'
 
-export const messages = { en, de }
+/**
+ * German is English with translations laid on top. A missing or blank German string
+ * renders the English text, including on pages that read `messages[locale]` directly.
+ */
+export function mergeCatalog<T>(base: T, overlay: unknown): T {
+  if (typeof base === 'string') {
+    return (typeof overlay === 'string' && overlay.trim() !== '' ? overlay : base) as T
+  }
+  if (Array.isArray(base)) {
+    const over = Array.isArray(overlay) ? overlay : []
+    return base.map((item, index) => mergeCatalog(item, over[index])) as T
+  }
+  if (base && typeof base === 'object') {
+    const over = overlay && typeof overlay === 'object' && !Array.isArray(overlay) ? (overlay as Record<string, unknown>) : {}
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(base as object)) {
+      out[key] = mergeCatalog((base as Record<string, unknown>)[key], over[key])
+    }
+    return out as T
+  }
+  return (overlay ?? base) as T
+}
+
+export const messages = { en, de: mergeCatalog(en, de) }
 export type Locale = keyof typeof messages
 
 const isLocale = (value: string | null | undefined): value is Locale =>

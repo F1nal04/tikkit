@@ -4,11 +4,12 @@
   import { aiStep, aiStepPolls, AI_POLL_MS } from '#lib/aiStep.ts'
   import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
-  import { focusFormErrors } from '#lib/a11y.ts'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { messages, errorText, fieldText } from '#lib/i18n.ts'
   import { attemptFor, type Attempt } from '#lib/intake.ts'
   import { poll } from '#lib/poll.ts'
@@ -139,7 +140,13 @@
   {#if ticket.content_removed_at}<Alert kind="info">{t.retention.contentRemoved}</Alert>{:else if ticket.ai?.content_removed}<Alert kind="info">{t.retention.aiContentRemoved}</Alert>{/if}
   <div class="actions"><StatusBadge status={ticket.status} label={t.ticketStatuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy || deciding}>{h.refresh}</button></div>
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? h.replySent : h.actionSaved}</Alert>{/if}
-  {#if changed}<Alert summary>{h.changed}</Alert>{:else if failure}<Alert summary>{errorText(t, failure)}</Alert>{:else if Object.keys(fields).length}<Alert summary>{t.errors.validation_failed}</Alert>{/if}
+  {#if changed}<ErrorSummary title={h.changed} />
+  {:else if failure || Object.keys(fields).length}
+    <ErrorSummary
+      title={Object.keys(fields).length && !failure ? t.errors.validation_failed : errorText(t, failure)}
+      items={fieldItems(fields, { reason: h.reason, body: h.message }, (code) => fieldText(t, code))}
+    />
+  {/if}
   {#if ticket.closure_reason}<p>{t.closureReasons[ticket.closure_reason]}</p>{/if}
   <AiStep {ticket} policy={data.aiPolicy} locale={data.locale} disabled={busy} bind:busy={deciding} />
 

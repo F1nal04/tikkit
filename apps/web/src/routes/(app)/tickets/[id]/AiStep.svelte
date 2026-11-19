@@ -47,8 +47,9 @@
   async function keepFocus() {
     await tick()
     const active = document.activeElement
-    // `#main` is where client navigation lands when the previous control is gone.
-    if (!active || active === document.body || active.id === 'main' || section?.contains(active)) heading?.focus()
+    // Client navigation lands on the page heading (or `#main` from the skip link).
+    const landing = document.querySelector('main h1')
+    if (!active || active === document.body || active.id === 'main' || active === landing || section?.contains(active)) heading?.focus()
   }
 
   /**

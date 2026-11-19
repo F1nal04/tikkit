@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { afterEach, expect, test, vi } from 'vitest'
 import Page from './+page.svelte'
 vi.mock('$app/navigation', () => ({ invalidateAll: vi.fn() }))
@@ -12,7 +12,7 @@ test('submits organization policy and preserves input after a localized validati
   await fireEvent.input(screen.getByLabelText('Zeitzone'), { target: { value: 'Wrong/Zone' } })
   await fireEvent.click(screen.getByLabelText('Erneutes Öffnen menschlich geschlossener Tickets erlauben'))
   await fireEvent.submit(screen.getByRole('button', { name: 'Speichern' }).closest('form')!)
-  expect(await screen.findByRole('alert')).toBeTruthy()
+  await waitFor(() => expect(document.getElementById('form-errors')).toBeTruthy())
   expect((screen.getByLabelText('Zeitzone') as HTMLInputElement).value).toBe('Wrong/Zone')
   const [url, init] = fetch.mock.calls[0]
   expect(url).toBe('/api/admin/settings')

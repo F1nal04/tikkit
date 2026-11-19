@@ -3,7 +3,9 @@
   import { ApiError, type AccountSummary, type Schemas } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages, type Locale } from '#lib/i18n.ts'
 
   let { team, accounts, locale }: { team?: Schemas['Team']; accounts: AccountSummary[]; locale: Locale } = $props()
@@ -45,6 +47,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -59,7 +62,15 @@
   novalidate
   aria-busy={busy}
 >
-  {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
+  {#if error}
+    <ErrorSummary
+      title={errorText(t, error)}
+      items={fieldItems(fields, { name: t.teamName, lead_account_id: t.teamLead }, (code) => fieldText(t, code), {
+        name: `team-name-${key}`,
+        lead_account_id: `team-lead-${key}`,
+      })}
+    />
+  {/if}
   {#if saved}<Alert kind="success">{t.saved}</Alert>{/if}
   <Field name="team-name-{key}" label={t.teamName} bind:value={name} error={fieldText(t, fields.name?.[0])} />
   <Field

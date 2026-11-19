@@ -2,8 +2,8 @@
   import type { Snippet } from 'svelte'
   import { translate, type Locale } from '#lib/i18n.ts'
 
-  type Props = { open?: boolean; title: string; locale?: Locale; children: Snippet; actions?: Snippet }
-  let { open = $bindable(false), title, locale = 'en', children, actions }: Props = $props()
+  type Props = { open?: boolean; title: string; locale: Locale; children: Snippet; actions?: Snippet }
+  let { open = $bindable(false), title, locale, children, actions }: Props = $props()
   const id = $props.id()
   let dialog: HTMLDialogElement
   // Outside the dialog, so the close announcement stays in the tree after the dialog hides.
@@ -15,13 +15,12 @@
     if (open && !dialog.open) dialog.showModal()
     else if (!open && dialog.open) dialog.close()
   })
-  // One polite change per open and per close. The closed state on first render says nothing.
+  // A native modal already announces itself. Only the close is spoken from outside the dialog,
+  // after the dialog has left the accessibility tree. The closed state on first render says nothing.
   $effect(() => {
     const now = open
     if (now === wasOpen) return
-    announcement = now
-      ? translate(locale, 'dialogOpened').replace('{title}', title)
-      : translate(locale, 'dialogClosed')
+    if (!now) announcement = translate(locale, 'dialogClosed')
     wasOpen = now
   })
 </script>

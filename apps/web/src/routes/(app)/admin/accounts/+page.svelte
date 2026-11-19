@@ -3,7 +3,9 @@
   import { ApiError, type Language, type Role } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import Table from '#lib/components/Table.svelte'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import { invitationTime } from '#lib/admin.ts'
@@ -18,6 +20,7 @@
   // svelte-ignore state_referenced_locally
   let language = $state<Language>(data.organization?.default_language ?? data.locale)
   let hours = $state('168')
+  let errorOn = $state<'invite' | 'list' | 'copy'>('invite')
   let created = $state<{ url: string; emailed: boolean } | null>(null)
   let copied = $state(false)
   let busy = $state(false)
@@ -27,17 +30,19 @@
   const api = () => apiClient(data.locale)
   const when = (iso: string) => invitationTime(iso, data.locale, data.organization?.timezone ?? 'UTC')
 
-  async function run(action: () => Promise<unknown>) {
+  async function run(action: () => Promise<unknown>, on: 'invite' | 'list' = 'invite') {
     if (busy) return
     busy = true
     error = null
     fields = {}
+    errorOn = on
     try {
       await action()
       await invalidateAll()
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -56,13 +61,13 @@
   }
 
   const revoke = (id: string) =>
-    run(() => api().request('post', '/api/invitations/{id}/revoke', { path: { id } }))
+    run(() => api().request('post', '/api/invitations/{id}/revoke', { path: { id } }), 'list')
   const reissue = (id: string) =>
     run(async () => {
       const r = await api().request('post', '/api/invitations/{id}/reissue', { path: { id } })
       created = { url: r.url, emailed: r.emailed }
       copied = false
-    })
+    }, 'list')
 
   async function copy() {
     if (!created) return
@@ -71,6 +76,8 @@
       copied = true
     } catch (e) {
       error = e
+      errorOn = 'copy'
+      await focusFormErrors()
     }
   }
 </script>
@@ -79,10 +86,15 @@
 
 <h1>{t.accountsTitle}</h1>
 <p class="hint">{t.separateAccounts}</p>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
 
 <h2>{t.invite}</h2>
 <form onsubmit={createInvitation} novalidate aria-busy={busy}>
+  {#if error && errorOn === 'invite'}
+    <ErrorSummary
+      title={errorText(t, error)}
+      items={fieldItems(fields, { email: t.inviteEmailOptional, role: t.role, language: t.language, expires_in_hours: t.inviteExpiresHours }, (code) => fieldText(t, code))}
+    />
+  {/if}
   <Field name="role" label={t.role} bind:value={role} options={roles.map((r) => ({ value: r, label: t.roles[r] }))} />
   <Field name="email" type="email" label={t.inviteEmailOptional} bind:value={email} error={fieldText(t, fields.email?.[0])} />
   <Field
@@ -107,12 +119,14 @@
       <input readonly value={created.url} onfocus={(e) => e.currentTarget.select()} />
     </label>
     <button type="button" onclick={copy}>{t.copy}</button>
+    {#if error && errorOn === 'copy'}<ErrorSummary title={errorText(t, error)} />{/if}
     {#if copied}<span>{t.copied}</span>{/if}
     <p>{created.emailed ? t.inviteEmailed : t.inviteNotEmailed}</p>
   </Alert>
 {/if}
 
 <h2>{t.invitationHistory}</h2>
+{#if error && errorOn === 'list'}<ErrorSummary title={errorText(t, error)} />{/if}
 <p class="hint">{t.reissueHint}</p>
 <Table caption={t.invitationHistory} empty={t.noInvitations} isEmpty={data.invitations.length === 0}>
   {#snippet head()}

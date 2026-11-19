@@ -4,9 +4,10 @@
   import { onMount } from 'svelte'
   import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
-  import { focusFormErrors } from '#lib/a11y.ts'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { messages, errorText, fieldText } from '#lib/i18n.ts'
   import { attemptFor, type Attempt } from '#lib/intake.ts'
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
@@ -171,7 +172,20 @@
   <div class="actions"><StatusBadge status={ticket.status} label={t.statuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{s.refresh}</button></div>
   {#if ticket.closure_reason}<p>{t.closureReasons[ticket.closure_reason]}</p>{/if}
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? s.replySent : feedback === 'note' ? s.noteSent : s.actionSaved}</Alert>{/if}
-  {#if changed}<Alert summary>{s.changed}</Alert>{:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>{:else if failure}<Alert summary>{errorText(t, failure)}</Alert>{:else if Object.keys(fields).length}<Alert summary>{t.errors.validation_failed}</Alert>{/if}
+  {#if changed}<ErrorSummary title={s.changed} />
+  {:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>
+  {:else if failure || Object.keys(fields).length}
+    <ErrorSummary
+      title={Object.keys(fields).length && !failure ? t.errors.validation_failed : errorText(t, failure)}
+      items={fieldItems(fields, {
+        assignee_account_id: s.assignTo,
+        team_id: s.dispatchTeam,
+        summary: s.summary,
+        priority_id: s.newPriority,
+        body: s.message,
+      }, (code) => fieldText(t, code))}
+    />
+  {/if}
   {#if reason}<Alert kind="info">{s.readOnly[reason]}</Alert>{/if}
 
   <dl class="facts">

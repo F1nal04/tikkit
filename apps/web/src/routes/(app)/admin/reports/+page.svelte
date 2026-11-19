@@ -1,6 +1,8 @@
 <script lang="ts">
   import { CSRF_HEADER } from '@tikkit/api-client'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Table from '#lib/components/Table.svelte'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import { messages, errorText } from '#lib/i18n.ts'
   import { reportQuery } from '#lib/reports.ts'
   import { DISPOSITIONS, RESOLUTIONS, submissionsHref, type SubmissionFilters } from '#lib/submissions.ts'
@@ -42,11 +44,13 @@
       const response = await fetch(`/api/admin/reports/export?${query}`, { method: 'POST', headers: CSRF_HEADER })
       if (response.status === 413) {
         exportError = s.exportLimit
+        await focusFormErrors()
         return
       }
       if (!response.ok) {
         const body = await response.json()
         exportError = errorText(t, body.error)
+        await focusFormErrors()
         return
       }
       const url = URL.createObjectURL(await response.blob())
@@ -57,6 +61,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch {
       exportError = t.errors.generic
+      await focusFormErrors()
     } finally {
       exporting = false
     }
@@ -91,11 +96,11 @@
 </form>
 
 <div class="export">
+  {#if exportError}<ErrorSummary title={exportError} />{/if}
   <button type="button" onclick={exportCsv} disabled={exporting}>
     {exporting ? s.exporting : s.export}
   </button>
   <p>{s.exportRange}</p>
-  {#if exportError}<p role="alert">{exportError}</p>{/if}
 </div>
 
 {#snippet countHead(label: string)}

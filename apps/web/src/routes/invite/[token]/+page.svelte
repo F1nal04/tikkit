@@ -2,8 +2,10 @@
   import { goto } from '$app/navigation'
   import { ApiError, type Language } from '@tikkit/api-client'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import { api } from '#lib/api.ts'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -34,6 +36,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -53,11 +56,16 @@
 {:else}
   <p>{t.inviteIntro} <strong>{t.roles[data.invitation.role]}</strong>.</p>
   <form onsubmit={submit} novalidate>
+    {#if error}
+      <ErrorSummary
+        title={errorText(t, error)}
+        items={fieldItems(fields, { username: t.username, email: t.email, password: t.password, language: t.language }, (code) => fieldText(t, code))}
+      />
+    {/if}
     <Field label={t.username} name="username" autocomplete="username" required bind:value={username} hint={t.usernameHint} error={fieldText(t, fields.username?.[0])} />
     <Field label={t.email} name="email" type="email" autocomplete="email" required bind:value={email} hint={t.emailHint} error={fieldText(t, fields.email?.[0])} />
     <Field label={t.password} name="password" type="password" autocomplete="new-password" required bind:value={password} hint={t.passwordHint} error={fieldText(t, fields.password?.[0])} />
     <Field label={t.language} name="language" bind:value={language} options={languages} />
-    {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
     <button type="submit" disabled={busy}>{t.inviteSubmit}</button>
   </form>
 {/if}

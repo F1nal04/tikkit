@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation'
   import { ApiError } from '@tikkit/api-client'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { api } from '#lib/api.ts'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import Table from '#lib/components/Table.svelte'
@@ -36,6 +38,7 @@
   let retrying = $state(false)
   // Set only when a poll sees a change, so the first paint and an unchanged poll stay quiet.
   let queueNotice = $state('')
+  let queueUpdates = $state(0)
 
   // Saved views: the API reports filters that no longer apply; links leave them out.
   let viewName = $state('')
@@ -60,6 +63,7 @@
       const fields = err instanceof ApiError ? err.fields : {}
       viewNameError = fieldText(t, fields.name?.[0])
       if (!viewNameError) viewError = err
+      await focusFormErrors()
     } finally {
       saving = false
     }
@@ -70,7 +74,10 @@
     try {
       await api(data.locale).request('delete', '/api/saved-views/{id}', { path: { id } })
     } catch (err) {
-      if (!(err instanceof ApiError && err.code === 'not_found')) viewError = err
+      if (!(err instanceof ApiError && err.code === 'not_found')) {
+        viewError = err
+        await focusFormErrors()
+      }
     }
     await invalidateAll()
   }
@@ -118,6 +125,7 @@
       await invalidateAll()
     } catch (err) {
       bulkError = err
+      await focusFormErrors()
     } finally {
       applying = false
     }
@@ -140,7 +148,11 @@
         const counts = await api(data.locale).request('get', '/api/queue/counts')
         if (!current()) return
         if (counts.version !== data.counts.version) {
+          // The same sentence twice does not change the live region, so clear it first.
+          queueNotice = ''
+          await tick()
           queueNotice = q.refreshed
+          queueUpdates += 1
           await invalidateAll()
         }
       } catch (e) {
@@ -172,7 +184,7 @@
 <svelte:head><title>{viewLabel(params.view)}</title></svelte:head>
 
 <h1>{viewLabel(params.view)}</h1>
-<p class="sr-only" role="status" data-testid="queue-announcement">{queueNotice}</p>
+<p class="sr-only" role="status" data-testid="queue-announcement" data-updates={queueUpdates}>{queueNotice}</p>
 
 <nav aria-label={q.views} class="tabs">
   <ul>
@@ -196,6 +208,9 @@
   <p><button type="button" onclick={retry} disabled={retrying}>{q.retry}</button></p>
 {:else}
   <form method="get" class="filters" aria-label={q.filters}>
+    {#if data.searchError}
+      <ErrorSummary title={q.search} items={[{ id: 'q', label: q.search, text: fieldText(t, data.searchError) ?? '' }]} />
+    {/if}
     <input type="hidden" name="view" value={params.view} />
     <Field
       label={q.search}
@@ -244,7 +259,6 @@
 
   <section aria-labelledby="saved-views">
     <h2 id="saved-views">{q.savedViews}</h2>
-    {#if viewError}<Alert>{errorText(t, viewError)}</Alert>{/if}
     {#if data.views?.length}
       <ul class="saved-views">
         {#each data.views as view (view.id)}
@@ -259,6 +273,11 @@
       </ul>
     {/if}
     <form class="filters" onsubmit={saveView} aria-label={q.saveView}>
+      {#if viewNameError}
+        <ErrorSummary title={t.errors.validation_failed} items={[{ id: 'view_name', label: q.viewName, text: viewNameError }]} />
+      {:else if viewError}
+        <ErrorSummary title={errorText(t, viewError)} />
+      {/if}
       <Field label={q.viewName} name="view_name" bind:value={viewName} error={viewNameError} required />
       <div class="actions"><button type="submit" disabled={saving}>{q.save}</button></div>
     </form>
@@ -267,6 +286,7 @@
 
   {#if chosen.length}
     <form class="filters bulk" onsubmit={applyBulk} aria-label={q.bulk}>
+      {#if bulkError}<ErrorSummary title={errorText(t, bulkError)} />{/if}
       <p class="count-selected">{q.selected.replace('{count}', String(chosen.length))}</p>
       <div class="field">
         <label for="bulk-action">{q.bulkAction}</label>
@@ -287,7 +307,6 @@
     </form>
   {/if}
   <div aria-live="polite">
-    {#if bulkError}<Alert>{errorText(t, bulkError)}</Alert>{/if}
     {#if outcome}
       <Alert kind={outcome.failed.length ? 'info' : 'success'}>
         {q.bulkDone.replace('{ok}', String(outcome.ok)).replace('{total}', String(outcome.total))}

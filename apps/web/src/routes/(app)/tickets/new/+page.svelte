@@ -4,13 +4,14 @@
   import { ApiError, type Schemas } from '@tikkit/api-client'
   import Alert from '#lib/components/Alert.svelte'
   import Dialog from '#lib/components/Dialog.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import EmptyState from '#lib/components/EmptyState.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
   import { intakeAi } from '#lib/aiStep.ts'
   import { api as apiClient } from '#lib/api.ts'
-  import { focusFormErrors } from '#lib/a11y.ts'
+  import { focusFormErrors, type SummaryItem } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import {
     attemptFor,
@@ -258,6 +259,29 @@
   }
 
   const errorFor = (key: string) => fieldText(t, errors[key]?.[0])
+  let summaryItems = $derived.by(() => {
+    const labels: Record<string, string> = {
+      category_id: f.category,
+      subject: f.subject,
+      description: f.description,
+      priority_id: f.priority,
+    }
+    const items: SummaryItem[] = []
+    for (const [key, codes] of Object.entries(errors)) {
+      const text = fieldText(t, codes[0])
+      if (!text) continue
+      if (key.startsWith('answers.')) {
+        const id = key.slice('answers.'.length)
+        const field = catalog.fields.find((item) => item.id === id)
+        const other = field?.kind === 'select' && form.answers[id]?.choice === OTHER
+        items.push({ id: other ? `answer-${id}-text` : `answer-${id}`, label: field?.label ?? id, text })
+      } else items.push({ id: key, label: labels[key] ?? key, text })
+    }
+    return items
+  })
+  let summaryTitle = $derived(
+    Object.keys(errors).length ? t.errors.validation_failed : skipDenied ? f.skipDenied : formError ? errorText(t, formError) : '',
+  )
 
   // The error summary, not the first field: the fields stay linked, and the summary lists the failure.
   async function focusFirstError() {
@@ -426,11 +450,8 @@
       </ul>
     </Alert>
   {/if}
-  {#if formError}<Alert kind="error" summary={Object.keys(errors).length === 0 && !skipDenied}>{errorText(t, formError)}</Alert>{/if}
-  {#if skipDenied}<Alert kind="error" summary={Object.keys(errors).length === 0}>{f.skipDenied}</Alert>{/if}
-  {#if Object.keys(errors).length}<Alert kind="error" summary>{t.errors.validation_failed}</Alert>{/if}
-
   <form novalidate onsubmit={submit} aria-busy={submitting}>
+    {#if summaryTitle}<ErrorSummary title={summaryTitle} items={summaryItems} />{/if}
     <p class="form-state">
       <StatusBadge status="draft" label={t.statuses.draft} />
       {#if saveState === 'saving'}{f.stateSaving}
