@@ -108,15 +108,15 @@ test('language can be chosen before sign-in without losing typed input, and pers
 test('an expired session keeps unsent input and offers a way back to sign-in', async ({ page }) => {
   await signIn(page, 'requester')
   await page.goto('/profile')
-  await page.getByLabel('Email').fill('new-address@example.com')
+  await page.getByLabel('Email', { exact: true }).fill('new-address@example.com')
   await page.evaluate(() => fetch('/api/test/expire', { method: 'POST' }))
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
   const banner = page.getByRole('alert').filter({ has: page.getByRole('link', { name: /Sign in/ }) })
   await expect(banner).toContainText('Your session has expired.')
   const signInAgain = banner.getByRole('link', { name: /Sign in/ })
   await expect(signInAgain).toHaveAttribute('href', '/login?next=%2Fprofile')
   await expect(signInAgain).toHaveAttribute('target', '_blank')
-  await expect(page.getByLabel('Email')).toHaveValue('new-address@example.com')
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue('new-address@example.com')
 })
 
 test('keyboard users can skip straight to the content', async ({ page }) => {
@@ -132,19 +132,19 @@ test('keyboard users can skip straight to the content', async ({ page }) => {
 test('language changes after session expiry keep unsent input on the page', async ({ page }) => {
   await signIn(page, 'requester')
   await page.goto('/profile')
-  await page.getByLabel('Email').fill('unsent@example.com')
+  await page.getByLabel('Email', { exact: true }).fill('unsent@example.com')
   await page.evaluate(() => fetch('/api/test/expire', { method: 'POST' }))
   await openMenu(page)
   await page.getByLabel('Language', { exact: true }).first().selectOption('de')
   await expect(page.getByRole('alert').first()).toContainText('Your session has expired.')
   await expect(page).toHaveURL('/profile')
-  await expect(page.getByLabel('Email')).toHaveValue('unsent@example.com')
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue('unsent@example.com')
 })
 
 test('a failed logout reports the failure and keeps unsent input', async ({ page }) => {
   await signIn(page, 'requester')
   await page.goto('/profile')
-  await page.getByLabel('Email').fill('unsent@example.com')
+  await page.getByLabel('Email', { exact: true }).fill('unsent@example.com')
   await page.route('**/api/auth/logout', (route) => route.fulfill({
     status: 503, contentType: 'application/json',
     body: JSON.stringify({ error: { code: 'unavailable' }, request_id: 'r' }),
@@ -153,7 +153,7 @@ test('a failed logout reports the failure and keeps unsent input', async ({ page
   await page.getByRole('button', { name: 'Sign out' }).click()
   await expect(page.getByRole('alert')).toContainText('The service is unavailable.')
   await expect(page).toHaveURL('/profile')
-  await expect(page.getByLabel('Email')).toHaveValue('unsent@example.com')
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue('unsent@example.com')
 })
 
 test('sign-in redirects reject external destinations in SSR and client navigation', async ({ page }) => {

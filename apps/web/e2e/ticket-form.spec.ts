@@ -40,8 +40,7 @@ test('identifies the signed-in requester and states that the request is still a 
 test('category validation: errors are linked to fields and conditional fields are required only while visible', async ({ page }) => {
   await open(page)
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'Please correct the highlighted fields.' })).toBeVisible()
-  await expect(page.getByLabel('Category')).toBeFocused()
+  await expect(page.getByRole('alert').filter({ hasText: 'Please correct the highlighted fields.' })).toBeFocused()
   await expect(page.getByLabel('Category')).toHaveAttribute('aria-invalid', 'true')
   await expect(page.getByLabel('Category')).toHaveAccessibleDescription(/This field is required\./)
   await expect(page.getByLabel('Program')).toHaveCount(0)
@@ -52,7 +51,7 @@ test('category validation: errors are linked to fields and conditional fields ar
   await page.getByLabel('Description').fill('It closes on startup.')
   await page.getByLabel('Priority', { exact: true }).selectOption({ label: 'Low' })
   await submitButton(page).click()
-  await expect(page.getByLabel('Program')).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
   await expect(page.getByLabel('Program')).toHaveAccessibleDescription(/Which program is affected\?.*This field is required\./)
 
   // Another category hides the field, and with it the requirement.
@@ -68,7 +67,7 @@ test('a free-text program name replaces the choice list', async ({ page }) => {
   await fillSoftwareTicket(page)
   await page.getByLabel('Program').selectOption({ label: 'Other (type your own answer)' })
   await submitButton(page).click()
-  await expect(page.getByLabel(/Your answer for/)).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
   await page.getByLabel(/Your answer for/).fill('Notepad++')
   await submitButton(page).click()
   await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
@@ -348,7 +347,7 @@ test('a server screenshot error is attached to the control and focused', async (
   )
   await submitButton(page).click()
   const input = page.getByLabel('Add screenshots')
-  await expect(input).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
   await expect(input).toHaveAttribute('aria-invalid', 'true')
   await expect(input).toHaveAccessibleDescription(/This value is not valid/)
   await expect(page.getByLabel('Subject')).toHaveValue('Word crashes')
