@@ -345,6 +345,12 @@ send a notification or call an AI provider:
   they were.
 - The two protections are independent: removing `RESTORE_MODE` by mistake still
   leaves the container without any route to a mail relay or provider.
+- **Its own fixed subnet.** The production Compose file pins the `app` network to
+  `172.30.0.0/24` and the API's `TRUSTED_PROXIES` to it ([security](security.md)).
+  Two projects cannot share that range, so the restore overlay pins the restored
+  project's `app` network, and `TRUSTED_PROXIES` with it, to `RESTORE_APP_SUBNET`
+  (default `10.99.48.0/24`). It stays a fixed subnet that nothing else joins; set
+  another value in `.env.restore` only if that range is taken on your host.
 - **It cannot be left on unnoticed.** Besides the startup warning, `/api/ready`
   reports `"restore_mode": true`, the metrics endpoint exposes
   `tikkit_restore_mode 1` (the `TikkitRestoreModeLeftOn` alert fires after 12

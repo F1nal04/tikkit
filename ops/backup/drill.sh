@@ -93,7 +93,7 @@ ENV
 
 # --- compose helpers -------------------------------------------------------------
 
-BASE_FILES=(-f docker-compose.prod.example.yml -f docker-compose.backup.example.yml)
+BASE_FILES=(-f docker-compose.prod.example.yml -f docker-compose.backup.example.yml -f ops/backup/drill-source-network.yml)
 DST_FILES=(-f docker-compose.prod.example.yml -f docker-compose.restore.example.yml)
 src() { dc --env-file "$WORK/source.env" -p "$SRC" "${BASE_FILES[@]}" "$@"; }
 src_seed() { dc --env-file "$WORK/source.env" -p "$SRC" "${BASE_FILES[@]}" -f docker-compose.restore.example.yml "$@"; }
@@ -399,6 +399,8 @@ restore_into_dst() { # <backup dir> <identity> [extra restore.sh args...]
 
 DRILL_START=$(date +%s)
 write_env "$WORK/source.env" "$SRC_HTTPS" "$SRC_HTTP" "$ENCRYPTION_KEY_VALUE"
+# The source stack in restore mode (the AI seeding phase) keeps the source's own subnet.
+echo "RESTORE_APP_SUBNET=10.99.47.0/24" >> "$WORK/source.env"
 write_env "$WORK/restore.env" "$DST_HTTPS" "$DST_HTTP" "$ENCRYPTION_KEY_VALUE"
 write_env "$WORK/wrongkey.env" "$DST_HTTPS" "$DST_HTTP" "$(openssl rand -base64 32)"
 
