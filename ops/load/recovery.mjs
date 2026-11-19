@@ -1,7 +1,8 @@
 import {
-  Client, assert, delay, eventually, events, propose, put, report, settings, sql, stack, stackAsync,
+  Client, assert, command, delay, eventually, events, percentiles, propose, put, report, settings, sql, stack, stackAsync,
   submission, ticket,
 } from './client.mjs'
+import { sampler } from './observe.mjs'
 
 const fixture = settings()
 const { password, teams } = fixture
@@ -33,6 +34,48 @@ const exactHandoff = async (actor, id) => {
   assert.equal((await get(staff, id)).status, 'queued')
   assert.equal(attempts(id).empty, true)
 }
+
+async function exerciseTraffic(check, { database = false } = {}) {
+  const queue = new Client()
+  queue.cookie = staff.cookie
+  const stop = sampler({ allowDatabaseOutage: database })
+  const reads = [], submissions = [], failures = {}
+  let running = true
+  const traffic = (async () => {
+    while (running) {
+      const start = performance.now()
+      const { code } = await queue.request(null, '/api/queue?view=general&limit=25&q=VPN',
+        { expect: database ? [200, 500, 503] : [200] })
+      if (code === 200) reads.push(performance.now() - start)
+      else failures[code] = (failures[code] ?? 0) + 1
+      await delay(1000)
+    }
+  })()
+  traffic.catch(() => {})
+  const direct = async actor => {
+    const start = performance.now()
+    assert.equal((await submit(actor, make(false, 'reachable while peer unavailable'))).status, 'queued')
+    submissions.push(performance.now() - start)
+  }
+  let details, resources
+  try {
+    details = await check(direct)
+  } finally {
+    running = false
+    const [snapshot] = await Promise.all([stop(), traffic])
+    resources = snapshot
+  }
+  assert(reads.length > 0 && submissions.length > 0, 'no reachable traffic observed')
+  assert(Math.max(...reads) <= 750, 'queue read missed recovery target')
+  assert(Math.max(...submissions) <= 750, 'direct submission missed recovery target')
+  assert(resources.db.active_or_in_transaction <= 10 && resources.db.client_backends < resources.db.max_connections / 2)
+  if (database) assert(resources.db.unavailable_samples > 0 && Object.keys(failures).length > 0)
+  return { ...details, traffic: { queue_ms: percentiles(reads), direct_ms: percentiles(submissions),
+    unavailable_reads: failures, db_samples: resources.db_samples, db: resources.db, containers: resources.containers } }
+}
+
+const providerActive = () => events('provider').filter(([type]) => type === 'active').length
+const providerEntered = count => eventually('provider received request', () => providerActive() > count)
 
 async function scenario(name, checks) {
   const start = performance.now()
@@ -81,19 +124,85 @@ try {
     return { committed: receipts.filter(result => result.code === 201).length, clean_failures: receipts.filter(result => result.code !== 201).length }
   })
 
-  await scenario('postgres_restart', async () => {
+  await scenario('postgres_restart_in_flight', () => exerciseTraffic(async direct => {
     const owner = await signIn(2)
     const receipt = await submit(owner, make(false, 'before db restart'))
     const id = stack(['ps', '-q', 'api'])
-    await stackAsync(['stop', 'postgres'])
+    const requesterId = sql("SELECT id FROM accounts WHERE username='load-user-2'")
+    const data = make(false, 'blocked during database stop')
+    // Hold the real submission transaction at its idempotency lock.
+    const blocker = Bun.spawn(['bash', '-c', '. ops/load/stack.sh; sql', 'sql'], {
+      stdin: Buffer.from(`BEGIN; SELECT pg_advisory_xact_lock(hashtext('ticket-submission:${requesterId}'),
+        hashtext('${data.idempotency_key}')); SELECT pg_sleep(30); COMMIT;`),
+      stdout: 'ignore', stderr: 'ignore',
+    })
+    await eventually('fixture lock held', () => sql("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted") !== '0')
+    const request = owner.post(null, '/api/tickets', data, [500, 503])
+    request.catch(() => {})
+    await eventually('API submission waiting on database lock', () => sql(
+      "SELECT count(*) FROM pg_stat_activity WHERE usename='tikkit' AND wait_event_type='Lock' AND wait_event='advisory'",
+    ) !== '0')
+    await stackAsync(['stop', '-t', '2', 'postgres'])
+    await blocker.exited
     assert.equal((await probe.request(null, '/api/health')).code, 200)
     await probe.request(null, '/api/ready', { expect: [503] })
+    const { code } = await request
+    await delay(1500)
     await stackAsync(['start', 'postgres'])
     await ready()
     assert.equal(stack(['ps', '-q', 'api']), id)
     assert.equal((await get(owner, receipt.id)).status, 'queued')
     assert.equal(eventCount(receipt.id, 'submit'), 1)
-  })
+    const replay = await submit(owner, data)
+    assert.equal(eventCount(replay.id, 'submit'), 1)
+    await direct(owner)
+    return { interrupted_status: code, receipt_preserved: true }
+  }, { database: true }))
+
+  await scenario('provider_network_disconnect', () => exerciseTraffic(async direct => {
+    const owner = await signIn(7)
+    const container = stack(['ps', '-q', 'provider'])
+    const network = 'tikkit-m4-50_providers'
+    put('provider', 'outage 5000')
+    const count = providerActive()
+    const item = await submit(owner, make(true, 'detached provider interface'))
+    await providerEntered(count)
+    command(['docker', 'network', 'disconnect', network, container])
+    try {
+      const attached = command(['docker', 'inspect', '--format', '{{json .NetworkSettings.Networks}}', container])
+      assert(!Object.hasOwn(JSON.parse(attached), network))
+      await direct(owner)
+      await delay(3000)
+    } finally {
+      command(['docker', 'network', 'connect', '--ip', '192.31.196.10', '--alias', 'api.openai.com', network, container])
+    }
+    await exactHandoff(owner, item.id)
+    put('provider', '250')
+    const restored = await submit(owner, make(true, 'provider reconnected'))
+    await awaitStatus(owner, restored.id, 'awaiting_ai_decision')
+  }))
+
+  if (process.env.LOAD_RECOVERY_LONG === '1') {
+    await scenario('provider_total_timeout', () => exerciseTraffic(async direct => {
+      put('provider', 'retry-then-hang 125000')
+      const owner = await signIn(8)
+      const count = providerActive()
+      const started = Date.now()
+      const receipt = await submit(owner, make(true, 'through provider deadline'))
+      await providerEntered(count)
+      await direct(owner)
+      await eventually('provider retry enters hang', () => providerActive() > count + 1, 75)
+      await direct(owner)
+      await eventually('long provider handoff', async () =>
+        (await get(owner, receipt.id)).status === 'queued', 135)
+      const elapsed = Date.now() - started
+      assert(elapsed >= 119_000 && elapsed <= 132_000, 'expected the full provider deadline')
+      await exactHandoff(owner, receipt.id)
+      assert.equal(attempts(receipt.id).outcome, 'timeout')
+      put('provider', '250')
+      return { handoff_after_ms: elapsed }
+    }))
+  }
 
   await scenario('sigkill_ai_in_flight', async () => {
     put('provider', '8000')
@@ -121,17 +230,13 @@ try {
     return { usage_lease_released_after_ms: Date.now() - start }
   })
 
-  await scenario('provider_slowness_and_outage', async () => {
+  await scenario('provider_slowness_and_outage', () => exerciseTraffic(async direct => {
     put('provider', '4000')
     const wave = await Promise.all(Array.from({ length: 8 }, (_, i) => signIn(20 + i)))
     const mark = events('provider').length
     const aiReceipts = await Promise.all(wave.map((owner, i) => submit(owner, make(true, 'slowness ' + i))))
     await eventually('two calls held by provider', () => events('provider').slice(mark).some(([type, n]) => type === 'active' && n === '2'))
-    const direct = Date.now()
-    const item = await submit(wave[0], make(false, 'direct during slowness'))
-    assert.equal(item.status, 'queued')
-    const directMs = Date.now() - direct
-    assert(directMs < 1000, 'provider wait delayed direct submission')
+    await direct(wave[0])
     put('provider', 'outage 120')
     // The first two calls already in flight may succeed; subsequent ones should hand off.
     const breakerWave = await Promise.all(wave.map((owner, i) => submit(owner, make(true, 'outage ' + i))))
@@ -150,18 +255,18 @@ try {
     assert.equal(peak, Number(sql('SELECT max_concurrency FROM ai_limits')))
     const refusals = Number(sql("SELECT count(*) FROM ai_usage WHERE outcome='circuit_open'"))
     assert(refusals > 0, 'circuit breaker never refused a generation')
-    return { peak_provider_calls: peak, circuit_open_refusals: refusals, direct_submit_ms: directMs }
-  })
+    return { peak_provider_calls: peak, circuit_open_refusals: refusals }
+  }))
 
   if (process.env.LOAD_SMTP === '1') {
     // A direct submission notifies the requester and the opted-in Admin.
     // Seeded operators opt out, so exactly two deliveries should be accepted.
-    const assertDelivery = (id, before) => {
+    const assertDelivery = (id, before, total = 2) => {
       const sent = Number(db(`SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
         JOIN smtp_deliveries d ON d.idempotency_key='notification:' || o.id
         WHERE e.ticket_id=:'id' AND o.channel='email' AND o.status='sent'`, id))
       assert.equal(sent, 2, 'direct submission did not deliver to both recipients')
-      assert.equal(accepted().length - before, sent, 'relay accepted a different number than the durable receipts')
+      assert.equal(accepted().length - before, total, 'relay accepted a different number than the durable receipts')
     }
     await scenario('sigkill_unacknowledged_smtp', async () => {
       await drain()
@@ -205,7 +310,31 @@ try {
       assertDelivery(receipt.id, before)
     })
 
-    await scenario('mail_outage_retry', async () => {
+    await scenario('smtp_stop_mid_delivery', () => exerciseTraffic(async direct => {
+      await drain()
+      const before = accepted().length
+      const held = events('smtp').filter(([kind]) => kind === 'held').length
+      put('smtp', 'hold')
+      const owner = await signIn(9)
+      const receipt = await submit(owner, make(false, 'stopped SMTP relay'))
+      await eventually('relay holds DATA', () => events('smtp').filter(([kind]) => kind === 'held').length > held)
+      await stackAsync(['stop', '-t', '0', 'smtp'])
+      await direct(owner)
+      await eventually('SMTP stop left a retry', () => Number(db(`
+        SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
+        WHERE e.ticket_id=:'id' AND o.channel='email' AND o.status='pending' AND o.attempts=1`,
+      receipt.id)) > 0)
+      put('smtp', 'ready')
+      await stackAsync(['start', 'smtp'])
+      await drain()
+      const observed = Number(sql("SELECT count(*) FROM notification_outbox WHERE status='sent' AND channel='email'"))
+      assert.equal(accepted().length, observed + 1, 'relay count matches durable receipts after restart')
+      assert(accepted().length >= before + 2)
+      assert.equal(Number(db(`SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
+        WHERE e.ticket_id=:'id' AND o.channel='email' AND o.status='sent'`, receipt.id)), 2)
+    }))
+
+    await scenario('mail_outage_retry', () => exerciseTraffic(async direct => {
       put('smtp', 'reject')
       const start = Date.now()
       const owner = await signIn(5)
@@ -215,17 +344,18 @@ try {
         SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
         WHERE e.ticket_id=:'id' AND o.channel='email' AND o.attempts=1 AND o.status='pending'
           AND o.available_at > clock_timestamp() + interval '20 seconds'`, receipt.id)) === 2)
+      await direct(owner)
       put('smtp', 'ready')
       await drain()
-      assertDelivery(receipt.id, before)
+      assertDelivery(receipt.id, before, 4)
       const elapsed = Date.now() - start
       assert(elapsed >= 29_000, 'SMTP retry ignored backoff')
       return { accepted_after_ms: elapsed }
-    })
+    }))
   }
 
   await scenario('overdue_proposals_two_workers', async () => {
-    const users = await Promise.all(Array.from({ length: 12 }, (_, i) => signIn(50 + i)))
+    const users = await Promise.all(Array.from({ length: 14 }, (_, i) => signIn(50 + i)))
     const proposals = []
     const reportBefore = await report(admin)
     const alternate = await new Client().login('load-operator-4', password, null)
@@ -238,9 +368,17 @@ try {
     await stackAsync(['stop', 'api'])
     const schedule = (entries, offset) => sql(`
       UPDATE tickets SET confirmation_deadline = clock_timestamp() + make_interval(secs => :offset)
-      WHERE id = ANY(string_to_array(:'ids', ',')::uuid[])`,
+      WHERE id = ANY(string_to_array(:'ids', ',')::uuid[])
+      RETURNING id, extract(epoch FROM confirmation_deadline)`,
     ['-v', 'ids=' + entries.map(entry => entry.id).join(','), '-v', 'offset=' + offset])
-    schedule(proposals.slice(0, 6), -1)
+    const deadlines = new Map()
+    const due = (items, offset) => {
+      for (const row of schedule(items, offset).split('\n')) {
+        const [id, seconds] = row.split('|')
+        deadlines.set(id, Number(seconds))
+      }
+    }
+    due(proposals.slice(0, 6), -1)
     // Both replicas start against one DB. Compose owns the second container and its lifecycle.
     await stackAsync(['up', '-d', '--no-deps', '--scale', 'api=2', 'api'])
     await ready()
@@ -254,8 +392,8 @@ try {
         } catch { return false }
       })
     }
-    schedule(proposals.slice(6), 1)
-    const choices = proposals.slice(6).map(async ({ id, version }, i) => {
+    due(proposals.slice(6, 12), 1)
+    const choices = proposals.slice(6, 12).map(async ({ id, version }, i) => {
       await delay([700, 950, 1100, 1400, 2000, 3500][i])
       const raceStart = Date.now()
       while (Date.now() - raceStart < 30_000) {
@@ -267,13 +405,41 @@ try {
       assert.fail('requester race never got a decision')
     })
     const choiceCodes = await Promise.all(choices)
+    const closedBy = replica => Number(
+      /^tikkit_ticket_operations_total\{operation="confirmation_timeout_closed"\} (\d+)$/m
+        .exec(command(['docker', 'exec', replica, 'curl', '-fsS', 'http://localhost:9091/metrics']))?.[1],
+    )
+    const unsupervised = replicas.map(closedBy)
+    // Add one due ticket for each replica with its peer briefly paused so that
+    // a fast worker cannot consume both participation checks. The 12-ticket
+    // restart and decision batch above ran with both replicas available.
+    for (const [i, replica] of replicas.entries()) {
+      const peer = replicas[1 - i]
+      const item = proposals[12 + i]
+      command(['docker', 'pause', peer])
+      try {
+        const count = closedBy(replica)
+        due([item], 0)
+        await eventually('replica ' + (i + 1) + ' closed its proposal', () => closedBy(replica) === count + 1)
+      } finally {
+        command(['docker', 'unpause', peer])
+      }
+    }
+    const closureCounters = replicas.map(closedBy)
+    assert(closureCounters.every(count => count > 0), 'both replicas must process closures')
+    let maxLag = 0
     for (const [i, { id }] of proposals.entries()) {
       await awaitStatus(users[i], id, 'closed')
       const auto = eventCount(id, 'confirmation_timeout')
       const manual = eventCount(id, 'accept_resolution')
       assert.equal(auto + manual, 1)
       assert.equal(Number(db("SELECT count(*) FROM ticket_messages WHERE ticket_id=:'id'", id)), 2)
-      assert.equal(auto, i < 6 || choiceCodes[i - 6] === 409 ? 1 : 0)
+      assert.equal(auto, i < 6 || i >= 12 || choiceCodes[i - 6] === 409 ? 1 : 0)
+      if (auto) {
+        const closed = Number(db(`SELECT extract(epoch FROM created_at) FROM ticket_events
+          WHERE ticket_id=:'id' AND event_type='confirmation_timeout'`, id))
+        maxLag = Math.max(maxLag, closed - deadlines.get(id))
+      }
       assert.equal(Number(db(`SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
         WHERE e.ticket_id=:'id' AND e.event_type IN ('accept_resolution','confirmation_timeout') AND o.channel='in_app'`, id)), 1)
     }
@@ -281,10 +447,12 @@ try {
     const after = await report(admin)
     const acceptedRaces = choiceCodes.filter(code => code === 200).length
     assert(acceptedRaces > 0 && acceptedRaces < choiceCodes.length, 'deadline races need both winning paths')
-    assert.equal(after.operator.initial_confirmation_timeout - reportBefore.operator.initial_confirmation_timeout, 12 - acceptedRaces)
+    assert.equal(after.operator.initial_confirmation_timeout - reportBefore.operator.initial_confirmation_timeout, 14 - acceptedRaces)
     assert.equal(after.operator.initial_requester_confirmed - reportBefore.operator.initial_requester_confirmed, acceptedRaces)
     await stackAsync(['up', '-d', '--no-deps', '--scale', 'api=1', 'api'])
-    return { replicas: replicas.length, timed_out: 12 - acceptedRaces, requester_confirmed: acceptedRaces }
+    assert.equal(closureCounters.reduce((sum, count) => sum + count, 0), 14 - acceptedRaces)
+    return { replicas: replicas.length, concurrent_batch_closures_by_replica: unsupervised,
+      closures_by_replica: closureCounters, max_due_lag_ms: Math.round(maxLag * 1000), timed_out: 14 - acceptedRaces, requester_confirmed: acceptedRaces }
   })
 
   await scenario('retention_catches_up_after_restart', async () => {

@@ -9,6 +9,7 @@ const tls = {
 }
 const control = process.env.WORKFLOW_PROVIDER_CONTROL
 let active = 0
+let timeoutAttempts = 0
 const note = (kind, value) => {
   if (control) appendFileSync(control + '-events', `${kind} ${value}\n`)
 }
@@ -42,7 +43,21 @@ createServer(tls, async (request, response) => {
       const start = performance.now()
       note('active', ++active)
       try {
-        await delay(Number(value))
+        if (mode === 'retry-then-hang' && timeoutAttempts++ === 0) {
+          response.writeHead(503, { 'Retry-After': '65', 'Content-Type': 'application/json' })
+            .end(JSON.stringify({ error: { code: 'server_error', message: 'Synthetic retry' } }))
+          return
+        }
+        if (mode === 'retry-then-hang') {
+          const abort = new AbortController()
+          response.once('close', () => abort.abort())
+          await delay(Number(value), undefined, { signal: abort.signal }).catch(error => {
+            if (error.name !== 'AbortError') throw error
+          })
+          if (response.destroyed) return
+        } else {
+          await delay(Number(value))
+        }
       } finally {
         --active
         note('duration_ms', Math.round(performance.now() - start))
