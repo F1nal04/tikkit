@@ -146,3 +146,38 @@ validation with retained input, Admin promotion without membership, lead
 eligibility and complete paginated selector options. `e2e/admin.spec.ts` covers
 both languages at mobile width, account identity/role controls and denied deep
 links against the browser stub; Rust tests use real PostgreSQL.
+
+## Full browser workflows
+
+`bun run test:e2e:full` runs the built Node app through a same-origin loopback
+gateway, with the real Axum application router, PostgreSQL, and the AI,
+notification, and confirmation-timeout workers. Playwright uses a fresh
+deployment for first-admin bootstrap and its organization-wide policy changes.
+The test entry point in `apps/api/tests/workflow_server/main.rs` creates its own
+migrated database through `TestDb` and drops it with its private screenshot
+directory when Playwright closes the launcher. It is a Cargo test target and
+ships in neither application. Its only AI destination is the local provider
+mock, and mail goes to the existing local STARTTLS capture.
+
+Start dev PostgreSQL and install Chromium as for the other suites. On a shared
+machine, run under the same browser lock as the stub suite:
+
+```sh
+export TEST_DATABASE_URL=postgres://tikkit:tikkit@127.0.0.1:5432/tikkit
+# Optional warm-up, also used in CI.
+timeout 900 cargo test --locked -p tikkit-api --test workflow_server --no-run
+until mkdir /tmp/tikkit-e2e.lock 2>/dev/null; do sleep 10; done
+trap 'rmdir /tmp/tikkit-e2e.lock' EXIT
+CI=1 bun run test:e2e:full
+```
+
+Set `WORKFLOW_SETUP_LANGUAGE=de` to complete first-admin setup in German. CI runs
+both setup languages against separate fresh databases.
+
+Local ports are 18500 (gateway), 18501 (API), 18502 (built portal), and 18503
+(SMTP). The in-process provider mock binds an ephemeral loopback port. The
+scenarios use the gateway origin for API calls and links. Set
+`WORKFLOW_BASE_URL` when pointing Playwright at an already running fresh stack
+with a deterministic provider and its own origin/transport configuration.
+See [workflow-coverage.md](workflow-coverage.md) for coverage and the remaining
+production Compose verification.

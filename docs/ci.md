@@ -1,6 +1,6 @@
 # CI
 
-`.github/workflows/ci.yml` has four jobs. They run in parallel on every pull
+`.github/workflows/ci.yml` has five jobs. They run in parallel on every pull
 request targeting `main`, including Dependabot and release PRs, and on every
 push to `main`:
 
@@ -8,6 +8,7 @@ push to `main`:
 |---|---|
 | `api` | With a pinned PostgreSQL 17 service container and `TEST_DATABASE_URL` pointing at it: `bun run check --filter=@tikkit/api` (`cargo fmt --check`, `cargo clippy -D warnings`) and `bun run test --filter=@tikkit/api` (`cargo test --locked`, including the DB integration tests). |
 | `api-release` | `bun run build --filter=@tikkit/api` (`cargo build --release --locked`). |
+| `workflows` | `bun run test:e2e:full` against a fresh PostgreSQL database, real API/worker router, built web app, and loopback AI/SMTP stubs. Separate jobs complete setup in English and German. |
 | `web` | For `@tikkit/web` and `@tikkit/api-client`: check (svelte-kit sync + svelte-check), `vite build`, vitest, then `bun run test:e2e` (Playwright against the production build and a stub API). |
 | `compose` | Builds both production images, starts PostgreSQL, applies migrations, and checks TLS, readiness, SSR, and security headers on pages, API responses and assets. It verifies rejected hosts and login origins, request-ID replacement, and client-address spoofing protection. It recreates the stack to test both durable volumes, then verifies rejection and readiness reporting for an unknown migration. A final step runs the reduced [backup and restore drill](backup-restore.md#restore-drill) in its own Compose projects. The `api` job also checks and unit-tests the backup alert rules with `promtool`. |
 
@@ -15,7 +16,7 @@ push to `main`:
 advisories and the secret scan); see [security-scanning.md](security-scanning.md).
 
 On failure, Playwright traces, screenshots, and the HTML report are uploaded
-as the `playwright` artifact. See [testing.md](testing.md).
+as the `playwright` artifact. The `workflows` job uploads its traces, videos, screenshots, and HTML report as `playwright-workflows-en` and `playwright-workflows-de`. See [testing.md](testing.md).
 
 The Bun version comes from `packageManager` in the root `package.json`. Node is
 24, and Rust is pinned in the workflow. Actions are pinned to commit SHAs, and
@@ -55,7 +56,7 @@ For each tag it creates, the workflow calls **Release images** directly:
 - `api-vX.Y.Z` → `ghcr.io/f1nal04/tikkit-api:api-vX.Y.Z`
 
 The called workflow runs from `main`, resolves the tag to a commit on
-`main`, and runs all four CI jobs on that exact commit. It publishes a
+`main`, and runs CI on that exact commit. It publishes a
 Linux AMD64 image after CI succeeds and the `release` environment admits
 the publishing job. OCI source, revision, and version labels and BuildKit
 provenance identify the released revision. Tag pushes do not invoke the
