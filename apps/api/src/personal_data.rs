@@ -6,7 +6,10 @@
 //! the wrong account fails instead of exporting or erasing it. Nothing here
 //! looks at an email address.
 
+use std::sync::Arc;
+
 use axum::{
+    Extension,
     extract::State,
     http::header,
     response::{IntoResponse, Response},
@@ -430,16 +433,21 @@ async fn deleted(db: &mut PgConnection, sql: &str, account: Uuid) -> Result<i64,
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
-        (status = 409, description = "`conflict`: a ticket of the account is being changed right now; try again", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`conflict`: a ticket of the account is being changed right now; try again; `restore_mode_blocked`: this copy is in restore mode", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn anonymize_account(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<crate::auth::Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(body): Json<AnonymizeAccount>,
 ) -> Result<Json<AnonymizationResult>, ApiError> {
     let mut tx = crate::management::transaction(&state, &user).await?;
+    // Irreversible and destructive: not on a restored copy under verification.
+    if auth.settings.restore_mode {
+        return Err(ApiError::RestoreModeBlocked);
+    }
     let (active, anonymized) = verified(&mut tx, id, &body.username).await?;
     if anonymized {
         return Err(invalid("account", "already_anonymized"));

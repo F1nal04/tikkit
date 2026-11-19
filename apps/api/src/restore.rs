@@ -6,7 +6,10 @@ use serde_json::json;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 
-use crate::auth::audit;
+use crate::audit;
+
+/// The audit actor of the restore commands.
+pub const SERVICE: &str = "restore";
 
 /// `last_error` of rows suppressed by [`suppress_pending_email`].
 pub const SUPPRESSED_ON_RESTORE: &str = "suppressed_on_restore";
@@ -68,11 +71,11 @@ pub async fn suppress_pending_email(
     )
     .fetch_one(&mut *tx)
     .await?;
-    audit(
+    // The named restore service is the actor; the request ID stays empty (no request).
+    audit::system(
         &mut *tx,
+        SERVICE,
         "notifications_suppressed_on_restore",
-        None,
-        None,
         json!({
             "cutoff": cutoff.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
             "email_suppressed": email_suppressed,

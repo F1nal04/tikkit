@@ -206,6 +206,13 @@ async fn cutover_suppresses_only_old_pending_email() {
     )
     .fetch_all(&db.pool).await.unwrap();
     assert_eq!(audit.len(), 1);
+    let actor: (Option<String>, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT actor_service, actor_account_id FROM audit_events WHERE event_type = 'notifications_suppressed_on_restore'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(actor, (Some("restore".into()), None));
     assert_eq!(audit[0]["email_suppressed"], 1);
     assert!(audit[0]["cutoff"].is_string());
     assert_eq!(
@@ -256,4 +263,72 @@ async fn credentials_check_tells_a_wrong_key_from_the_right_one() {
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(status(right).await, ("readable", "readable"));
     assert_eq!(status(wrong).await, ("unreadable", "unreadable"));
+}
+
+#[tokio::test]
+async fn restore_mode_refuses_destructive_jobs_but_not_reads() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let admin = fixtures::bootstrap_admin(&db.pool).await;
+    let normal = test_app_with(&db.pool, Settings::default());
+    let restored = test_app_with(
+        &db.pool,
+        Settings {
+            restore_mode: true,
+            ..Settings::default()
+        },
+    );
+    let normal_cookie = login(&normal, "admin", fixtures::PASSWORD).await.session();
+    let cookie = login(&restored, "admin", fixtures::PASSWORD)
+        .await
+        .session();
+    let run = json!({ "confirm": "DELETE", "preview_token": "x", "as_of": "2026-01-01T00:00:00Z" });
+    let anonymize = json!({ "username": "admin" });
+    let anonymize_path = format!("/api/admin/accounts/{admin}/anonymize");
+
+    // Normal mode gets as far as its own validation.
+    let r = call(
+        &normal,
+        "POST",
+        "/api/admin/retention/runs",
+        Some(run.clone()),
+        Some(&normal_cookie),
+    )
+    .await;
+    assert_ne!(
+        r.body["error"]["code"], "restore_mode_blocked",
+        "{}",
+        r.body
+    );
+    let r = call(
+        &normal,
+        "POST",
+        &anonymize_path,
+        Some(anonymize.clone()),
+        Some(&normal_cookie),
+    )
+    .await;
+    assert_ne!(
+        r.body["error"]["code"], "restore_mode_blocked",
+        "{}",
+        r.body
+    );
+
+    for (path, body) in [
+        ("/api/admin/retention/runs".to_owned(), run),
+        (anonymize_path, anonymize),
+    ] {
+        let r = call(&restored, "POST", &path, Some(body), Some(&cookie)).await;
+        assert_eq!(r.status, 409, "{path}: {}", r.body);
+        assert_eq!(r.body["error"]["code"], "restore_mode_blocked", "{path}");
+    }
+    // Looking is still allowed: the copy is there to be inspected.
+    for path in [
+        "/api/admin/retention",
+        "/api/admin/reports?created_from=2026-01-01T00:00:00Z&created_before=2026-02-01T00:00:00Z",
+    ] {
+        let r = call(&restored, "GET", path, None, Some(&cookie)).await;
+        assert_eq!(r.status, 200, "{path}: {}", r.body);
+    }
 }

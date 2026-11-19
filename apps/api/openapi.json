@@ -356,7 +356,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: a ticket of the account is being changed right now; try again",
+            "description": "`conflict`: a ticket of the account is being changed right now; try again; `restore_mode_blocked`: this copy is in restore mode",
             "content": {
               "application/json": {
                 "schema": {
@@ -1512,7 +1512,7 @@
             }
           },
           "409": {
-            "description": "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending",
+            "description": "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending; `restore_mode_blocked`: this copy is in restore mode",
             "content": {
               "application/json": {
                 "schema": {
@@ -8761,6 +8761,7 @@
           "retention_preview_stale",
           "export_too_large",
           "outbound_disabled",
+          "restore_mode_blocked",
           "smtp_not_configured",
           "smtp_auth_failed",
           "smtp_tls_failed",

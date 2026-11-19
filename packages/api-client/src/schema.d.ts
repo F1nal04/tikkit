@@ -2497,7 +2497,7 @@ export interface components {
          * @description Stable machine-readable error codes. Never translated; clients map them to text.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "request_timeout" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "retention_preview_stale" | "export_too_large" | "outbound_disabled" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
+        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "request_timeout" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "retention_preview_stale" | "export_too_large" | "outbound_disabled" | "restore_mode_blocked" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
         ErrorDetails: {
             /** @description Invalid input fields (dotted paths) and their stable error codes. */
             fields: {
@@ -4256,7 +4256,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `conflict`: a ticket of the account is being changed right now; try again */
+            /** @description `conflict`: a ticket of the account is being changed right now; try again; `restore_mode_blocked`: this copy is in restore mode */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5053,7 +5053,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending */
+            /** @description `retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending; `restore_mode_blocked`: this copy is in restore mode */
             409: {
                 headers: {
                     [name: string]: unknown;
