@@ -70,8 +70,8 @@ jobs:
             docker run --rm --network none --entrypoint /bin/promtool \
               -v "$PWD/ops/prometheus:/rules:ro" -w /rules "$image" "$@"
           }
-          promtool check rules alerts.yml
-          promtool test rules alerts.test.yml
+          promtool check rules alerts.yml backup-alerts.yml
+          promtool test rules alerts.test.yml backup-alerts.test.yml
 
   api-release:
     runs-on: ubuntu-latest
@@ -174,6 +174,14 @@ jobs:
           docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt "$RUNNER_TEMP/tikkit-ca.crt"
           docker compose exec -T api curl -fsS -o /dev/null http://127.0.0.1:9091/metrics
           bash ops/compose/smoke.sh "https://$PUBLIC_HOST" "$RUNNER_TEMP/tikkit-ca.crt"
+      - name: Backup and restore drill (reduced)
+        run: |
+          # Own projects, volumes and ports; the stack above stays untouched.
+          env -u COMPOSE_FILE -u COMPOSE_ENV_FILES -u COMPOSE_PROJECT_NAME \
+            DRILL_API_IMAGE="$TIKKIT_API_IMAGE" DRILL_WEB_IMAGE="$TIKKIT_WEB_IMAGE" \
+            DRILL_MODE=reduced DRILL_SOURCE_PROJECT=tikkit-ci-drill \
+            DRILL_RESTORE_PROJECT=tikkit-ci-drill-restore DRILL_PORT_BASE=18444 \
+            DRILL_WORKDIR="$RUNNER_TEMP/tikkit-drill" ops/backup/drill.sh
       - if: failure() && env.COMPOSE_ENV_FILES != ''
         run: docker compose logs --no-color --tail 100
       - if: always() && env.COMPOSE_ENV_FILES != ''
