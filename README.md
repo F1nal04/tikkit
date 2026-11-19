@@ -129,4 +129,5 @@ has the task-oriented guides for people who run or use Tikkit:
 [requesters](docs/guides/requester.md), [help desk](docs/guides/operator.md),
 [administrators](docs/guides/admin.md), [AI assistance](docs/guides/ai.md) and
 [troubleshooting](docs/guides/troubleshooting.md), with supported versions and what
-is not in this release.
+is not in this release. The checks run against the first release candidate, their
+results and the open items are in [docs/release-validation.md](docs/release-validation.md).

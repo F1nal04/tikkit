@@ -23,6 +23,7 @@ detail; the guides give the working steps and link to them.
 | Checking that every documented promise is covered | [Coverage map](coverage.md); the [workflow test coverage](../workflow-coverage.md) lists the tests behind each workflow |
 | Checking accessibility, or planning a screen-reader review | [Accessibility](../accessibility.md) (what is scanned, keyboard and failure-recovery tests, the screen-reader checklist) |
 | Sizing the host or judging performance | [Performance baseline and capacity](../performance-baseline.md) |
+| Deciding whether this release is ready, or what is still open | [Release validation](../release-validation.md): what was run against the release candidate, the results per acceptance criterion, remaining risks and the repository settings still to apply |
 
 Reference pages behind the guides: [deployment](../deployment.md),
 [backup and restore](../backup-restore.md), [operations](../operations.md),
