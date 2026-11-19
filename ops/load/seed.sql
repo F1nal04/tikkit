@@ -11,6 +11,8 @@ CROSS JOIN (
     SELECT 'load-operator-' || i, 'operator', i FROM generate_series(1, :operators) i
     UNION ALL
     SELECT 'load-lead-' || i, 'team_lead', i FROM generate_series(1, 3) i
+    UNION ALL
+    SELECT 'load-export-' || i, 'admin', i FROM generate_series(1, 3) i
 ) seed
 WHERE admin.username = 'load-admin';
 
@@ -34,7 +36,8 @@ SELECT gen_random_uuid() AS id, n, owner.id AS owner, c.id AS category, c.name A
        (ARRAY['Printer offline', 'VPN reconnects', 'Outlook profile', 'Wi-Fi disconnects',
               'Monitor flickers', 'Calendar sync', 'Password manager'])[1 + n % 7]
          || ' / history ' || n AS subject,
-       clock_timestamp() - interval '1 hour' - n * interval '55 seconds' AS created
+       statement_timestamp() - interval '1 hour' - n * interval '55 seconds' AS created,
+       n <= 2000 AND n % 12 = 2 AS awaiting
 FROM generate_series(1, :tickets) n
 JOIN accounts owner ON owner.username = 'load-user-' || (1 + n % :accounts)
 JOIN categories c ON c.name = CASE WHEN n % 3 = 0 THEN 'Load AI' ELSE 'Load desk' END
@@ -43,11 +46,12 @@ JOIN teams tm ON tm.name = 'Load desk ' || (1 + n % 3);
 
 INSERT INTO tickets (id, requester_account_id, category_id, priority_id, team_id, assignee_account_id,
                      status, subject, description, intake_snapshot, created_at, updated_at,
-                     resolution_source, closure_reason, proposal_version)
+                     resolution_source, closure_reason, proposal_version, confirmation_deadline)
 SELECT id, owner, category, priority,
        CASE WHEN n % 4 > 0 THEN team END,
        CASE WHEN n % 4 > 1 THEN lead END,
-       CASE n % 4 WHEN 3 THEN 'closed' WHEN 2 THEN 'in_progress' ELSE 'queued' END,
+       CASE WHEN awaiting THEN 'awaiting_confirmation'
+            ELSE CASE n % 4 WHEN 3 THEN 'closed' WHEN 2 THEN 'in_progress' ELSE 'queued' END END,
        subject, 'Intermittent workstation fault. Restarting temporarily restores service.',
        jsonb_build_object('subject', subject,
          'description', 'Intermittent workstation fault. Restarting temporarily restores service.',
@@ -57,7 +61,8 @@ SELECT id, owner, category, priority,
        created, created + interval '10 minutes',
        CASE WHEN n % 4 = 3 THEN 'operator' END,
        CASE WHEN n % 4 = 3 THEN 'requester_confirmed' END,
-       CASE WHEN n % 4 = 3 THEN 1 ELSE 0 END
+       CASE WHEN n % 4 = 3 OR awaiting THEN 1 ELSE 0 END,
+       CASE WHEN awaiting THEN created + interval '168 hours 7 minutes' END
 FROM bulk;
 
 INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at)
@@ -95,7 +100,7 @@ SELECT id, lead, 'propose_resolution', 'in_progress', 'awaiting_confirmation',
        jsonb_build_object('proposal_version', 1, 'summary', 'Replaced the profile.',
                           'timeout_hours', 168, 'deadline', created + interval '168 hours 7 minutes'),
        created + interval '7 minutes'
-FROM bulk WHERE n % 4 = 3;
+FROM bulk WHERE n % 4 = 3 OR awaiting;
 
 INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at)
 SELECT id, owner, 'accept_resolution', 'awaiting_confirmation', 'closed',

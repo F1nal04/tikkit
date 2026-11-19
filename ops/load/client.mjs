@@ -54,7 +54,7 @@ function record(group, duration, code, expected) {
 
 export class Client {
   cookie = ''
-  async request(group, path, { method = 'GET', data, expect = [200], raw = false } = {}) {
+  async request(group, path, { method = 'GET', data, expect = [200], raw = false, csv = false } = {}) {
     const start = performance.now()
     let response, body, code = 'transport'
     try {
@@ -69,6 +69,10 @@ export class Client {
       })
       const text = await response.text()
       code = response.status
+      if (csv && code === 200) {
+        assert(response.headers.get('content-type')?.startsWith('text/csv'), 'expected CSV')
+        body = { rows: text.trimEnd().split(/\r?\n/).length - 1 }
+      }
       if (text && expect.includes(code) && response.headers.get('content-type')?.includes('application/json')) body = JSON.parse(text)
       const cookie = response.headers.get('set-cookie')
       if (cookie) this.cookie = cookie.split(';', 1)[0]
@@ -90,7 +94,7 @@ export class Client {
   }
   async screenshot() {
     png ??= screenshot()
-    return (await this.request('submit_upload', '/api/screenshots?filename=synthetic.png',
+    return (await this.request('screenshot_upload', '/api/screenshots?filename=synthetic.png',
       { method: 'POST', data: png, raw: true, expect: [201] })).body.id
   }
 }
@@ -99,7 +103,7 @@ export const reportRange = () => new URLSearchParams({
   created_from: new Date(Date.now() - 350 * 864e5).toISOString(),
   created_before: new Date(Date.now() + 864e5).toISOString(),
 })
-export const report = admin => admin.get('admin', '/api/admin/reports?' + reportRange())
+export const report = (admin, group = 'admin_report') => admin.get(group, '/api/admin/reports?' + reportRange())
 export const ticket = id => '/api/tickets/' + id
 export const message = body => ({ idempotency_key: randomUUID(), body, screenshot_ids: [] })
 export function submission(category_id, priority_id, subject, screenshot_ids = []) {
