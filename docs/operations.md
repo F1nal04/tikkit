@@ -97,6 +97,10 @@ API restart. Avoid manual status changes or queue deletion.
   relay is repaired, let pending rows retry. Use the Admin retry action for
   rows that reached the terminal failed state. Verify that due lag and
   failures stop climbing. SMTP disabled by policy suppresses email.
+- For `smtp_tls_failed`, check the certificate chain and hostname. For a private
+  relay, check the mounted [`SMTP_CA_FILE`](configuration.md) contains CA
+  certificates. A self-signed leaf can pass startup validation and fail at
+  send time. Unset the private bundle for a public relay.
 - Invitation and password-reset mail diagnostics also use stable failure
   logs. The notification worker series track the durable ticket outbox.
 
