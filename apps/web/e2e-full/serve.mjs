@@ -2,7 +2,20 @@
 import { spawn } from 'node:child_process'
 import { createServer, request } from 'node:http'
 import { once } from 'node:events'
+import { createServer as createSocket } from 'node:net'
 import { fileURLToPath } from 'node:url'
+
+// Report a port owner conflict before compiling or creating a database. The
+// Playwright lock serializes our own invocations; these probes catch other users.
+for (const port of [18500, 18501, 18502, 18503]) {
+  const probe = createSocket().listen(port, '127.0.0.1')
+  try {
+    await once(probe, 'listening')
+  } catch (error) {
+    throw new Error(`Cannot start workflow stack on 127.0.0.1:${port}`, { cause: error })
+  }
+  await new Promise((resolve) => probe.close(resolve))
+}
 
 const root = fileURLToPath(new URL('../../..', import.meta.url))
 const api = spawn('timeout', [
@@ -56,5 +69,9 @@ async function stop(code) {
 }
 api.stdin.on('error', () => {})
 for (const child of [api, web]) child.on('exit', () => void stop(1))
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => void stop(0))
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => void stop(0))
+gateway.on('error', (error) => {
+  console.error('Workflow gateway could not bind 127.0.0.1:18500', error)
+  void stop(1)
+})
 gateway.listen(18500, '127.0.0.1')

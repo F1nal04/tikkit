@@ -1,7 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const externalOrigin = process.env.WORKFLOW_BASE_URL
-const baseURL = externalOrigin ?? 'http://127.0.0.1:18500'
+if (externalOrigin && !process.env.WORKFLOW_COMPOSE_ENV) {
+  throw new Error('Use ops/compose/workflows.sh for a disposable external stack with isolated provider traffic')
+}
+const baseURL = externalOrigin ? new URL(externalOrigin).origin : 'http://127.0.0.1:18500'
 
 export default defineConfig({
   testDir: 'e2e-full',
@@ -10,10 +13,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   // Organization policy and first-admin setup are shared within one deployment.
   workers: 1,
-  timeout: 90_000,
+  timeout: 240_000,
   use: {
     ...devices['Desktop Chrome'],
     baseURL,
+    // The Compose launcher verifies Caddy's private CA before starting Chromium.
+    ignoreHTTPSErrors: !!process.env.WORKFLOW_COMPOSE_ENV,
     actionTimeout: 8_000,
     navigationTimeout: 15_000,
     trace: 'retain-on-failure',
