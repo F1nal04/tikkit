@@ -21,11 +21,32 @@ Reference pages: [AI configuration](../ai-configuration.md),
 
 ## Supported providers
 
-| Provider | Credential | Notes |
+| Provider | What the Admin enters | Selectable models in this release (all accept images) |
 | --- | --- | --- |
-| **OpenAI** | An OpenAI API key | Official OpenAI API only. |
-| **Google Gemini** | A Gemini API key | Official Gemini API only. |
-| **Anthropic** | An Anthropic API key | Official Anthropic API only. |
+| **OpenAI** | An API key from the OpenAI account | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna` |
+| **Google Gemini** | An API key from the Gemini account | `gemini-4-carbon`, `gemini-4-argon`, `gemini-4-hydrogen`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
+| **Anthropic** | An API key from the Anthropic account | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
+
+For every provider the Admin does two things on **Administration → AI assistance**:
+choose the **Provider** and **Model** (a selector, not free text), and paste that
+provider's API key under **API keys**. Nothing else is configured: no endpoint, region
+or organization setting. The model list is fixed per release (it was last checked
+against the providers' documentation on 2026-11-16); the selector on the page always
+shows the current list, offers only models that accept image input, and the
+[provider reference](../ai-providers.md#adapters) holds the table. A later release can
+drop a model; the page then says so and you pick another.
+
+Differences that matter in operation:
+
+- **Failure mapping is the same for all three** (key rejected, rate limit or quota,
+  model unavailable, provider unreachable, unusable or oversized answer), and every
+  failure hands the ticket to the help desk. Gemini's "invalid key" reply is treated
+  like the other providers' 401 or 403.
+- **Token reporting differs.** OpenAI and Gemini report a total (Gemini's includes
+  its reasoning tokens, so it can exceed input plus output). Anthropic reports input
+  and output only, so its total shows as "not reported" and token budgets use the
+  sum of the two.
+- Budgets, the circuit breaker, redaction and storage behave identically for all three.
 
 Requests go only to each provider's public HTTPS host. There is no custom
 endpoint or base-URL setting, and **no self-hosted or other provider** in this
@@ -85,7 +106,8 @@ When AI applies to a ticket, the provider receives **only**:
 - the answers to the conditional questions that were visible (for example the
   program name), and
 - the screenshots attached to the original submission, as real image inputs,
-- plus fixed instructions and the requested language (English or German).
+- plus fixed instructions and the requested answer language: the requester's account
+  language, English or German, at submission.
 
 It does **not** receive: the requester's name or account, any other ticket, later
 replies or screenshots, internal notes, hidden or stale answers, or any link. Private
@@ -95,18 +117,31 @@ Before sending, known secret patterns (password lines, API keys, tokens, private
 keys, URLs with credentials) are replaced with `[redacted]`. This is pattern
 matching and has limits; it does not look inside screenshots. The requester is
 told on the ticket form, before submitting, that their text and screenshots go to the
-external provider. A screenshot that is too large for the provider is scaled or
-re-encoded to fit; if one cannot be prepared, the AI step fails and the ticket goes to
-humans. Images are never silently left out of a request that then claims to have
-read them.
+external provider.
+
+**Input limits.** The ticket form already bounds what can be sent: category, subject
+up to 200 characters, description up to 20,000, up to 100 answers of up to 500
+characters, and up to 10 screenshots (each at most 10 MiB, 16,384 pixels per side,
+40 megapixels, PNG, JPEG or WebP). Providers accept less for images: at most 5 MiB
+and 8,000 pixels per side per image, 12 MiB in total. Before the call each screenshot is
+brought within those limits: unchanged if it already fits, otherwise scaled down
+and/or re-encoded (JPEG or lossless as needed; transparent areas become white),
+preferring full resolution so error text stays readable. Images are never silently
+left out of a request that then claims to have read them; if one cannot be prepared,
+or the provider refuses the image, the AI step fails and the ticket goes to the help
+desk. The text limits of the form fit within what the provider call allows, so valid
+text is not cut.
 
 Tikkit stores the minimized input and the one suggestion with the ticket, and
 metadata only for usage accounting (provider, model, token counts, outcome codes).
 It stores no prompt text, ticket content or image data in logs, usage records or
 the audit log. Knowledge-base retrieval, grounding and citations **do not exist** in this
 release; the model works from the ticket alone and is told not to invent sources.
-The suggestion is untrusted model text shown as plain text, in the language it was
-generated in; it cannot run actions or change a ticket.
+The suggestion is untrusted model text shown as plain text. It is requested in the
+**requester's account language (English or German) at the time of submission**,
+whatever language the ticket is written in, and is stored with that language; it
+is not regenerated or translated when the interface language changes. It cannot run
+actions or change a ticket.
 
 ## What the requester experiences
 
