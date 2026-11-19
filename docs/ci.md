@@ -8,15 +8,15 @@ push to `main`:
 |---|---|
 | `api` | With a pinned PostgreSQL 17 service container and `TEST_DATABASE_URL` pointing at it: `bun run check --filter=@tikkit/api` (`cargo fmt --check`, `cargo clippy -D warnings`) and `bun run test --filter=@tikkit/api` (`cargo test --locked`, including the DB integration tests). |
 | `api-release` | `bun run build --filter=@tikkit/api` (`cargo build --release --locked`). |
-| `workflows` | `bun run test:e2e:full` against a fresh PostgreSQL database, real API/worker router, built web app, and loopback AI/SMTP stubs. Separate jobs complete setup in English and German. |
+| `workflows` | `bun run test:e2e:full` against a fresh PostgreSQL database, real API/worker router, built web app, and loopback AI/SMTP stubs. Separate jobs run complete English and German workflows. |
 | `web` | For `@tikkit/web` and `@tikkit/api-client`: check (svelte-kit sync + svelte-check), `vite build`, vitest, then `bun run test:e2e` (Playwright against the production build and a stub API). |
-| `compose` | Builds both production images, starts PostgreSQL, applies migrations, and checks TLS, readiness, SSR, and security headers on pages, API responses and assets. It verifies rejected hosts and login origins, request-ID replacement, and client-address spoofing protection. It recreates the stack to test both durable volumes, then verifies rejection and readiness reporting for an unknown migration. A final step runs the reduced [backup and restore drill](backup-restore.md#restore-drill) in its own Compose projects. The `api` job also checks and unit-tests the backup alert rules with `promtool`. |
+| `compose` | Builds both production images, starts PostgreSQL, applies migrations, and checks TLS, readiness, SSR, and security headers on pages, API responses and assets. It verifies rejected hosts and login origins, request-ID replacement, and client-address spoofing protection. It recreates the stack to test both durable volumes, then verifies rejection and readiness reporting for an unknown migration. It runs the reduced [backup and restore drill](backup-restore.md#restore-drill) in its own Compose projects, then runs the full portal workflow through Caddy in a fresh isolated project. That run uses an HTTPS provider stub and verifies data across recreation of the application containers. The `api` job also checks and unit-tests the backup alert rules with `promtool`. |
 
 `.github/workflows/security.yml` has one more job, `audit` (dependency
 advisories and the secret scan); see [security-scanning.md](security-scanning.md).
 
 On failure, Playwright traces, screenshots, and the HTML report are uploaded
-as the `playwright` artifact. The `workflows` job uploads its traces, videos, screenshots, and HTML report as `playwright-workflows-en` and `playwright-workflows-de`. See [testing.md](testing.md).
+as the `playwright` artifact. The `workflows` job uploads its traces, videos, screenshots, and HTML report as `playwright-workflows-en` and `playwright-workflows-de`. The Compose run uploads the same artifacts as `playwright-compose-workflows`. See [testing.md](testing.md).
 
 The Bun version comes from `packageManager` in the root `package.json`. Node is
 24, and Rust is pinned in the workflow. Actions are pinned to commit SHAs, and

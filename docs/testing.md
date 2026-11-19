@@ -154,9 +154,10 @@ gateway, with the real Axum application router, PostgreSQL, and the AI,
 notification, and confirmation-timeout workers. Playwright uses a fresh
 deployment for first-admin bootstrap and its organization-wide policy changes.
 The test entry point in `apps/api/tests/workflow_server/main.rs` creates its own
-migrated database through `TestDb` and drops it with its private screenshot
-directory when Playwright closes the launcher. It is a Cargo test target and
-ships in neither application. Its only AI destination is the local provider
+migrated database through `TestDb`. EOF on the launcher pipe, SIGINT, SIGTERM, or SIGHUP
+trigger bounded shutdown and drop the database and screenshot directory. A
+forced kill of the API process can bypass cleanup, as for other database tests.
+This Cargo test target ships in neither application. Its only AI destination is the local provider
 mock, and mail goes to the existing local STARTTLS capture.
 
 Start dev PostgreSQL and install Chromium as for the other suites. On a shared
@@ -171,13 +172,41 @@ trap 'rmdir /tmp/tikkit-e2e.lock' EXIT
 CI=1 bun run test:e2e:full
 ```
 
-Set `WORKFLOW_SETUP_LANGUAGE=de` to complete first-admin setup in German. CI runs
-both setup languages against separate fresh databases.
+Set `WORKFLOW_SETUP_LANGUAGE=de` to run the complete browser workflow in German.
+CI runs the English and German scenarios against separate fresh databases.
 
 Local ports are 18500 (gateway), 18501 (API), 18502 (built portal), and 18503
 (SMTP). The in-process provider mock binds an ephemeral loopback port. The
-scenarios use the gateway origin for API calls and links. Set
-`WORKFLOW_BASE_URL` when pointing Playwright at an already running fresh stack
-with a deterministic provider and its own origin/transport configuration.
-See [workflow-coverage.md](workflow-coverage.md) for coverage and the remaining
-production Compose verification.
+scenarios use the gateway origin for API calls and links. The launcher
+reports occupied ports before it builds the test API or creates a database.
+
+### Production Compose workflows
+
+Build the production images with the commands in [deployment.md](deployment.md).
+Point the test runner at their tags:
+
+```sh
+WORKFLOW_API_IMAGE=tikkit-api:local WORKFLOW_WEB_IMAGE=tikkit-web:local \
+  bash ops/compose/workflows.sh
+```
+
+The script claims project `tikkit-m4-48`, binds loopback ports 18544 and 18580,
+runs the browser under the shared lock, and deletes the project and its
+volumes on exit. It verifies Caddy with the generated portal CA before handing
+`WORKFLOW_BASE_URL` to Playwright. Only the disposable Compose browser context
+accepts that private TLS certificate. Set `WORKFLOW_SETUP_LANGUAGE=de` to run its
+German scenario.
+
+The test-only overlay isolates Compose interpolation with the backup drill's
+`dc` helper and uses `10.99.48.0/24` for trusted proxy traffic. The unchanged
+production API keeps the official OpenAI URL and public-address resolver.
+Ordinary private aliases are refused by that resolver. For this test, an
+AS112 address is assigned on a dedicated **internal** Docker bridge, where
+`api.openai.com` resolves to the test HTTPS peer. The API has only internal
+networks and is verified as such before the suite starts. Only that API
+container receives the generated provider CA through `SSL_CERT_FILE`.
+The peer is mounted read-only and runs as the runner's UID. Its responses
+cover both AI decisions and an explicit 401 handoff, without a real key,
+external provider connection, or SMTP. The browser test recreates the API
+and web containers and verifies persistent data. See
+[workflow-coverage.md](workflow-coverage.md) for the assertions.
