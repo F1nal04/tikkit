@@ -2494,7 +2494,7 @@ async fn an_export_over_the_byte_budget_is_refused_before_it_is_built() {
         .send("POST", &path, json!({ "username": "op" }), "admin")
         .await;
     assert_eq!(r.status, 200);
-    assert!(tikkit_api::personal_data::EXPORT_MAX_BYTES < 20_000_000);
+    const { assert!(tikkit_api::personal_data::EXPORT_MAX_BYTES < 20_000_000) };
 }
 
 #[tokio::test]
