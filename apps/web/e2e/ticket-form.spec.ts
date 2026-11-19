@@ -40,7 +40,9 @@ test('identifies the signed-in requester and states that the request is still a 
 test('category validation: errors are linked to fields and conditional fields are required only while visible', async ({ page }) => {
   await open(page)
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'Please correct the highlighted fields.' })).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
+  await expect(page.locator('#form-errors')).toContainText('Please correct the highlighted fields.')
+  await expect(page.locator('#form-errors')).toContainText('Category: This field is required.')
   await expect(page.getByLabel('Category')).toHaveAttribute('aria-invalid', 'true')
   await expect(page.getByLabel('Category')).toHaveAccessibleDescription(/This field is required\./)
   await expect(page.getByLabel('Program')).toHaveCount(0)
@@ -109,7 +111,7 @@ test('the German interface shows the same form', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Neues Ticket')
   await expect(page.getByLabel('Kategorie')).toBeVisible()
   await page.getByRole('button', { name: 'Anfrage absenden' }).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'Bitte korrigieren Sie die markierten Felder.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('Bitte korrigieren Sie die markierten Felder.')
   await expect(page.getByText('Dieses Feld ist erforderlich.').first()).toBeVisible()
 })
 
@@ -298,7 +300,7 @@ test('a failed submission retries with the same key, and changed input gets a ne
     await route.fallback()
   })
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'The service is unavailable. Please try again later.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('The service is unavailable. Please try again later.')
   await submitButton(page).click()
   await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
   expect(keys).toHaveLength(2)
@@ -322,7 +324,7 @@ test('a failed submission retries with the same key, and changed input gets a ne
     await route.fallback()
   })
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'The service is unavailable. Please try again later.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('The service is unavailable. Please try again later.')
   const saved = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes('/api/ticket-drafts/') && r.ok())
   await page.getByLabel('Subject').fill('Word crashes again')
   await saved

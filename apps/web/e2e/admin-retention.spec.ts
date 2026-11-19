@@ -20,7 +20,7 @@ test('an Admin sets periods, previews the deletion, and confirms a run by typing
   // Bounds are the server's: audit entries are kept at least 30 days.
   await page.getByLabel('Audit log entries', { exact: true }).fill('7')
   await page.getByRole('button', { name: 'Save periods' }).click()
-  await expect(page.getByText('This value is outside the allowed range.')).toBeVisible()
+  await expect(page.getByText('This value is outside the allowed range.', { exact: true })).toBeVisible()
   await page.getByLabel('Audit log entries', { exact: true }).fill('')
 
   // A dry run of unsaved periods: exact counts, nothing changed.
@@ -91,8 +91,8 @@ test('a confirmation in a stale tab deletes nothing: the policy another Admin sa
 
   await page.getByLabel('Type DELETE to confirm').fill('DELETE')
   await page.getByRole('button', { name: 'Delete now' }).click()
-  await expect(page.getByRole('alert')).toContainText('The retention periods were changed after you previewed them')
-  await expect(page.getByRole('alert')).toContainText('Nothing was deleted or saved.')
+  await expect(page.locator('#form-errors')).toContainText('The retention periods were changed after you previewed them')
+  await expect(page.locator('#form-errors')).toContainText('Nothing was deleted or saved.')
   // No run started; the page shows what is stored now and asks for a new preview.
   await expect(page.locator('tr[data-run]')).toHaveCount(0)
   await expect(page.getByLabel('Ticket content', { exact: true })).toHaveValue('1')
@@ -106,7 +106,7 @@ test('a confirmation in a stale tab deletes nothing: the policy another Admin sa
   await page.getByLabel('Type DELETE to confirm').first().fill('DELETE')
   await page.evaluate(() => fetch('/api/admin/retention/test-other-admin', { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'tikkit' }, body: JSON.stringify({ ticket_content_days: 7 }) }))
   await page.getByRole('button', { name: 'Save periods' }).click()
-  await expect(page.getByRole('alert')).toContainText('The retention periods were changed after you previewed them')
+  await expect(page.locator('#form-errors')).toContainText('The retention periods were changed after you previewed them')
   await expect(page.getByLabel('Ticket content', { exact: true })).toHaveValue('7')
   await expect(page.getByLabel('Apply these periods automatically once a day')).not.toBeChecked()
 
@@ -116,7 +116,7 @@ test('a confirmation in a stale tab deletes nothing: the policy another Admin sa
   await page.evaluate(() => fetch('/api/admin/retention/test-other-admin', { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'tikkit' }, body: JSON.stringify({ ticket_content_days: 3 }) }))
   await page.getByLabel('Zur Bestätigung DELETE eingeben').fill('DELETE')
   await page.getByRole('button', { name: 'Jetzt löschen' }).click()
-  await expect(page.getByRole('alert')).toContainText('Die Aufbewahrungsfristen wurden nach Ihrer Vorschau geändert')
+  await expect(page.locator('#form-errors')).toContainText('Die Aufbewahrungsfristen wurden nach Ihrer Vorschau geändert')
 })
 
 test('an Admin exports and anonymizes one account after typing its username', async ({ page }) => {
@@ -124,7 +124,7 @@ test('an Admin exports and anonymizes one account after typing its username', as
   await page.goto('/admin/retention')
   await page.getByLabel('Username', { exact: true }).fill('nobody')
   await page.getByRole('button', { name: 'Find account' }).click()
-  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(page.locator('#form-errors')).toBeVisible()
   await expect(page.getByTestId('account')).toHaveCount(0)
 
   // An active account can be exported but not anonymized.
@@ -138,7 +138,7 @@ test('an Admin exports and anonymizes one account after typing its username', as
   await expect(exportButton).toBeDisabled()
   await page.getByLabel('Type the username to confirm').fill('someone-else')
   await exportButton.click()
-  await expect(page.getByText('This is not the username of this account.')).toBeVisible()
+  await expect(page.getByText('This is not the username of this account.', { exact: true })).toBeVisible()
   await page.getByLabel('Type the username to confirm').fill('requester')
   const download = page.waitForEvent('download')
   await exportButton.click()
@@ -157,7 +157,7 @@ test('an Admin exports and anonymizes one account after typing its username', as
   await expect(remove).toBeDisabled()
   await page.getByLabel('Type the username to confirm').fill('former')
   await remove.click()
-  await expect(page.getByText('This is not the username of this account.')).toBeVisible()
+  await expect(page.getByText('This is not the username of this account.', { exact: true })).toBeVisible()
   await page.getByLabel('Type the username to confirm').fill('former.user')
   await page.getByLabel("Also remove the content of this account's finished tickets now").check()
   await remove.click()

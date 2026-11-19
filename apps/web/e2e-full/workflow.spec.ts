@@ -152,7 +152,7 @@ test('fresh deployment carries human and AI requests through the real portal', a
       await open(admin, '/setup?lang=de')
       await expect(heading(admin)).toHaveText('Tikkit einrichten')
       await button(admin, 'Administrator anlegen').click()
-      await expect(admin.getByRole('alert')).toContainText('Bitte korrigieren Sie die markierten Felder.')
+      await expect(admin.locator('#form-errors')).toContainText('Bitte korrigieren Sie die markierten Felder.')
       await expect(admin.getByLabel(labels.de.username, { exact: true })).toHaveAttribute('aria-invalid', 'true')
       await open(admin, `/setup?lang=${setupLocale}`)
       await expect(heading(admin)).toHaveText(setup[setupLocale].title)
