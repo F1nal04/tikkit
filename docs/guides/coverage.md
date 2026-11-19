@@ -42,7 +42,7 @@ Each acceptance criterion of the documentation issue
 | 33 | Self-handling restriction is per account, not per person | [help desk: roles](operator.md#the-five-roles); [admin](admin.md#what-an-admin-is-and-is-not) |
 | 34 | Requesters see handling team and assignee name, with general-queue/unassigned states | [requester: where your ticket goes](requester.md#where-your-ticket-goes) |
 | 35 | English/German selector and preference, fallback, localized notifications, AI language, content stays in original language | [requester: sign in](requester.md#sign-in-and-your-account); [admin: language](admin.md#language); [index](README.md) |
-| 36 | SvelteKit/Svelte and Rust/Axum, check/test commands, Node-adapter build/start, dev proxy, production routing | Repository [README](../../README.md) (Commands, Production), [AGENTS.md](../../AGENTS.md), [deployment: runtime services](../deployment.md#runtime-services-and-probes), [frontend](../frontend.md); [index: how Tikkit is arranged](README.md#how-tikkit-is-arranged). No separate architecture page: those sources are complete and were corrected where stale. |
+| 36 | SvelteKit/Svelte and Rust/Axum, check/test commands, Node-adapter build/start, dev proxy, production routing | [architecture at a glance](architecture.md) states all of it in one place and links the reference pages (README, [deployment](../deployment.md#runtime-services-and-probes), [frontend](../frontend.md), [security](../security.md#reverse-proxy-trust)); the repository [README](../../README.md) and [AGENTS.md](../../AGENTS.md) were corrected to match. |
 
 ## Related evidence
 

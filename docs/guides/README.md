@@ -14,6 +14,7 @@ detail; the guides give the working steps and link to them.
 | You are… | Start here |
 | --- | --- |
 | Installing or upgrading Tikkit on a host | [Install with Docker Compose](install.md) |
+| Understanding how the parts fit, or developing | [Architecture at a glance](architecture.md) |
 | Fixing a problem on a running install | [Troubleshooting](troubleshooting.md), then the [operations runbook](../operations.md) |
 | An Admin configuring the organization | [Administrator guide](admin.md) |
 | Deciding whether to use AI, or setting up a provider key | [AI assistance guide](ai.md) |
@@ -39,7 +40,7 @@ start with the repository [README](../../README.md) and [AGENTS.md](../../AGENTS
 | Docker Engine / Compose | Engine 28 or newer; Compose v2.33.1 or newer |
 | PostgreSQL | 17 (the reference Compose file pins a 17.12 image). A major-version upgrade needs its own dump-and-restore procedure. |
 | Reverse proxy | Caddy, pinned in the reference Compose file (TLS certificates and HTTP→HTTPS redirect included) |
-| Images | `ghcr.io/f1nal04/tikkit-web:web-vX.Y.Z` and `ghcr.io/f1nal04/tikkit-api:api-vX.Y.Z`, versioned independently; use the pair listed together in a release |
+| Images | **No release has been published yet**: build both images from your checkout ([install, step 1](install.md#1-get-the-files-and-the-images)). Once releases exist: `ghcr.io/f1nal04/tikkit-web:web-vX.Y.Z` and `ghcr.io/f1nal04/tikkit-api:api-vX.Y.Z`, versioned independently; use the pair listed together in a release |
 | Build from source (optional) | Bun 1.4.3+, Node 22.17+ (images use Node 24), Rust 1.88+ with rustfmt and Clippy |
 | Browsers | Automated browser tests run on Chromium. The portal serves standard HTML pages; use a current browser. |
 | AI providers | OpenAI, Google Gemini, Anthropic (official APIs, bring your own key) |
@@ -52,8 +53,8 @@ The stack has a TLS reverse proxy (Caddy), the web server (SvelteKit on Node),
 the API and background workers (Rust), and PostgreSQL. The proxy sends `/api/*` to
 the API and everything else to the web server. The API owns authentication,
 authorization, validation and all business rules; the web server only renders
-pages. Details for developers: the repository [README](../../README.md) and
-[frontend structure](../frontend.md).
+pages. Commands, build output, development proxy and the facts about `ORIGIN`:
+[architecture at a glance](architecture.md).
 
 ## Release limitations
 
@@ -81,14 +82,20 @@ These are **not in this release**. Do not plan around them:
 
 ## Known limitations of this release
 
-- The first hosted release and the first image publication to the container
-  registry are still pending. If the image tag you need is not published, build
-  both images from your checkout ([install, step 1](install.md#1-get-the-files-and-the-images)).
+- **No release has been published yet**: there is no release tag and no image in
+  the container registry. Build both images from your checkout
+  ([install, step 1](install.md#1-get-the-files-and-the-images)); the registry path
+  applies once releases exist.
 - There is no Admin-side password reset. Password recovery needs outbound email.
   Without it, an Admin can deactivate the account and issue a new invitation,
-  which creates a new account.
+  which creates a new account without the person's ticket history.
 - The **My team** page for Team Leads is a placeholder. Team Leads work from the
   **Team queue** tab of the General queue page and from the ticket pages.
+- The requester ticket page does not refresh by itself outside the AI step; use
+  **Refresh**. Staff pages update automatically.
+- The submission receipt and the Admin submission pages use the short status labels
+  (for example "Queued", "Awaiting confirmation"); the requester ticket page uses the
+  longer ones.
 - Rate limits are counted per API process and reset on restart, so one API replica
   is supported.
 - Email delivery is at least once across a crash: in the moment between the relay
@@ -99,7 +106,8 @@ These are **not in this release**. Do not plan around them:
   WCAG 2.2 A and AA; the [screen-reader checklist](../accessibility.md#screen-reader-pass)
   is what a person with VoiceOver or NVDA still has to walk.
 - Notification outbox counts and the retry of failed email rows are available only
-  through the Admin API, not as portal controls
+  through the Admin API, not as portal controls. The documented procedure needs bash,
+  `curl` and `jq`
   ([operations](../operations.md#reading-the-outbox-and-retrying-failed-email)).
 - Recovery objectives and the performance baseline are measurements on one
   machine, not guarantees
