@@ -773,3 +773,59 @@ async fn the_spawned_worker_closes_overdue_proposals_and_stops_on_shutdown() {
         .unwrap();
     assert_eq!(w.events(id, "confirmation_timeout").await, 1);
 }
+
+#[tokio::test]
+async fn requester_cancel_racing_confirmation_or_timeout_has_one_terminal_event() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let owner = login(&app, "requester", PASSWORD).await.session();
+    let cancel = json!({ "action": "cancel", "reason": "No further support needed" });
+    let accept = json!({ "action": "accept_resolution", "proposal_version": 1 });
+
+    let pending = w.seed("awaiting_confirmation", "1 hour").await;
+    let path = format!("/api/tickets/{pending}/actions");
+    let (cancelled, confirmed) = tokio::join!(
+        call(&app, "POST", &path, Some(cancel.clone()), Some(&owner)),
+        call(&app, "POST", &path, Some(accept), Some(&owner)),
+    );
+    assert!(
+        [(200, 409), (409, 200)].contains(&(cancelled.status.as_u16(), confirmed.status.as_u16()))
+    );
+    assert_eq!(
+        w.events(pending, "cancel").await,
+        i64::from(cancelled.status == 200)
+    );
+    assert_eq!(
+        w.events(pending, "accept_resolution").await,
+        i64::from(confirmed.status == 200)
+    );
+    assert_eq!(w.events(pending, "confirmation_timeout").await, 0);
+
+    let due = w.overdue().await;
+    let path = format!("/api/tickets/{due}/actions");
+    let (cancelled, closed) = tokio::join!(
+        call(&app, "POST", &path, Some(cancel), Some(&owner)),
+        close_one(w.pool()),
+    );
+    let closed = closed.unwrap();
+    assert_eq!(
+        cancelled.status.as_u16(),
+        if closed { 409 } else { 200 },
+        "{}",
+        cancelled.body
+    );
+    let (status, _, reason, team, assignee) = w.row(due).await;
+    assert_eq!(status, if closed { "closed" } else { "cancelled" });
+    assert_eq!(reason.as_deref(), closed.then_some("confirmation_timeout"));
+    assert_eq!((team, assignee), (Some(w.team), Some(w.op)));
+    assert_eq!(w.events(due, "cancel").await, i64::from(!closed));
+    assert_eq!(
+        w.events(due, "confirmation_timeout").await,
+        i64::from(closed)
+    );
+    assert_eq!(
+        w.outbox(due, "confirmation_timeout").await,
+        i64::from(closed)
+    );
+    assert!(!close_one(w.pool()).await.unwrap());
+}

@@ -755,3 +755,104 @@ async fn ai_solved_and_finished_records_are_excluded() {
         .await;
     assert!(r.is_err());
 }
+
+#[tokio::test]
+async fn same_team_operator_and_specialist_have_equal_work_permissions() {
+    let Some(w) = world().await else { return };
+    for (actor, peer) in [("op", "peer"), ("peer", "op")] {
+        let unclaimed = w.seed("owner", "queued", Some(w.desk), None).await;
+        let read = w.detail(unclaimed, actor).await;
+        assert_eq!(read.status, 200);
+        assert_eq!(read.body["staff_access"]["can_claim"], true);
+        assert_eq!(w.change(unclaimed, actor, w.assign(peer)).await.status, 403);
+        let general = w.seed("owner", "queued", None, None).await;
+        assert_eq!(
+            w.change(general, actor, w.dispatch(w.network)).await.status,
+            200
+        );
+        assert_eq!(w.detail(general, actor).await.status, 404);
+        assert_eq!(w.change(unclaimed, actor, act("claim")).await.status, 200);
+        assert_eq!(
+            w.placement(unclaimed).await,
+            (Some(w.desk), Some(w.ids[actor]))
+        );
+
+        let detail = w.detail(unclaimed, peer).await;
+        assert_eq!(detail.status, 200);
+        let action = format!("/api/tickets/{unclaimed}/staff-actions");
+        let start =
+            json!({ "action": "start_work", "expected_updated_at": detail.body["updated_at"] });
+        assert_eq!(
+            call(
+                &w.app,
+                "POST",
+                &action,
+                Some(start.clone()),
+                Some(&w.cookies[peer])
+            )
+            .await
+            .status,
+            403,
+        );
+        assert_eq!(
+            call(
+                &w.app,
+                "POST",
+                &action,
+                Some(start),
+                Some(&w.cookies[actor])
+            )
+            .await
+            .status,
+            200,
+        );
+    }
+}
+
+#[tokio::test]
+async fn shared_email_admin_can_dispatch_leads_request_with_separate_audit_identity() {
+    let Some(w) = world().await else { return };
+    let r = call(
+        &w.app,
+        "POST",
+        "/api/tickets",
+        Some(json!({
+            "idempotency_key": Uuid::new_v4(),
+            "intake": { "category_id": w.category, "priority_id": w.normal,
+                "subject": "Lead needs help", "description": "My application fails.",
+                "answers": {}, "screenshot_ids": [] },
+        })),
+        Some(&w.cookies["lead"]),
+    )
+    .await;
+    assert_eq!(r.status, 201, "{}", r.body);
+    let id = serde_json::from_value(r.body["id"].clone()).unwrap();
+    assert_eq!(w.change(id, "lead", w.dispatch(w.desk)).await.status, 403);
+    assert_eq!(w.change(id, "admin", w.dispatch(w.desk)).await.status, 200);
+    for ineligible in ["admin", "lead"] {
+        assert_eq!(
+            w.change(id, "admin", w.assign(ineligible)).await.status,
+            422
+        );
+    }
+    assert_eq!(w.change(id, "admin", w.assign("op")).await.status, 200);
+    let owner = w.detail(id, "lead").await;
+    assert_eq!(owner.body["view"], "requester");
+    assert_eq!(owner.body["assignment"]["assignee_display_name"], "op");
+    let history: Vec<(String, Uuid)> = sqlx::query_as(
+        "SELECT event_type, actor_account_id FROM audit_events
+         WHERE ticket_id = $1 AND event_type IN ('ticket_submit', 'ticket_assignment_changed') ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&w.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        history,
+        [
+            ("ticket_submit".into(), w.ids["lead"]),
+            ("ticket_assignment_changed".into(), w.ids["admin"]),
+            ("ticket_assignment_changed".into(), w.ids["admin"]),
+        ]
+    );
+}

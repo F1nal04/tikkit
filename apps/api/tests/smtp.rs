@@ -886,3 +886,102 @@ async fn a_host_resolving_to_a_refused_address_is_never_contacted() {
     );
     assert_eq!(server.messages.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn shared_email_admin_and_team_lead_receive_account_specific_recovery_links() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    fixtures::bootstrap_admin(&db.pool).await;
+    let server = listen(Listen::StartTls, Fault::None).await;
+    let app = router(&db.pool, Some(&server.ca_pem));
+    let admin = login(&app, "admin", fixtures::PASSWORD).await.session();
+    let issued = call(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(json!({ "role": "team_lead", "email": "shared@example.com" })),
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(issued.status, 201, "{}", issued.body);
+    let url = url::Url::parse(issued.body["url"].as_str().unwrap()).unwrap();
+    let token = url.path_segments().unwrap().next_back().unwrap();
+    let register = |username| {
+        call(
+            &app,
+            "POST",
+            "/api/invitations/accept",
+            Some(json!({
+                "token": token, "username": username, "email": "shared@example.com",
+                "password": fixtures::PASSWORD, "language": "en",
+            })),
+            None,
+        )
+    };
+    let taken = register("ADMIN").await;
+    assert_eq!(
+        taken.body["error"]["details"]["fields"]["username"][0],
+        "taken"
+    );
+    let accepted = register("desk-lead").await;
+    assert_eq!(accepted.status, 200, "{}", accepted.body);
+    let lead = login(&app, "desk-lead", fixtures::PASSWORD).await.session();
+    let get_me = |cookie| call(&app, "GET", "/api/auth/me", None, Some(cookie));
+    let admin_me = get_me(&admin).await.body;
+    let lead_me = get_me(&lead).await.body;
+    assert_eq!(admin_me["role"], "admin");
+    assert_eq!(lead_me["role"], "team_lead");
+    assert_eq!(admin_me["email"], lead_me["email"]);
+    assert_ne!(admin_me["id"], lead_me["id"]);
+
+    let configured = save(
+        &app,
+        &admin,
+        write_body(server.port, "starttls", Some(SECRET), true),
+    )
+    .await;
+    assert_eq!(configured.status, 200, "{}", configured.body);
+    let mut reset_tokens = Vec::new();
+    for username in ["desk-lead", "admin"] {
+        let response = call(
+            &app,
+            "POST",
+            "/api/auth/recovery",
+            Some(json!({ "username": username })),
+            None,
+        )
+        .await;
+        assert_eq!(response.status, 202);
+        let index = reset_tokens.len();
+        wait_messages(&server.messages, index + 1).await;
+        let mail = decode_mail(&server.messages.lock().unwrap()[index]);
+        let link = mail
+            .split_whitespace()
+            .find(|word| word.starts_with("http://localhost:3000/reset-password/"))
+            .unwrap();
+        let url = url::Url::parse(link).unwrap();
+        assert_eq!(url.query(), Some("lang=en"));
+        reset_tokens.push(url.path_segments().unwrap().next_back().unwrap().to_owned());
+    }
+    assert_ne!(reset_tokens[0], reset_tokens[1]);
+    let new_password = "new local workflow password";
+    let reset = |token: &str| {
+        call(
+            &app,
+            "POST",
+            "/api/auth/recovery/reset",
+            Some(json!({
+                "token": token, "new_password": new_password,
+            })),
+            None,
+        )
+    };
+    assert_eq!(reset(&reset_tokens[0]).await.status, 204);
+    assert_eq!(get_me(&lead).await.status, 401);
+    assert_eq!(get_me(&admin).await.body["id"], admin_me["id"]);
+    assert_eq!(login(&app, "desk-lead", new_password).await.status, 200);
+    assert_eq!(login(&app, "admin", new_password).await.status, 401);
+    assert_eq!(reset(&reset_tokens[1]).await.status, 204);
+    assert_eq!(get_me(&admin).await.status, 401);
+}

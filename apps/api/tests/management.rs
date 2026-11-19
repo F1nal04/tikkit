@@ -599,3 +599,53 @@ async fn competing_team_creations_cannot_share_a_lead_and_restore_requires_an_el
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn competing_teams_cannot_promote_the_same_replacement_lead() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    fixtures::bootstrap_admin(&db.pool).await;
+    let first = fixtures::account(&db.pool, Role::TeamLead, "first").await;
+    let second = fixtures::account(&db.pool, Role::TeamLead, "second").await;
+    let replacement = fixtures::account(&db.pool, Role::TeamLead, "replacement").await;
+    let desk = fixtures::team(&db.pool, "Desk", first).await.unwrap();
+    let network = fixtures::team(&db.pool, "Network", second).await.unwrap();
+    let app = test_app(&db.pool);
+    let admin = login(&app, "admin", PASSWORD).await.session();
+
+    let change = |team, name| {
+        let app = &app;
+        let admin = &admin;
+        async move {
+            let path = format!("/api/teams/{team}");
+            call(
+                app,
+                "PUT",
+                &path,
+                Some(json!({
+                    "name": name, "lead_account_id": replacement, "archived": false,
+                })),
+                Some(admin),
+            )
+            .await
+        }
+    };
+    let (a, b) = tokio::join!(change(desk, "Desk"), change(network, "Network"));
+    let (winner, loser, original) = match (a.status.as_u16(), b.status.as_u16()) {
+        (200, 422) => (desk, network, second),
+        (422, 200) => (network, desk, first),
+        _ => panic!("expected one winner: {} {}", a.status, b.status),
+    };
+    let leaders: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(
+        "SELECT t.id, t.lead_account_id, m.team_id FROM teams t
+         JOIN team_memberships m ON m.account_id = t.lead_account_id
+         WHERE t.archived_at IS NULL ORDER BY t.id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(leaders.len(), 2);
+    assert!(leaders.contains(&(winner, replacement, winner)));
+    assert!(leaders.contains(&(loser, original, loser)));
+}
