@@ -42,8 +42,11 @@ pub struct TicketDetail {
     pub priority_name: String,
     pub assignment: TicketAssignmentView,
     /// Frozen original intake; null only for legacy records predating submission.
+    /// `screenshot_ids` lists only screenshots that still exist.
     #[schema(required = true)]
     pub intake_snapshot: Option<SubmittedIntake>,
+    /// Intake screenshots the retention policy has removed.
+    pub removed_screenshots: i64,
     /// Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets.
     #[schema(required = true)]
     pub resolution_source: Option<ResolutionSource>,
@@ -422,6 +425,8 @@ pub async fn ticket_detail(
             can_handle: can(Permission::ReplyAsStaff),
             can_reopen: allow_reopen
                 && status == TicketStatus::Closed
+                // Nothing is left to work on once retention removed the content.
+                && row.content_purged_at.is_none()
                 && authz::is_staff_writer(&actor, &scope),
             can_dispatch,
             can_claim: can(Permission::ClaimTicket),
@@ -432,6 +437,13 @@ pub async fn ticket_detail(
     } else {
         None
     };
+    let mut intake_snapshot = row.intake_snapshot.map(|s| s.0);
+    let removed_screenshots = match &mut intake_snapshot {
+        Some(intake) => {
+            crate::screenshots::existing_intake(&mut tx, row.id, &mut intake.screenshot_ids).await?
+        }
+        None => 0,
+    };
     Ok(Json(TicketDetail {
         id: row.id,
         reference: row.reference,
@@ -441,7 +453,8 @@ pub async fn ticket_detail(
         description: row.description,
         category_id: row.category_id,
         category_name: row.category_name,
-        intake_snapshot: row.intake_snapshot.map(|s| s.0),
+        intake_snapshot,
+        removed_screenshots,
         priority_id: row.priority_id,
         priority_name: row.priority_name,
         assignment: TicketAssignmentView {

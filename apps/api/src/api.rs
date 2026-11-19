@@ -63,6 +63,8 @@ pub enum ApiError {
     /// A retention confirmation whose preview no longer matches the stored
     /// policy (another Admin changed it, or the preview is too old).
     RetentionPreviewStale,
+    /// A personal-data export over its byte budget.
+    ExportTooLarge,
     /// No outbound SMTP connection has been saved.
     SmtpNotConfigured,
     /// The relay rejected the username or password.
@@ -118,6 +120,7 @@ pub enum ErrorCode {
     Conflict,
     PayloadTooLarge,
     RetentionPreviewStale,
+    ExportTooLarge,
     SmtpNotConfigured,
     SmtpAuthFailed,
     SmtpTlsFailed,
@@ -277,6 +280,11 @@ impl ApiError {
                 StatusCode::CONFLICT,
                 ErrorCode::RetentionPreviewStale,
                 "The retention policy changed since this preview; preview again.",
+            ),
+            ExportTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::ExportTooLarge,
+                "This account's data is too large to export in one file.",
             ),
             SmtpNotConfigured => (
                 StatusCode::CONFLICT,

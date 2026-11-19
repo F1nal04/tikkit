@@ -115,6 +115,10 @@ impl World {
         call(&self.app, "GET", path, None, Some(&self.cookies[who])).await
     }
 
+    async fn get_owned(&self, path: String, who: &str) -> Reply {
+        self.get(&path, who).await
+    }
+
     async fn send(&self, method: &str, path: &str, body: Value, who: &str) -> Reply {
         call(
             &self.app,
@@ -1827,6 +1831,44 @@ async fn anonymization_removes_the_identity_and_keeps_relationships_and_reports(
         before,
         "reports add up after anonymization"
     );
+    // The database audited each removal it authorized by the anonymized account.
+    let removed = w.audit("retention_account_content_removed").await;
+    let mut categories: Vec<&str> = removed
+        .iter()
+        .map(|e| e["metadata"]["category"].as_str().unwrap())
+        .collect();
+    categories.sort_unstable();
+    assert_eq!(
+        categories,
+        [
+            "ai_content",
+            "screenshots",
+            "ticket_content",
+            "ticket_content"
+        ]
+    );
+    assert!(
+        removed
+            .iter()
+            .all(|e| e["subject_account_id"] == json!(owner))
+    );
+    // Free text in the history went with it: the staff's proposal summary.
+    let summary: Value = w
+        .scalar(
+            "SELECT payload FROM ticket_events WHERE ticket_id = $1 AND event_type = 'propose_resolution'",
+            closed,
+        )
+        .await;
+    assert_eq!(summary["summary"], REMOVED);
+    // An account that is not anonymized authorizes nothing, also for a
+    // ticket of an anonymized one.
+    let error = sqlx::query("SELECT retention_purge_ticket($1, NULL, $2)")
+        .bind(open)
+        .bind(twin)
+        .execute(w.pool())
+        .await
+        .unwrap_err();
+    assert_eq!(error.as_database_error().unwrap().code().unwrap(), "42501");
     let r = w
         .get(&format!("/api/admin/submissions/{open}"), "admin")
         .await;
@@ -2420,4 +2462,134 @@ async fn the_placeholder_namespace_is_reserved_and_a_collision_cannot_block_eras
             .await,
         2
     );
+}
+
+#[tokio::test]
+async fn an_export_over_the_byte_budget_is_refused_before_it_is_built() {
+    let Some(w) = world().await else { return };
+    let ticket = w.open("Printer").await;
+    // 2,000 public replies of 10,000 characters: about 20 MiB of JSON.
+    sqlx::query(
+        "INSERT INTO ticket_messages (ticket_id, author_account_id, kind, body, author_kind)
+         SELECT $1, $2, 'public_reply', repeat('x', 10000), 'requester' FROM generate_series(1, 2000)",
+    )
+    .bind(ticket)
+    .bind(w.ids["owner"])
+    .execute(w.pool())
+    .await
+    .unwrap();
+    let path = format!(
+        "/api/admin/accounts/{}/personal-data/export",
+        w.ids["owner"]
+    );
+    let r = w
+        .send("POST", &path, json!({ "username": "owner" }), "admin")
+        .await;
+    assert_eq!(r.status, 413, "{}", r.code());
+    assert_eq!(r.code(), "export_too_large");
+    assert_eq!(w.audit("personal_data_exported").await.len(), 0);
+    // Another account's export is unaffected.
+    let path = format!("/api/admin/accounts/{}/personal-data/export", w.ids["op"]);
+    let r = w
+        .send("POST", &path, json!({ "username": "op" }), "admin")
+        .await;
+    assert_eq!(r.status, 200);
+    assert!(tikkit_api::personal_data::EXPORT_MAX_BYTES < 20_000_000);
+}
+
+#[tokio::test]
+async fn detail_views_offer_neither_removed_screenshots_nor_a_reopen_that_cannot_work() {
+    let Some(w) = world().await else { return };
+    let closed = w.closed("Printer").await;
+    let kept = w.closed("Scanner").await;
+    let gone = w.screenshot(closed, None).await;
+    let stays = w.screenshot(kept, None).await;
+    for (ticket, shot) in [(closed, gone), (kept, stays)] {
+        // The frozen intake names its screenshots, as submission stores it.
+        for sql in [
+            "ALTER TABLE tickets DISABLE TRIGGER USER",
+            "UPDATE tickets SET intake_snapshot = jsonb_set(intake_snapshot, '{screenshot_ids}', jsonb_build_array($2::uuid)) WHERE id = $1",
+            "ALTER TABLE tickets ENABLE TRIGGER USER",
+        ] {
+            let query = sqlx::query(sql);
+            let query = if sql.starts_with("UPDATE") {
+                query.bind(ticket).bind(shot)
+            } else {
+                query
+            };
+            query.execute(w.pool()).await.unwrap();
+        }
+    }
+    w.age(&[closed], "40 days").await;
+    let detail = |id: Uuid, who: &'static str| w.get_owned(format!("/api/tickets/{id}"), who);
+
+    // Before: the screenshot is offered, and the ticket can be reopened.
+    let r = detail(closed, "owner").await;
+    assert_eq!(r.body["intake_snapshot"]["screenshot_ids"], json!([gone]));
+    assert_eq!(r.body["removed_screenshots"], 0);
+    assert_eq!(
+        detail(closed, "op").await.body["staff_access"]["can_reopen"],
+        true
+    );
+
+    // Screenshot-only retention: the row and file are gone, the frozen
+    // intake still names the ID.
+    let screenshots = RetentionPolicy {
+        screenshot_days: Some(1),
+        ..Default::default()
+    };
+    assert_eq!(w.run(&screenshots, w.now().await).await.screenshots, 1);
+    for who in ["owner", "op", "admin"] {
+        let r = detail(closed, who).await;
+        assert_eq!(r.status, 200, "{who}: {}", r.body);
+        assert_eq!(
+            r.body["intake_snapshot"]["screenshot_ids"],
+            json!([]),
+            "{who}"
+        );
+        assert_eq!(r.body["removed_screenshots"], 1, "{who}");
+    }
+    let r = w
+        .get(&format!("/api/admin/submissions/{closed}"), "admin")
+        .await;
+    assert_eq!(
+        r.body["intake_snapshot"]["screenshot_ids"],
+        json!([]),
+        "{}",
+        r.body
+    );
+    assert_eq!(r.body["removed_screenshots"], 1);
+    let r = w
+        .get(&format!("/api/screenshots/{gone}/preview"), "owner")
+        .await;
+    assert_eq!(r.status, 404);
+    // The other ticket is untouched.
+    let r = detail(kept, "owner").await;
+    assert_eq!(r.body["intake_snapshot"]["screenshot_ids"], json!([stays]));
+    assert_eq!(r.body["removed_screenshots"], 0);
+    // Text is still there, so reopening still works for it.
+    assert_eq!(
+        detail(closed, "op").await.body["staff_access"]["can_reopen"],
+        true
+    );
+
+    // After the text is removed, no view offers a reopen, and the API refuses it.
+    w.run(&only_tickets(1), w.now().await).await;
+    let r = detail(closed, "op").await;
+    assert_eq!(r.body["staff_access"]["can_reopen"], false, "{}", r.body);
+    assert!(r.body["content_removed_at"].is_string());
+    assert_eq!(
+        detail(kept, "op").await.body["staff_access"]["can_reopen"],
+        true
+    );
+    let action = json!({ "action": "reopen", "expected_updated_at": r.body["updated_at"] });
+    let r = w
+        .send(
+            "POST",
+            &format!("/api/tickets/{closed}/staff-actions"),
+            action,
+            "op",
+        )
+        .await;
+    assert_eq!(r.status, 409, "{}", r.body);
 }

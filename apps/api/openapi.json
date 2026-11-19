@@ -383,7 +383,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Exports the personal data of one account as a JSON document (Admin only).\nThe typed `username` must be the account's. Bounded: each section holds at\nmost 10,000 rows and `truncated` names the sections that were cut. Never\ncontains credentials, hashes, internal notes, or other people's data; see\ndocs/retention.md for the exact contents. Writes `personal_data_exported`.",
+        "summary": "Exports the personal data of one account as a JSON document (Admin only).\nThe typed `username` must be the account's. Bounded: each section holds at\nmost 10,000 rows and `truncated` names the sections that were cut, and the\nwhole export at most 16 MiB (`413 export_too_large` otherwise). Never\ncontains credentials, hashes, internal notes, or other people's data; see\ndocs/retention.md for the exact contents. Writes `personal_data_exported`.",
         "operationId": "export_personal_data",
         "parameters": [
           {
@@ -439,6 +439,16 @@
           },
           "404": {
             "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`export_too_large`: the account's data exceeds 16 MiB",
             "content": {
               "application/json": {
                 "schema": {
@@ -8738,6 +8748,7 @@
           "conflict",
           "payload_too_large",
           "retention_preview_stale",
+          "export_too_large",
           "smtp_not_configured",
           "smtp_auth_failed",
           "smtp_tls_failed",
@@ -12044,6 +12055,7 @@
           "summary",
           "description",
           "intake_snapshot",
+          "removed_screenshots",
           "confirmation_deadline",
           "ai",
           "content_removed_at",
@@ -12092,9 +12104,14 @@
               },
               {
                 "$ref": "#/components/schemas/SubmittedIntake",
-                "description": "Frozen original intake; null only for legacy records predating submission."
+                "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
               }
             ]
+          },
+          "removed_screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Intake screenshots the retention policy has removed."
           },
           "summary": {
             "$ref": "#/components/schemas/SubmissionSummary"
@@ -12562,6 +12579,7 @@
           "priority_name",
           "assignment",
           "intake_snapshot",
+          "removed_screenshots",
           "resolution_source",
           "closure_reason",
           "proposal_version",
@@ -12650,7 +12668,7 @@
               },
               {
                 "$ref": "#/components/schemas/SubmittedIntake",
-                "description": "Frozen original intake; null only for legacy records predating submission."
+                "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
               }
             ]
           },
@@ -12677,6 +12695,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Stable human-facing number."
+          },
+          "removed_screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Intake screenshots the retention policy has removed."
           },
           "requester": {
             "oneOf": [

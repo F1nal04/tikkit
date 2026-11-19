@@ -768,6 +768,30 @@ async fn attach_with_message(
     }
 }
 
+/// Reduces the frozen intake's screenshot IDs to those that still exist and
+/// returns how many the retention policy has removed, so views neither link
+/// to missing images nor hide that there were some.
+pub(crate) async fn existing_intake(
+    db: &mut PgConnection,
+    ticket: Uuid,
+    ids: &mut Vec<Uuid>,
+) -> Result<i64, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let stored: HashSet<Uuid> =
+        sqlx::query_scalar("SELECT id FROM screenshots WHERE ticket_id = $1 AND id = ANY($2)")
+            .bind(ticket)
+            .bind(&*ids)
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect();
+    let before = ids.len();
+    ids.retain(|id| stored.contains(id));
+    Ok((before - ids.len()) as i64)
+}
+
 /// Runs `work`, which deletes files from the screenshot directory, unless a
 /// backup holds the file lock: `pg_advisory_lock(screenshot_files_lock_key())`
 /// in some session (docs/retention.md#backups). Every file deletion of the API

@@ -313,8 +313,11 @@ pub struct SubmissionDetail {
     pub summary: SubmissionSummary,
     pub description: String,
     /// Frozen original intake; null only for legacy records predating submission.
+    /// `screenshot_ids` lists only screenshots that still exist.
     #[schema(required = true)]
     pub intake_snapshot: Option<SubmittedIntake>,
+    /// Intake screenshots the retention policy has removed.
+    pub removed_screenshots: i64,
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(value_type = Option<String>, format = DateTime, required = true)]
     pub confirmation_deadline: Option<OffsetDateTime>,
@@ -589,6 +592,13 @@ pub async fn submission_detail(
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;
+    let mut intake_snapshot = intake_snapshot.map(|s| s.0);
+    let removed_screenshots = match &mut intake_snapshot {
+        Some(intake) => {
+            crate::screenshots::existing_intake(&mut tx, id, &mut intake.screenshot_ids).await?
+        }
+        None => 0,
+    };
     let attempt: Option<AttemptRow> = sqlx::query_as(&format!(
         "SELECT a.id, {OUTCOME_SQL}, a.state, a.outcome, a.provider, a.model, a.language, a.explanation,
                 a.steps, a.created_at, a.finished_at, d.event_type, d.id, d.created_at,
@@ -680,7 +690,8 @@ pub async fn submission_detail(
     Ok(Json(SubmissionDetail {
         summary: summary.try_into()?,
         description,
-        intake_snapshot: intake_snapshot.map(|s| s.0),
+        intake_snapshot,
+        removed_screenshots,
         confirmation_deadline,
         ai,
         content_removed_at,

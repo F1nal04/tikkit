@@ -30,6 +30,9 @@ use crate::{
 /// Rows per export section. A section that has more is cut and named in
 /// `truncated`.
 pub const SECTION_MAX: usize = 10_000;
+/// Bytes of JSON rows one export may hold in total. A larger one is refused
+/// with `413 export_too_large` before it is built.
+pub const EXPORT_MAX_BYTES: i64 = 16 * 1024 * 1024;
 
 fn invalid(field: &str, code: &'static str) -> ApiError {
     ApiError::Validation([(field.to_owned(), vec![code])].into())
@@ -142,21 +145,40 @@ async fn verified(
     Ok((active, anonymized))
 }
 
-/// One export section: the rows of `sql` (bound: the account ID) as JSON,
-/// cut at [`SECTION_MAX`].
+/// One export section, without transferring it: how many bytes its rows are
+/// as JSON, cut at [`SECTION_MAX`] rows. Measured in the database so an
+/// oversized export is refused before any of it is loaded.
+async fn section_bytes(
+    db: &mut PgConnection,
+    sql: &str,
+    account: Uuid,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT COALESCE(sum(octet_length(to_jsonb(x)::text)), 0)::bigint
+         FROM (SELECT * FROM ({sql}) y LIMIT $2) x"
+    ))
+    .bind(account)
+    .bind(SECTION_MAX as i64)
+    .fetch_one(db)
+    .await
+}
+
+/// One export section: the rows of `sql` (bound: the account ID), each as JSON
+/// text, cut at [`SECTION_MAX`].
 async fn section(
     db: &mut PgConnection,
     sql: &str,
     account: Uuid,
-) -> Result<(Vec<Value>, bool), sqlx::Error> {
-    let rows: Vec<Value> =
-        sqlx::query_scalar(&format!("SELECT to_jsonb(x) FROM ({sql}) x LIMIT $2"))
+) -> Result<(Vec<String>, bool), sqlx::Error> {
+    let mut rows: Vec<String> =
+        sqlx::query_scalar(&format!("SELECT to_jsonb(x)::text FROM ({sql}) x LIMIT $2"))
             .bind(account)
             .bind(SECTION_MAX as i64 + 1)
             .fetch_all(db)
             .await?;
     let truncated = rows.len() > SECTION_MAX;
-    Ok((rows.into_iter().take(SECTION_MAX).collect(), truncated))
+    rows.truncate(SECTION_MAX);
+    Ok((rows, truncated))
 }
 
 /// The export's sections. Each query is scoped to `$1`, the account.
@@ -257,7 +279,8 @@ const SECTIONS: [(&str, &str); 12] = [
 
 /// Exports the personal data of one account as a JSON document (Admin only).
 /// The typed `username` must be the account's. Bounded: each section holds at
-/// most 10,000 rows and `truncated` names the sections that were cut. Never
+/// most 10,000 rows and `truncated` names the sections that were cut, and the
+/// whole export at most 16 MiB (`413 export_too_large` otherwise). Never
 /// contains credentials, hashes, internal notes, or other people's data; see
 /// docs/retention.md for the exact contents. Writes `personal_data_exported`.
 #[utoipa::path(post, path = "/api/admin/accounts/{id}/personal-data/export", tag = "admin",
@@ -267,6 +290,7 @@ const SECTIONS: [(&str, &str); 12] = [
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
+        (status = 413, description = "`export_too_large`: the account's data exceeds 16 MiB", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`username`: `mismatch`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn export_personal_data(
@@ -295,17 +319,24 @@ pub async fn export_personal_data(
     let generated_at: OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut *tx)
         .await?;
-    let mut document = Map::new();
-    document.insert("format".into(), json!("tikkit.personal_data.v1"));
-    document.insert(
-        "generated_at".into(),
-        json!(
-            generated_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .map_err(|_| ApiError::Internal)?
-        ),
+    // The byte budget, before anything is loaded: one account's messages alone
+    // can be hundreds of megabytes.
+    let mut bytes = 0;
+    for (_, sql) in SECTIONS {
+        bytes += section_bytes(&mut tx, sql, id).await?;
+        if bytes > EXPORT_MAX_BYTES {
+            return Err(ApiError::ExportTooLarge);
+        }
+    }
+    // Rows stay the JSON text PostgreSQL produced; the document is written
+    // once, without a parsed copy.
+    let generated_at = generated_at
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| ApiError::Internal)?;
+    let mut document = format!(
+        "{{\"format\":\"tikkit.personal_data.v1\",\"generated_at\":{},\"account\":{account}",
+        json!(generated_at)
     );
-    document.insert("account".into(), account);
     let mut counts = Map::new();
     let mut truncated = Vec::new();
     for (name, sql) in SECTIONS {
@@ -314,9 +345,16 @@ pub async fn export_personal_data(
         if cut {
             truncated.push(name);
         }
-        document.insert(name.into(), Value::Array(rows));
+        document.push_str(&format!(",\"{name}\":["));
+        for (n, row) in rows.iter().enumerate() {
+            if n > 0 {
+                document.push(',');
+            }
+            document.push_str(row);
+        }
+        document.push(']');
     }
-    document.insert("truncated".into(), json!(truncated));
+    document.push_str(&format!(",\"truncated\":{}}}", json!(truncated)));
     audit::record(
         &mut *tx,
         Entry {
@@ -329,8 +367,7 @@ pub async fn export_personal_data(
     )
     .await?;
     tx.commit().await?;
-    let body =
-        serde_json::to_vec_pretty(&Value::Object(document)).map_err(|_| ApiError::Internal)?;
+    let body = document;
     Ok((
         [
             (header::CONTENT_TYPE, "application/json".to_owned()),
