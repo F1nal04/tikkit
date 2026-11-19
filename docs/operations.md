@@ -209,5 +209,7 @@ The optional backup sidecar logs `level=error` lines, reports health in
 Prometheus. Apply the
 [backup alert overlay](../docker-compose.backup-alerts.example.yml) beside the
 observability overlay to load the `TikkitBackupFailed`, `TikkitBackupStale`,
-`TikkitBackupMissingScreenshots` and `TikkitBackupSidecarDown` rules. Their
+`TikkitBackupMissingScreenshots` and `TikkitBackupSidecarDown` rules. The main
+rules include `TikkitRestoreModeLeftOn`: a restored copy runs no jobs and sends
+nothing, so it must not stay in restore mode for more than a few hours. Their
 causes and fixes are in [failure alerts](backup-restore.md#failure-alerts).
