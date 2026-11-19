@@ -2,13 +2,11 @@
 
 ## Upgrading
 
-- **#44: `TRUST_PROXY_HEADERS` is gone.** An API with `TRUST_PROXY_HEADERS=true`
-  exits at startup with a message naming `TRUSTED_PROXIES`. Remove the old
-  variable and list the proxy's and web server's network in `TRUSTED_PROXIES`
-  ([configuration.md](configuration.md#upgrading)).
-- **#44: `PUBLIC_ORIGIN` is enforced for browser writes.** Users who open the
-  portal under another host name or address get `403 csrf_rejected` on every
-  save; make the proxy serve only the configured host.
+- Remove the legacy `TRUST_PROXY_HEADERS` setting. The API refuses to start
+  when the old switch is enabled. Set `TRUSTED_PROXIES` to the subnet shared by
+  Caddy and web SSR. See [configuration upgrades](configuration.md#upgrading).
+- The reference Compose stack serves only the configured `PUBLIC_HOST`.
+  It derives `PUBLIC_ORIGIN` from that host for browser writes.
 
 Tikkit runs the notification outbox, AI attempt processor and sweeper,
 resolution-confirmation timeout worker, and data retention worker in the API
@@ -48,9 +46,10 @@ optional and uses the same database readiness check. See the
   event through restarts. Jobs from older events without an ID get a fresh one.
   A poll or claim failure before a job can be identified has the worker name.
 - Application telemetry uses route templates, bounded error codes, latency,
-  status and operational IDs. Keep logs and diagnostics private. Use a fixed
-  `ORIGIN` for the Node adapter and avoid raw request URLs in reverse-proxy
-  access logs, since invitation and reset URLs carry tokens.
+  status and operational IDs. Keep logs and diagnostics private. Pass the
+  configured `PUBLIC_HOST` unchanged and overwrite `X-Forwarded-Proto`.
+  Avoid raw request URLs in reverse-proxy access logs because invitation and
+  reset URLs carry tokens.
 
 ## Worker health
 

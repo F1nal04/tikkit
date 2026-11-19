@@ -22,10 +22,12 @@ release.
    80 and 443 to Caddy.
    Caddy handles certificate issuance/renewal and redirects HTTP to HTTPS.
    Allow Caddy outbound DNS and HTTPS for certificate issuance. Set
-   `PUBLIC_ORIGIN` to the actual HTTPS origin users open, with no path,
-   query or trailing slash. It sets the API's links and cookie policy, the
-   web adapter's fixed `ORIGIN`, and Caddy's site address. With a nonstandard
-   HTTPS port, include it in the origin and set the same `HTTPS_PORT`.
+   `PUBLIC_HOST` to the lowercase hostname users open, without a scheme, path,
+   trailing slash or default port. Compose uses it as Caddy's site authority
+   and derives `PUBLIC_ORIGIN=https://<PUBLIC_HOST>` for the API's links, cookies,
+   and CSRF checks. With a nonstandard HTTPS port, include it in `PUBLIC_HOST`
+   and set the same `HTTPS_PORT`. Browser mutations require that exact origin
+   and `Sec-Fetch-Site: same-origin` when the browser sends it.
 3. Copy the [production env example](../.env.production.example) to
    `.env.production` and restrict it to the deployment operator.
    Set `TIKKIT_WEB_IMAGE` to
@@ -61,7 +63,7 @@ release.
 4. For initial setup, restrict client access until the first Admin exists.
    For a private bootstrap or test, use `PROXY_BIND=127.0.0.1`,
    `HTTP_PORT=18380`, `HTTPS_PORT=18344`,
-   `PUBLIC_ORIGIN=https://localhost:18344` and
+   `PUBLIC_HOST=localhost:18344` and
    `CADDY_GLOBAL_OPTIONS=local_certs`. Connect locally or tunnel port 18344 to
    the operator workstation. Export and trust only the local Caddy root
    certificate for the bootstrap client. When moving to public TLS, restore
@@ -136,15 +138,28 @@ until you have established what it contains.
 
 ## Runtime services and probes
 
-Caddy is the only published service. It forwards `/api/*` to
-`api:3001` and strips inbound `X-Request-ID` on that entire path. It
-sets `Strict-Transport-Security: max-age=31536000` on HTTPS responses and
-forwards portal routes, SSR data requests, and fingerprinted
-`/_app/immutable/` assets to `web:3000`. The Node image runs the generated
-`apps/web/build/index.js` from the SvelteKit Node adapter, with both its
-server bundle and client assets in `apps/web/build/`. It listens on
-`HOST=0.0.0.0`, `PORT=3000`, and makes SSR requests via
-`API_ORIGIN=http://api:3001` on the private application network.
+Caddy is the only published service. It rejects other HTTPS authorities with
+HTTP 421 and forwards the configured `Host` unchanged. It derives
+`X-Forwarded-For` and `X-Forwarded-Proto` from the public connection, strips
+inbound `X-Request-ID` on API routes, and forwards those routes to `api:3001`.
+There is no Caddy `trusted_proxies` setting in the reference stack.
+
+The web service receives portal routes, SSR data requests and fingerprinted
+`/_app/immutable/` assets on `web:3000`. It runs the Node adapter's generated
+`apps/web/build/index.js`, with the server bundle and client assets in
+`apps/web/build/`. It listens on `HOST=0.0.0.0` and `PORT=3000`. The adapter
+uses `PROTOCOL_HEADER=x-forwarded-proto` and the original `Host` to form the
+page origin. Adapter-node 6 ignores the old `ORIGIN` variable. SSR uses
+`API_ORIGIN=http://api:3001` for same-origin API calls and forwards the
+client address from Caddy.
+
+Caddy sets one-year HSTS on HTTPS responses and fills missing `nosniff`
+and `frame-ancestors 'none'` headers, including on static assets and proxy
+errors. Pages retain their nonce-based CSP. The proxy bounds header reads to
+10 seconds, request bodies to 45 seconds, and idle connections to 2 minutes.
+Its 10 MiB body cap matches the screenshot upload limit. The upstream
+response-header timeout is 75 seconds, allowing the API's 60-second request
+deadline to expire first.
 
 The database has its own internal network with the API, and uses the pinned
 PostgreSQL 17 image. Its probe connects over TCP with the application login
@@ -164,21 +179,29 @@ state in `caddy-data`. The API can reach the internet via a separate egress
 bridge and has no published socket. Keep the API, PostgreSQL and metrics
 off the host's public listeners. Optional `METRICS_PORT=9091` binds to
 the API container's loopback, and the [observability overlay and runbook](operations.md)
-show how to scrape it privately.
+show how to scrape it privately. The optional collector shares the API
+network namespace, so treat it as part of the API trust boundary.
 
-**Integration with #44.** Compose enables the existing `TRUST_PROXY_HEADERS`
-setting. The API receives traffic from Caddy and the SSR server, which
-forwards Caddy's `X-Forwarded-For` on its private API calls. Wire #44's
-final trust policy for both peers when rebasing. Preserve the fixed external
-origin and request-ID stripping.
+The internal `app` network is `172.30.0.0/24`. Its only members are Caddy,
+web and the API. The API's `TRUSTED_PROXIES` matches this subnet because both
+Caddy and web SSR forward client addresses. If it overlaps a host network,
+choose a free private subnet and update both places in Compose. Keep the
+web and API ports unpublished. See [proxy trust and rate limits](security.md#reverse-proxy-trust).
 
-The API process runs AI attempt and sweep jobs, notification outbox
-delivery, screenshot cleanup, AI usage retention and resolution-confirmation
-timeouts. Jobs and deadlines
-are durable in PostgreSQL. On SIGTERM the API allows 20 seconds to drain
-HTTP, then up to 5 seconds each for workers and the DB pool, within the
-40-second Compose stop grace period. The web adapter has a separate
-20-second drain. Diagnose workers with the [operations runbook](operations.md).
+Run one API replica. Per-account and sign-in rate limits are held in memory
+per API process and reset on restart. The API also hosts AI attempts and
+sweeps, outbox delivery, screenshot cleanup, resolution-confirmation timeouts,
+AI usage cleanup, and the data-retention worker. Jobs and deadlines are
+durable in PostgreSQL. On SIGTERM the API allows 20 seconds to drain HTTP,
+then up to 5 seconds each for workers and the DB pool, within the 40-second
+Compose stop grace period. The web adapter has a separate 20-second drain.
+See the [operations runbook](operations.md) for worker diagnostics.
+
+Admins can inspect the [audit log](audit.md) and configure policy in
+`/admin/retention`. The [retention worker](retention.md#defaults) deletes
+nothing by default. Automatic runs are off, and all its periods are set to
+keep indefinitely. Audit-log retention has a 30-day minimum when configured.
+The existing orphan-upload and AI usage cleanup policies still apply.
 
 To enable SMTP, allow outbound DNS and TCP from the API through the host
 firewall to the configured relay port (commonly 587 for STARTTLS or 465
@@ -190,6 +213,15 @@ and configure its credential in Admin AI settings. Outbound configuration
 is optional for both features. Mail delivery is outbound-only.
 
 ## Upgrade and rollback
+
+When upgrading from the old proxy configuration, remove
+`TRUST_PROXY_HEADERS` from your environment and overrides. The reference stack
+sets `TRUSTED_PROXIES=172.30.0.0/24`. If you customized the network, set
+`TRUSTED_PROXIES` to your exact private subnet. Set `PUBLIC_HOST` in
+the deployment env file so Compose derives the API origin.
+If an existing project's `app` network needs a new subnet, stop writes
+and back up first, then use `compose down` without volume-removal flags.
+Start PostgreSQL with `compose up -d --wait postgres` before applying migrations.
 
 Plan a maintenance window on the single host. Keep the current image digests,
 version of the Compose/config files, and a verified backup. Use the same

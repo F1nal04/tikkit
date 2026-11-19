@@ -2,6 +2,15 @@
 	admin off
 	persist_config off
 	skip_install_trust
+	auto_https disable_redirects
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 45s
+			write 85s
+			idle 2m
+		}
+	}
 	log {
 		format filter {
 			request delete
@@ -10,24 +19,66 @@
 	{$CADDY_GLOBAL_OPTIONS}
 }
 
-{$PUBLIC_ORIGIN} {
-	header Strict-Transport-Security "max-age=31536000"
-
-	# The loopback metrics listener is for a private collector only.
-	@metrics path /metrics /metrics/*
-	handle @metrics {
-		respond 404
+(security_headers) {
+	header {
+		>Strict-Transport-Security "max-age=31536000"
+		?X-Content-Type-Options nosniff
+		?Content-Security-Policy "frame-ancestors 'none'"
 	}
+}
 
+(upstream) {
+	# Keep Caddy's default Host passthrough. Without trusted_proxies it
+	# overwrites client-supplied X-Forwarded-For and X-Forwarded-Proto.
+	transport http {
+		response_header_timeout 75s
+	}
+}
+
+https://{$PUBLIC_HOST} {
+	# Caddy's site matcher checks the hostname. Also require the configured
+	# authority, including its port, before adapter-node uses Host as the origin.
+	@foreign expression `{http.request.hostport} != "{$PUBLIC_HOST}"`
+	@metrics path /metrics /metrics/*
 	@api path /api /api/*
-	handle @api {
-		reverse_proxy api:3001 {
-			header_up -X-Request-ID
+	route {
+		import security_headers
+		respond @foreign 421
+		respond @metrics 404
+		request_body {
+			max_size 10485760
+		}
+		handle @api {
+			reverse_proxy api:3001 {
+				import upstream
+				header_up -X-Request-ID
+			}
+		}
+		handle {
+			reverse_proxy web:3000 {
+				import upstream
+			}
 		}
 	}
-	handle {
-		reverse_proxy web:3000
+	handle_errors {
+		import security_headers
+		respond "{err.status_code} {err.status_text}" {err.status_code}
 	}
+}
+
+https://:{$HTTPS_PORT} {
+	import security_headers
+	respond 421
+}
+
+http://:80 {
+	@portal expression `"{$PUBLIC_HOST}".split(":")[0] == {http.request.host}`
+	header {
+		?X-Content-Type-Options nosniff
+		?Content-Security-Policy "frame-ancestors 'none'"
+	}
+	redir @portal https://{$PUBLIC_HOST}{uri} 308
+	respond 421
 }
 
 # Local proxy process check. The public smoke test checks TLS and both upstreams.

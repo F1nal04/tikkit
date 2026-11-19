@@ -136,7 +136,7 @@ jobs:
       COMPOSE_FILE: docker-compose.prod.example.yml
       TIKKIT_WEB_IMAGE: tikkit-ci-web:smoke
       TIKKIT_API_IMAGE: tikkit-ci-api:smoke
-      PUBLIC_ORIGIN: https://localhost:18344
+      PUBLIC_HOST: localhost:18344
       PROXY_BIND: 127.0.0.1
       HTTPS_PORT: "18344"
       HTTP_PORT: "18380"
@@ -173,7 +173,7 @@ jobs:
           done
           docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt "$RUNNER_TEMP/tikkit-ca.crt"
           docker compose exec -T api curl -fsS -o /dev/null http://127.0.0.1:9091/metrics
-          bash ops/compose/smoke.sh "$PUBLIC_ORIGIN" "$RUNNER_TEMP/tikkit-ca.crt"
+          bash ops/compose/smoke.sh "https://$PUBLIC_HOST" "$RUNNER_TEMP/tikkit-ca.crt"
       - if: failure() && env.COMPOSE_ENV_FILES != ''
         run: docker compose logs --no-color --tail 100
       - if: always() && env.COMPOSE_ENV_FILES != ''

@@ -45,9 +45,8 @@ Background sends try transient failures at most 3 times; the Admin test sends on
 ## Upgrading
 
 **`TRUST_PROXY_HEADERS` was replaced by `TRUSTED_PROXIES` (#44).** The old
-switch trusted `X-Forwarded-For` from any peer. An API started with
-`TRUST_PROXY_HEADERS=true` now refuses to start and names the replacement;
-`TRUST_PROXY_HEADERS=false` is still accepted and means "no proxy trusted".
+switch trusted `X-Forwarded-For` from any peer. An API refuses to start if the old switch is enabled. A disabled
+legacy switch means no proxy is trusted.
 Migrate by removing `TRUST_PROXY_HEADERS` and setting `TRUSTED_PROXIES` to
 the network of the reverse proxy and the web server, e.g.
 `TRUSTED_PROXIES=172.30.0.0/24` with a fixed Compose subnet (see
