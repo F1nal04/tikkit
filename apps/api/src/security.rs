@@ -251,6 +251,10 @@ pub enum Throttle {
     Export,
     /// Admin connection tests that reach an outside AI provider or SMTP relay.
     ConnectionTest,
+    /// Retention previews (exact counts over every ticket) and run starts.
+    Retention,
+    /// Account anonymization (locks and rewrites the account's history).
+    Anonymize,
 }
 
 impl Throttle {
@@ -265,6 +269,8 @@ impl Throttle {
             Self::Search => ("search", 120),
             Self::Export => ("export", 6),
             Self::ConnectionTest => ("connection_test", 5),
+            Self::Retention => ("retention", 10),
+            Self::Anonymize => ("anonymize", 10),
         }
     }
 }

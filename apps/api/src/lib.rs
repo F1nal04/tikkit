@@ -416,11 +416,11 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/admin/retention/preview",
-            post(retention::preview_retention),
+            post(retention::preview_retention).layer(throttle(Throttle::Retention)),
         )
         .route(
             "/api/admin/retention/runs",
-            post(retention::start_retention_run),
+            post(retention::start_retention_run).layer(throttle(Throttle::Retention)),
         )
         .route(
             "/api/admin/personal-data",
@@ -428,11 +428,11 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/admin/accounts/{id}/personal-data/export",
-            post(personal_data::export_personal_data),
+            post(personal_data::export_personal_data).layer(throttle(Throttle::Export)),
         )
         .route(
             "/api/admin/accounts/{id}/anonymize",
-            post(personal_data::anonymize_account),
+            post(personal_data::anonymize_account).layer(throttle(Throttle::Anonymize)),
         )
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))

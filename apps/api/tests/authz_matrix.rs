@@ -525,6 +525,74 @@ const MATRIX: &[Row] = &[
         E,
         "UFFFFAFF",
     ),
+    // Retention and personal data (#43): Admin only (ManageSettings /
+    // ManageAccounts). The targets are harmless: an all-"keep" policy, a run
+    // with a token that matches no preview, and the active `victim`, whom
+    // anonymization must refuse (`422 account: active`) because it is not deactivated.
+    row(
+        "GET",
+        "/api/admin/retention",
+        "/api/admin/retention",
+        E,
+        "UFFFFAFF",
+    ),
+    row(
+        "PUT",
+        "/api/admin/retention",
+        "/api/admin/retention",
+        J(|_| {
+            json!({"draft_days": null, "screenshot_days": null, "ai_content_days": null,
+                     "ticket_content_days": null, "audit_days": null, "automatic": false})
+        }),
+        "UFFFFAFF",
+    ),
+    row(
+        "POST",
+        "/api/admin/retention/preview",
+        "/api/admin/retention/preview",
+        J(|_| {
+            json!({"draft_days": null, "screenshot_days": null, "ai_content_days": null,
+                     "ticket_content_days": null, "audit_days": 3650})
+        }),
+        "UFFFFAFF",
+    ),
+    row(
+        "POST",
+        "/api/admin/retention/runs",
+        "/api/admin/retention/runs",
+        J(|_| json!({"confirm": "DELETE", "preview_token": "matches-no-preview", "as_of": STALE})),
+        "UFFFFAFF",
+    ),
+    pin(
+        row(
+            "GET",
+            "/api/admin/personal-data",
+            "/api/admin/personal-data?username=victim",
+            E,
+            "UFFFFAFF",
+        ),
+        &[("admin", 200)],
+    ),
+    pin(
+        row(
+            "POST",
+            "/api/admin/accounts/{id}/personal-data/export",
+            "/api/admin/accounts/{victim}/personal-data/export",
+            J(|_| json!({"username": "victim"})),
+            "UFFFFAFF",
+        ),
+        &[("admin", 200)],
+    ),
+    pin(
+        row(
+            "POST",
+            "/api/admin/accounts/{id}/anonymize",
+            "/api/admin/accounts/{victim}/anonymize",
+            J(|_| json!({"username": "victim", "purge_ticket_content": true})),
+            "UFFFFAFF",
+        ),
+        &[("admin", 422)],
+    ),
     // Staff work lists: never for a User.
     row("GET", "/api/queue", "/api/queue", E, "UFAAAAFA"),
     row(

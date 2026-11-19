@@ -412,6 +412,30 @@ async fn costly_routes_have_per_account_budgets() {
             5,
             Some(json!({})),
         ),
+        (
+            "POST",
+            "/api/admin/retention/preview".to_owned(),
+            10,
+            Some(json!({})),
+        ),
+        (
+            "POST",
+            "/api/admin/retention/runs".to_owned(),
+            10,
+            Some(json!({})),
+        ),
+        (
+            "POST",
+            format!("/api/admin/accounts/{any}/personal-data/export"),
+            6,
+            Some(json!({})),
+        ),
+        (
+            "POST",
+            format!("/api/admin/accounts/{any}/anonymize"),
+            10,
+            Some(json!({})),
+        ),
     ];
     let sign_in = test_app(&t.pool);
     let admin = login(&sign_in, "admin", PASSWORD).await.session();
