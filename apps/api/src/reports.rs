@@ -488,6 +488,8 @@ pub async fn export_report(
     let scope = Scope::try_from(query)?;
 
     let mut tx = state.pool.begin().await?;
+    // The capped 10,000-row diagnostic found significant JIT overhead here too.
+    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
     let cohort = cohort("ORDER BY x.created_at, x.id LIMIT $5");
     let sql = format!(
         "{} SELECT * FROM facts ORDER BY created_at, id",
