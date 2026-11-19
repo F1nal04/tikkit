@@ -69,7 +69,7 @@ ENCRYPTION_KEY_VALUE=$(openssl rand -base64 32)
 write_env() { # <file> <https-port> <http-port> <encryption key>
   umask 077
   cat > "$1" <<ENV
-PUBLIC_ORIGIN=https://localhost:$2
+PUBLIC_HOST=localhost:$2
 TIKKIT_WEB_IMAGE=$WEB_IMAGE
 TIKKIT_API_IMAGE=$API_IMAGE
 TIKKIT_BACKUP_IMAGE=$BACKUP_IMAGE

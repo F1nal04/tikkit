@@ -2,7 +2,7 @@
 
 # Docker Compose with NO inherited interpolation: the env file given with
 # --env-file is the only source of ${VARIABLES}. A surrounding shell or CI job that
-# exports HTTP_PORT, PUBLIC_ORIGIN or COMPOSE_FILE cannot leak into the project.
+# exports HTTP_PORT, PUBLIC_HOST or COMPOSE_FILE cannot leak into the project.
 dc() {
   local keep=(PATH="$PATH" HOME="${HOME:-/}") v
   for v in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG DOCKER_CERT_PATH DOCKER_TLS_VERIFY XDG_CONFIG_HOME TMPDIR; do

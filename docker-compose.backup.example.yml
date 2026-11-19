@@ -26,7 +26,7 @@ services:
       PGDATABASE: tikkit
       PGPASSWORD: ${TIKKIT_DB_PASSWORD:?set a hex application DB password}
       # Non-secret deployment values recorded in the backup (an allowlist, see backup.sh).
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
       TIKKIT_WEB_IMAGE: ${TIKKIT_WEB_IMAGE:-}
       TIKKIT_API_IMAGE: ${TIKKIT_API_IMAGE:-}
       PROXY_BIND: ${PROXY_BIND:-}

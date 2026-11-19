@@ -20,7 +20,7 @@ in one small image built from [ops/backup](../ops/backup).
 |---|---|
 | A PostgreSQL 17 custom-format dump of the `tikkit` database | `ENCRYPTION_KEY`, `SESSION_SECRET`, `POSTGRES_PASSWORD`, `TIKKIT_DB_PASSWORD` |
 | Every screenshot file | The backup decryption key (age identity) |
-| The non-secret deployment configuration: the Compose files, `Caddyfile`, `init-postgres.sql`, and `deployment.env` with `PUBLIC_ORIGIN`, the two image references and the port/bind settings | Caddy's TLS state (certificates are issued again), Prometheus data, container logs |
+| The non-secret deployment configuration: the Compose files, `Caddyfile`, `init-postgres.sql`, and `deployment.env` with `PUBLIC_HOST`, the two image references and the port/bind settings | Caddy's TLS state (certificates are issued again), Prometheus data, container logs |
 | An encrypted manifest: backup time, migration version, ticket and screenshot counts, SHA-256 of every stream and of every screenshot file | |
 
 `deployment.env` is built from a fixed allowlist of variable names in
@@ -357,8 +357,9 @@ references recorded in the backup's `deployment.env` (the API image must embed
 the same or a newer migration set than the backup's `migration_version`), the
 **same `ENCRYPTION_KEY`** as production, new database passwords and
 `SESSION_SECRET`, `PROXY_BIND=127.0.0.1` and free `HTTP_PORT`/`HTTPS_PORT`
-(with `PUBLIC_ORIGIN=https://localhost:<HTTPS_PORT>` and
-`CADDY_GLOBAL_OPTIONS=local_certs`). Then, from the deployment directory:
+(with `PUBLIC_HOST=localhost:<HTTPS_PORT>` and
+`CADDY_GLOBAL_OPTIONS=local_certs`; Compose derives the API's `PUBLIC_ORIGIN` as
+`https://<PUBLIC_HOST>`, and the proxy serves only that host). Then, from the deployment directory:
 
 ```sh
 ops/backup/restore.sh \
@@ -444,7 +445,7 @@ docker compose --env-file .env.production -p tikkit -f docker-compose.prod.examp
 ```
 
 Point DNS at the new host first; Caddy issues certificates for the real
-`PUBLIC_ORIGIN`. This deliberately has to be a separate, explicit step.
+`PUBLIC_HOST`. This deliberately has to be a separate, explicit step.
 
 #### Going live after a recovery
 
@@ -540,7 +541,7 @@ projects afterwards (`DRILL_KEEP=1` keeps them).
 must differ, and must own **no** container, volume or network by exact name or
 label; otherwise the drill aborts before building, starting or removing anything,
 and says what exists. Compose interpolation is isolated from the surrounding
-environment (an exported `HTTP_PORT`, `PUBLIC_ORIGIN` or `COMPOSE_FILE` cannot
+environment (an exported `HTTP_PORT`, `PUBLIC_HOST` or `COMPOSE_FILE` cannot
 leak into it), so it is safe next to another stack on the same host or in CI.
 
 What it does and checks:
@@ -613,7 +614,7 @@ the database and the volume so the durations can be extrapolated.
 Run on 2026-11-19 on a developer workstation (Docker Desktop, Apple silicon, API/web images
 built from this branch), `ops/backup/drill.sh` in full mode: **88 checks passed**
 in 217 seconds, including every failure simulation, with the surrounding shell
-deliberately exporting conflicting `HTTP_PORT`, `HTTPS_PORT`, `PUBLIC_ORIGIN` and
+deliberately exporting conflicting `HTTP_PORT`, `HTTPS_PORT`, `PUBLIC_HOST` and
 `COMPOSE_FILE`. Durations of the mechanical steps:
 
 | Step | Seed data (a few tickets, 4 screenshots) | `DRILL_BULK_MB=1024` (1.24 GB database, 1.07 GB volume) |
