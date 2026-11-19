@@ -44,3 +44,34 @@ HTML links with `modulepreload`.
 - Browser load and hydration timings, plus client-side navigation. The app has one
   route, so there is no navigation to measure yet. Add these once the Playwright
   tooling from #5 lands.
+
+## Single-host release targets
+
+Reference profile for #50, fixed before measurement: 30 concurrent virtual
+users for 120 seconds, 300 requester accounts, three teams, 30,000 historical
+submissions, and a 250 ms deterministic HTTPS provider. Time requests from the
+load driver through Caddy, including body transfer. Report percentile sample
+counts with nearest-rank p50/p95/p99. Expected replay and conflict responses are
+successful assertions. Report unexpected HTTP errors separately from them.
+
+| Endpoint group | p50 / p95 / p99 target (ms) |
+| --- | ---: |
+| Sign-in | 150 / 450 / 900 |
+| Submit, upload | 100 / 300 / 750 |
+| Requester history and detail | 75 / 200 / 500 |
+| Queue, search, staff detail | 100 / 300 / 750 |
+| Replies, notes, assignment, resolution | 100 / 300 / 750 |
+| Admin reports, submissions, audit | 250 / 750 / 1,500 |
+
+- Unexpected requests under 0.5%, zero transport failures in the steady
+  window, zero invariant failures, and no pressure-induced 429 responses.
+- Peak active DB connections below the 10-connection API pool cap and total
+  client backends below 50% of PostgreSQL's `max_connections`.
+- Maximum sampled due lag below 15 s for AI attempt sweeps, 60 s for outbox,
+  5 s for auto-close and 30 s for retention. A zero must distinguish an idle
+  worker from one that caught up. Successful AI attempts complete within 10 s.
+- Each container below 200% sampled CPU (two cores) and 1 GiB resident memory.
+- On unthrottled loopback, queue TTFB/FCP/LCP below 500/1,000/1,500 ms,
+  click-to-next-paint below 200 ms, and queue-to-detail heading below 750 ms.
+  Cold queue initial JS transfer at most 200 KiB, all client JS compressed
+  at most 512 KiB. Track these budgets separately from API/provider timings.
