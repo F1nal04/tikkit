@@ -30,8 +30,11 @@ directly over the private network. Only the proxy publishes ports.
 | Spoofed client IP | `X-Forwarded-For` is honoured only from `TRUSTED_PROXIES` peers (no network wider than /8 or /16), read right to left, ports stripped; malformed entries never become the address | `security::TrustedProxies` | `security` unit tests, `boundary::forwarding_headers_count_only_from_trusted_proxies` |
 | Forged request IDs | The public proxy strips `X-Request-ID`; the API accepts only a UUIDv4 and otherwise generates one ([operations.md](operations.md)) | proxy, `telemetry::http_request` | `lib` `request_ids_are_generated_or_propagated`, `observability::*` |
 | Brute force, abuse, targeted lockout | Sign-in failures limited per client network, per username and network, and per username (sparing the owner's known network); per-account route budgets; caps on bodies, pages, exports, uploads, drafts; request deadline (below) | `auth.rs`, `security.rs` | `auth::login_is_rate_limited_per_username_and_ip`, `auth::sign_in_limits_count_failures_and_cannot_lock_out_the_owner`, `auth` unit tests, `boundary::a_stuck_request_ends_at_the_deadline_and_commits_nothing`, `accounts::token_endpoints_are_rate_limited_per_ip`, `boundary::costly_routes_have_per_account_budgets`, `boundary::open_drafts_are_capped_per_account` |
-| Username enumeration | Login failures are one `401 invalid_credentials` with equal timing; recovery always `202`; setup after completion always `409`; invitation lookups need the secret token | `auth.rs`, `accounts.rs` | `auth::login_failures_are_indistinguishable`, `accounts::recovery_is_neutral_and_bound_to_one_account` |
+| Username enumeration | Login failures are one `401 invalid_credentials` with equal timing (an unusable stored hash, such as an anonymized account's, is verified against the dummy hash too); recovery always `202`; setup after completion always `409`; invitation lookups need the secret token. Deactivated and anonymized accounts, by old username or `anonymized-` placeholder, answer exactly like unknown ones | `auth.rs`, `accounts.rs` | `auth::login_failures_are_indistinguishable`, `accounts::recovery_is_neutral_and_bound_to_one_account`, `boundary::deactivated_and_anonymized_accounts_look_unknown_when_signed_out`, `auth` unit test `unusable_hashes_cost_a_full_verification_and_never_match` |
 | Privilege escalation, cross-team access | Rust authorization on every route (below) | `authz.rs` | [Authorization matrix](#authorization-matrix) |
+| Retention and erasure misuse | Admin only (`ManageSettings` for policy, preview, runs; `ManageAccounts` for personal-data summary, export, anonymization); a run or automatic deletion needs a fresh preview token and the typed `DELETE`; anonymization needs a deactivated account and its typed username; budgets on preview, run start, export and anonymization; every removal authorized inside the database by a pending run or an anonymized requester ([retention.md](retention.md)) | `retention.rs`, `personal_data.rs`, migration `0028` | matrix rows, `boundary::costly_routes_have_per_account_budgets`, `retention::*` |
+| Data left after removal | A screenshot removed by retention answers every read and delete exactly like an ID that never existed, for every caller; detail responses list only existing screenshot IDs (`removed_screenshots` counts the rest, only for callers who may see the ticket) | `screenshots.rs`, `tickets.rs` | `boundary::a_screenshot_removed_by_retention_answers_like_one_that_never_existed`, `retention::detail_views_offer_neither_removed_screenshots_nor_a_reopen_that_cannot_work` |
+| Personal-data export abuse or injection | JSON written from PostgreSQL's own JSON text, at most 16 MiB (`413 export_too_large`, measured before loading) and 10,000 rows per section; an attachment named only by the account ID, with the API's `nosniff`/CSP headers; no credentials, hashes, tokens or internal notes | `personal_data.rs` | `boundary::the_personal_data_export_is_inert_json_whatever_the_account_wrote`, `retention::*` export tests |
 | Secret disclosure | AI keys and SMTP credentials encrypted, write-only, never logged or audited | `ai_config.rs`, `smtp.rs`, `audit.rs` | `ai_config::keys_are_encrypted_masked_replaceable_and_removable`, `smtp::admin_stores_the_password_encrypted_and_never_returns_it`, `audit::secrets_and_ticket_content_never_reach_the_log` |
 | Vulnerable dependencies | `cargo audit`, `bun audit --audit-level=high`, gitleaks, Dependabot | CI | [security-scanning.md](security-scanning.md) |
 
@@ -141,7 +144,8 @@ API: links, cookies and HSTS derive from `PUBLIC_ORIGIN`.
 | Lists | `limit` clamped to 1–100, keyset cursors |
 | Search | `q` at most 200 characters, literal matching |
 | Bulk | 1–50 tickets |
-| Exports | 10,000 rows; report ranges at most 366 days |
+| Exports | 10,000 rows; report ranges at most 366 days; personal-data export 16 MiB and 10,000 rows per section |
+| Retention runs | one at a time; 100 tickets or drafts per transaction, the batch stops after 1,000 changed rows; audit purge 5,000 per transaction ([retention.md](retention.md#preview-and-runs)) |
 | Drafts | 100 unsubmitted per account; intake field lengths in [submission.md](submission.md) |
 | Saved views | 50 per account |
 | AI | Admin budgets, concurrency, circuit breaker ([ai-usage.md](ai-usage.md)); provider timeouts |
@@ -158,8 +162,10 @@ Per-minute budgets (`429 rate_limited` with `Retry-After`), fixed windows:
 | Replies and internal notes | account | 30 |
 | Screenshot uploads | account | 30 |
 | Queue lists and search | account | 120 |
-| CSV exports (reports, audit) | account | 6 |
+| CSV exports (reports, audit) and the personal-data export | account | 6 |
 | AI and SMTP connection tests | account | 5 |
+| Retention preview and run start | account | 10 |
+| Account anonymization | account | 10 |
 
 Route budgets are spent before the body is read and only by signed-in
 requests. Sign-in checks run before any account lookup and answer known and
@@ -210,7 +216,10 @@ stream") are rows.
 
 **A new route fails `every_route_has_a_matrix_row` until it has a row.** For
 new Admin endpoints (e.g. retention or personal-data export) the row is
-usually `"UFFFFAFF"`; point the target at a throwaway resource if the Admin call
+usually `"UFFFFAFF"` (as for #43's retention and personal-data routes, whose
+rows use an all-"keep" policy, a run token that matches no preview, and an
+active account that anonymization must refuse with `422 account: active`);
+point the target at a throwaway resource if the Admin call
 changes state.
 
 The scenarios the issue lists are covered by focused tests:
@@ -272,6 +281,36 @@ and refused new clients when full; SMTP refusal missed NAT64, 6to4, the EC2
 IPv6 metadata address and numeric host names; page HSTS trusted adapter-node's
 https assumption; two busy autosaving tabs could exceed the draft budget, and
 a refused save waited for the next keystroke.
+
+### Retention and personal data (#43, 2026-11-19)
+
+Read `retention.rs`, `personal_data.rs`, migration `0028` and
+[retention.md](retention.md) after rebasing onto #43, against the boundary
+controls above.
+
+- **Ordering with the account lock.** Every personal-data writer takes
+  `auth::lock_active_account` first. The draft cap runs after it (an inactive
+  or anonymized account is refused with `401` before anything is counted);
+  sign-in and password budgets are in-memory checks before any lookup, so they
+  neither hold nor wait for the lock and answer alike for every username.
+- **Enumeration.** *Result:* an anonymized account's stored hash is `!`, which
+  failed verification without Argon2 work, so signing in with its placeholder
+  was measurably faster than with an unknown username. Fixed in `auth::login`
+  (unusable hashes are verified against the dummy hash). Deactivated and
+  anonymized accounts now answer sign-in and recovery exactly like unknown
+  usernames.
+- **Authorization and budgets.** All seven new operations are Admin only and
+  in the matrix for all eight callers; preview, run start, export and
+  anonymization have budgets. *Result:* no defect.
+- **Removed screenshots.** *Result:* no defect: reads and deletes are `404`
+  like an unknown ID for every caller, and detail views no longer name them.
+- **Export.** *Result:* no injection: rows are PostgreSQL JSON text, the
+  filename is the account ID, and the API headers apply. Noted for #43: the
+  export confirms the username with `SELECT … FOR UPDATE`, so while one is
+  built (up to 16 MiB) the account's own writers (sign-in, profile, drafts)
+  wait for it; and `GET /api/admin/personal-data?username=` puts a username in
+  the URL, which a reverse proxy may write to its access log (keep URL logging
+  off, as for invitation and reset links).
 
 ## Known limits
 
