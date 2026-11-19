@@ -30,27 +30,36 @@ service desk works fully without them.
 
 ## 1. Get the files and the images
 
-Use a checkout of the repository at the release you are installing as the
-deployment directory. It holds the Compose file, `ops/` configuration and the
-backup tooling, and they must match the images.
+> **No release has been published yet.** There is no release tag and no image in
+> the container registry at the time of writing, so the registry path below does
+> not work today. Build the images yourself from the commit you want to run. The
+> registry path is the one to use once releases exist.
+
+Use a checkout of the repository as the deployment directory. It holds the
+Compose file, `ops/` configuration and the backup tooling, and they must match the
+images you run.
+
+**Today: build both images from your checkout.**
 
 ```sh
 git clone https://github.com/F1nal04/tikkit.git
 cd tikkit
-git checkout api-vX.Y.Z      # a release tag; use the pair of web and API tags you tested together
-```
-
-The web and API images have independent version tags
-(`ghcr.io/f1nal04/tikkit-web:web-vX.Y.Z`, `ghcr.io/f1nal04/tikkit-api:api-vX.Y.Z`).
-Pick the pair listed together in the release notes. Release images are
-published by the release workflow ([release images](../ci.md#release-images)).
-If the tag you need is not published, build both images from the same checkout
-and use the local tags in the next step:
-
-```sh
+git checkout <the commit you want to run>      # for example the tested tip of main
 docker build -f apps/api/Dockerfile -t tikkit-api:local .
 docker build -f apps/web/Dockerfile -t tikkit-web:local .
 ```
+
+In step 2 set `TIKKIT_API_IMAGE=tikkit-api:local` and
+`TIKKIT_WEB_IMAGE=tikkit-web:local`, and **skip every `compose pull`** in this guide:
+local tags are not in a registry and `pull` fails for them. The first build compiles the
+Rust API and takes a while.
+
+**Once releases exist:** check out the release tag (`api-vX.Y.Z`) and use the
+published pair. The web and API images have independent version tags
+(`ghcr.io/f1nal04/tikkit-web:web-vX.Y.Z`, `ghcr.io/f1nal04/tikkit-api:api-vX.Y.Z`);
+take the pair listed together in the release notes, or pin images by digest. Release
+images are published by the release workflow ([release images](../ci.md#release-images)).
+Then `compose pull` applies.
 
 ## 2. Configure the environment and secrets
 
@@ -73,7 +82,7 @@ Then edit `.env.production` and set:
 | Variable | Value |
 | --- | --- |
 | `PUBLIC_HOST` | The lowercase hostname users open, for example `help.<your-domain>`. No scheme, path, trailing slash or `:443`. For a nondefault HTTPS port include it (`help.<your-domain>:8443`) and set the same `HTTPS_PORT`. Compose derives the API's `PUBLIC_ORIGIN` as `https://<PUBLIC_HOST>`. |
-| `TIKKIT_WEB_IMAGE`, `TIKKIT_API_IMAGE` | The two image references from step 1 (a version tag, an `image@sha256:…` digest, or your local tags). |
+| `TIKKIT_WEB_IMAGE`, `TIKKIT_API_IMAGE` | The two image references from step 1: your local tags today; later a version tag or an `image@sha256:…` digest. |
 
 What the secrets are for:
 
@@ -111,6 +120,31 @@ upgrading. Back up `postgres-data` and `screenshots-data` together
 
 ## 4. Start the stack in order
 
+### Decide first who can reach the portal
+
+**Until the first Admin exists, whoever reaches `/setup` first becomes the Admin.**
+There is no bootstrap secret. Starting the stack publicly with open ports 80/443
+exposes `/setup` to the internet, so choose how to keep it closed *before* you bring
+anything up:
+
+- **Firewall.** Allow only your own address to ports 80/443 until setup is done,
+  and use the public `PUBLIC_HOST`.
+- **Private bootstrap (loopback).** Set these variables in `.env.production`
+  (replace the existing `PUBLIC_HOST` line, add the others):
+
+  ```sh
+  PUBLIC_HOST=localhost:18344
+  PROXY_BIND=127.0.0.1
+  HTTP_PORT=18380
+  HTTPS_PORT=18344
+  CADDY_GLOBAL_OPTIONS=local_certs
+  ```
+
+  Reach it from your workstation with an SSH tunnel
+  (`ssh -L 18344:127.0.0.1:18344 <host>`) or locally.
+
+### Start
+
 Run everything from the deployment directory. Define this helper once per shell:
 
 ```sh
@@ -119,11 +153,10 @@ compose() {
 }
 ```
 
-Pull the images (skip `compose pull` if you built them locally), start the
-database, apply migrations, then start everything:
+Start the database, apply migrations, then start everything. With registry images
+run `compose pull` first; with locally built images do not.
 
 ```sh
-compose pull
 compose up -d --wait postgres
 compose run --rm --no-deps api migrate
 compose up -d --wait
@@ -135,9 +168,12 @@ worker start, so a migration failure shows up before traffic is possible. It is
 safe to rerun. The API also migrates itself on start, with the same migrator.
 Migrations are forward-only (see [rollback limits](#rollback-limits)).
 
-Check liveness and readiness through the proxy:
+Check liveness and readiness through the proxy (for the private bootstrap, first
+export Caddy's local root certificate and trust it for the bootstrap client only):
 
 ```sh
+compose cp proxy:/data/caddy/pki/authorities/local/root.crt ./tikkit-local-ca.crt   # private bootstrap only
+curl --cacert ./tikkit-local-ca.crt -fsS https://localhost:18344/api/ready          # private bootstrap
 curl -fsS https://<PUBLIC_HOST>/api/health      # {"status":"ok"}
 curl -fsS https://<PUBLIC_HOST>/api/ready       # status ready, database ok, migrations ok
 ```
@@ -147,33 +183,8 @@ process ([deployment](../deployment.md#runtime-services-and-probes)).
 
 ## 5. Create the first Admin
 
-Until the first Admin exists, whoever reaches `/setup` first becomes the Admin.
-Keep the portal closed to others until then. Choose one:
-
-- **Closed network or firewall.** Allow only your own address to ports 80/443
-  until setup is done, bring the stack up with the public `PUBLIC_HOST`, and
-  run setup.
-- **Private bootstrap (loopback).** Set these variables in `.env.production`
-  (replace the existing `PUBLIC_HOST` line, add the others), then run step 4:
-
-  ```sh
-  PUBLIC_HOST=localhost:18344
-  PROXY_BIND=127.0.0.1
-  HTTP_PORT=18380
-  HTTPS_PORT=18344
-  CADDY_GLOBAL_OPTIONS=local_certs
-  ```
-
-  Reach it from your workstation with an SSH tunnel
-  (`ssh -L 18344:127.0.0.1:18344 <host>`) or locally. Export Caddy's local root
-  certificate and trust it for the bootstrap client only:
-
-  ```sh
-  compose cp proxy:/data/caddy/pki/authorities/local/root.crt ./tikkit-local-ca.crt
-  curl --cacert ./tikkit-local-ca.crt -fsS https://localhost:18344/api/ready
-  ```
-
-Open `https://<PUBLIC_HOST>/setup`. Enter a username, a contact email, a
+Open `https://<PUBLIC_HOST>/setup` (for the private bootstrap
+`https://localhost:18344/setup`). Enter a username, a contact email, a
 password of at least 12 characters and a language, then choose **Create
 administrator**. You are signed in as the first Admin. Setup then closes
 permanently; a later `/setup` answers that setup has already been completed.
@@ -278,8 +289,11 @@ Upgrading needs a maintenance window on the single host.
 
 1. Read the release notes. Note the current image references and keep a verified
    backup from before the upgrade.
-2. Set the new `TIKKIT_WEB_IMAGE` and `TIKKIT_API_IMAGE` in `.env.production`
-   and pull them: `compose pull api web`.
+2. Set the new `TIKKIT_WEB_IMAGE` and `TIKKIT_API_IMAGE` in `.env.production`.
+   With registry images, pull them: `compose pull api web`. With locally built
+   images **do not pull; rebuild instead**: check out the new commit, build both
+   images under *new* tags (for example `tikkit-api:2026-11-19`; keep the old tags
+   for a rollback) and put those tags in `.env.production`.
 3. Stop traffic and writers, then take a final on-demand backup and copy it off
    the host:
 
@@ -373,8 +387,13 @@ the checklist and leave restore mode.
    then leave restore mode on purpose by recreating the stack without the
    restore overlay.
 
-To recover production onto a new host use `--project tikkit` there. Recovery
-point and time objectives, the email cutover and key custody are in
+To recover production onto a new host use `--project tikkit` there. **Before you
+switch from `.env.restore` to `.env.production`**, the restored PostgreSQL keeps the
+passwords it was initialized with, so either copy `POSTGRES_PASSWORD` and
+`TIKKIT_DB_PASSWORD` from `.env.restore` into `.env.production`, or rotate the
+database roles while the restored copy still runs. Otherwise the API cannot connect
+([going live after a recovery](../backup-restore.md#going-live-after-a-recovery)).
+Recovery point and time objectives, the email cutover and key custody are in
 [backup and restore](../backup-restore.md).
 
 ## Where next
