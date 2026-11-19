@@ -84,8 +84,7 @@ pub struct Settings {
     pub public_origin: String,
     /// Decrypts the stored SMTP password. Never logged.
     pub encryption_key: [u8; 32],
-    /// Test-only PEM trust anchor for the SMTP client. Production leaves this
-    /// empty so verification uses the default WebPKI roots. Never disables checks.
+    /// Optional PEM trust anchors for the SMTP client. Empty uses WebPKI roots.
     pub smtp_trust_root_pem: Option<Vec<u8>>,
     /// Restore mode (docs/backup-restore.md): nothing is sent to an SMTP relay or
     /// an AI provider from a request, and `main` starts no background worker.
@@ -147,7 +146,7 @@ impl From<&Config> for Settings {
             request_timeout: crate::security::REQUEST_TIMEOUT,
             public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
             encryption_key: c.encryption_key,
-            smtp_trust_root_pem: None,
+            smtp_trust_root_pem: c.smtp_trust_root_pem.clone(),
             restore_mode: c.restore_mode,
         }
     }

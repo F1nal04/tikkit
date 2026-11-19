@@ -23,6 +23,7 @@ name the variable and the fix but never echo values.
 | `LOG_FORMAT` | no | `json` | API structured logging. Set `text` for human-readable output. The web server logs JSON. |
 | `RUST_LOG` | no | `info` | API log filter, e.g. `info,tikkit_api::ai_attempts=debug`. Only Tikkit targets are emitted. |
 | `METRICS_PORT` | no | disabled | Optional port (1–65535) for `GET /metrics` on the API process's IPv4 loopback. Use a dedicated port, e.g. `9091`. |
+| `SMTP_CA_FILE` | no | WebPKI roots | PEM bundle for a private SMTP relay. Mount this file read-only in the API container and set this variable in the API service environment. It replaces trust roots for SMTP only. TLS and hostname verification stay on. |
 | `RESTORE_MODE` | no | `false` | `true` only on a restored copy under verification ([backup and restore](backup-restore.md#isolated-restore)). The API serves requests but starts no background job (notification outbox, AI attempts, confirmation timeouts, file sweeps, AI usage retention, the data retention worker and audit purge), sends no mail, and refuses the SMTP and AI connection tests (`409 outbound_disabled`), and refuses retention runs and account anonymization (`409 restore_mode_blocked`). Visible on `/api/ready` (`restore_mode`), as the metric `tikkit_restore_mode` and as a banner for Admins. The image also answers `tikkit-api restore-check`, `credentials-check` and `suppress-restored-email --before <time>` for the restore script. Remove it, then restart, to go live. |
 | `TEST_DATABASE_URL` | tests only | `DATABASE_URL` | Maintenance connection used by integration tests to create/drop throwaway databases. |
 
@@ -31,8 +32,7 @@ default, and configured by an Admin at runtime (`/admin/ai`). Provider API keys
 are encrypted with `ENCRYPTION_KEY`, bound to their provider, and write-only;
 with a missing or unreadable key, tickets go straight to operators. Key rotation
 and recovery: [ai-configuration.md](ai-configuration.md#encryption-key-rotation-and-recovery).
-No new environment variables. Outbound SMTP is optional too
-and is **not** an environment variable. An Admin saves the host, port, sender,
+Outbound SMTP is optional. An Admin saves the host, port, sender,
 username, and password in the app (`/admin/email`). Username and password are
 encrypted with `ENCRYPTION_KEY` (AES-256-GCM) and are write-only: never returned,
 logged, or written into audit events. Losing `ENCRYPTION_KEY` makes them
