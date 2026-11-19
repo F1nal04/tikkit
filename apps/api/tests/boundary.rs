@@ -1111,3 +1111,112 @@ async fn a_screenshot_removed_by_retention_answers_like_one_that_never_existed()
         "it was never in the intake"
     );
 }
+
+#[tokio::test]
+async fn the_personal_data_export_is_inert_json_whatever_the_account_wrote() {
+    let Some(t) = TestDb::new().await else { return };
+    let p = &t.pool;
+    fixtures::bootstrap_admin(p).await;
+    let rita = fixtures::account(p, Role::User, "rita").await;
+    let app = test_app(p);
+    // Text the account controls: its user agent (stored with the session),
+    // profile email, and a ticket's subject and description.
+    let breakout = r#"","injected":true,"x":"</script><script>alert(1)</script>"#;
+    let formula = "=HYPERLINK(\"https://evil.example\",\"x\")\r\n@SUM(A1)";
+    let mut request = axum::http::Request::post("/api/auth/login")
+        .header("x-requested-with", "tikkit")
+        .header("content-type", "application/json")
+        .header("user-agent", breakout)
+        .body(axum::body::Body::from(
+            json!({"username": "rita", "password": PASSWORD}).to_string(),
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 4321))));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let category: Uuid =
+        sqlx::query_scalar("INSERT INTO categories (name) VALUES ('Software') RETURNING id")
+            .fetch_one(p)
+            .await
+            .unwrap();
+    let priority: Uuid =
+        sqlx::query_scalar("INSERT INTO priorities (name) VALUES ('Normal') RETURNING id")
+            .fetch_one(p)
+            .await
+            .unwrap();
+    let ticket: Uuid = sqlx::query_scalar(
+        "INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(rita)
+    .bind(category)
+    .bind(priority)
+    .bind(breakout)
+    .bind(formula)
+    .fetch_one(p)
+    .await
+    .unwrap();
+    {
+        use tikkit_api::lifecycle::{self, By, Policy, Transition};
+        let mut tx = p.begin().await.unwrap();
+        let submit = Transition::Submit {
+            requester_skip: false,
+        };
+        let policy = Policy {
+            ai_available: false,
+            ..Policy::default()
+        };
+        lifecycle::transition_with(&mut tx, ticket, By::Account(rita), &submit, Some(policy))
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    let admin = login(&app, "admin", PASSWORD).await.session();
+    let r = send(
+        &app,
+        "POST",
+        &format!("/api/admin/accounts/{rita}/personal-data/export"),
+        &[CSRF, ("cookie", admin.as_str())],
+        Some(json!({"username": "rita"})),
+        LOCAL,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let header = |name: &str| r.headers.get(name).map(|v| v.to_str().unwrap().to_owned());
+    assert_eq!(header("content-type").as_deref(), Some("application/json"));
+    assert_eq!(
+        header("content-disposition"),
+        Some(format!(
+            "attachment; filename=\"personal-data-{rita}.json\""
+        )),
+        "only the ID names the file"
+    );
+    assert_hardened(&r.headers, false, "personal-data export");
+    // A valid document whose structure the payloads did not change.
+    assert!(r.body.is_object(), "parses as JSON");
+    assert!(r.body.get("injected").is_none());
+    assert_eq!(r.body["format"], "tikkit.personal_data.v1");
+    let text = r.body.to_string();
+    let strings = |v: &Value, out: &mut Vec<String>| {
+        fn walk(v: &Value, out: &mut Vec<String>) {
+            match v {
+                Value::String(s) => out.push(s.clone()),
+                Value::Array(a) => a.iter().for_each(|v| walk(v, out)),
+                Value::Object(o) => o.values().for_each(|v| walk(v, out)),
+                _ => {}
+            }
+        }
+        walk(v, out)
+    };
+    let mut all = Vec::new();
+    strings(&r.body, &mut all);
+    assert!(
+        all.iter().any(|s| s == breakout),
+        "user agent and subject kept as data: {text}"
+    );
+    assert!(all.iter().any(|s| s == formula), "description kept as data");
+    assert!(!text.contains("password_hash") && !text.contains("token_hash"));
+}
