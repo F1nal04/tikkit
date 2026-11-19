@@ -154,6 +154,15 @@ try {
   })
 
   if (process.env.LOAD_SMTP === '1') {
+    // A direct submission notifies the requester and the opted-in Admin.
+    // Seeded operators opt out, so exactly two deliveries should be accepted.
+    const assertDelivery = (id, before) => {
+      const sent = Number(db(`SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
+        JOIN smtp_deliveries d ON d.idempotency_key='notification:' || o.id
+        WHERE e.ticket_id=:'id' AND o.channel='email' AND o.status='sent'`, id))
+      assert.equal(sent, 2, 'direct submission did not deliver to both recipients')
+      assert.equal(accepted().length - before, sent, 'relay accepted a different number than the durable receipts')
+    }
     await scenario('sigkill_unacknowledged_smtp', async () => {
       await drain()
       const before = accepted().length
@@ -167,7 +176,7 @@ try {
       await stackAsync(['start', 'api'])
       await ready()
       await drain()
-      assert.equal(accepted().length, before + 1)
+      assertDelivery(receipt.id, before)
       assert.equal((await get(owner, receipt.id)).status, 'queued')
       assert.equal(eventCount(receipt.id, 'submit'), 1)
     })
@@ -193,7 +202,7 @@ try {
       await stackAsync(['start', 'api'])
       await ready()
       await drain()
-      assert.equal(accepted().length, before + 1, 'durable SMTP receipt was sent again')
+      assertDelivery(receipt.id, before)
     })
 
     await scenario('mail_outage_retry', async () => {
@@ -205,10 +214,10 @@ try {
       await eventually('email retry scheduled', () => Number(db(`
         SELECT count(*) FROM notification_outbox o JOIN ticket_events e ON e.id=o.event_id
         WHERE e.ticket_id=:'id' AND o.channel='email' AND o.attempts=1 AND o.status='pending'
-          AND o.available_at > clock_timestamp() + interval '20 seconds'`, receipt.id)) === 1)
+          AND o.available_at > clock_timestamp() + interval '20 seconds'`, receipt.id)) === 2)
       put('smtp', 'ready')
       await drain()
-      assert.equal(accepted().length, before + 1)
+      assertDelivery(receipt.id, before)
       const elapsed = Date.now() - start
       assert(elapsed >= 29_000, 'SMTP retry ignored backoff')
       return { accepted_after_ms: elapsed }

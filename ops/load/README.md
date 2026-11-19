@@ -29,14 +29,15 @@ bun install --frozen-lockfile
 - `ops/load/run.sh profile > profile.json` starts from 30,000 historical
   tickets across 300 requester accounts. It uses 30 concurrent lanes for 120 s.
 - `ops/load/recovery.sh > recovery.json` injects faults on a fresh seeded
-  stack and records the outcomes. Use at least 61 requester accounts.
+  stack and records the outcomes. Use at least 61 requester accounts. Allow
+  several minutes for the crash lease and actual SMTP backoff.
 - `ops/load/run.sh frontend > frontend.json` uses Playwright and the browser
   performance APIs against the production web image and the seeded database.
 - `ops/load/bundle-budget.sh "$LOAD_WEB_IMAGE"` checks total gzip-compressed
   client JavaScript in the actual production image.
 - `ops/load/run.sh smoke` uses two lanes, 12 requesters, 12 historical tickets,
-  and five seconds. CI uses this and the bundle budget in the existing Compose
-  job. Full profile, fault injection and browser timing are manual.
+  and five seconds. The existing Compose CI job enables the private SMTP
+  probe and checks the bundle budget. Full profile, fault injection and browser timing are manual.
 
 Optional environment overrides:
 

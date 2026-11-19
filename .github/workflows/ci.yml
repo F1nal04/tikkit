@@ -187,7 +187,7 @@ jobs:
         timeout-minutes: 3
         run: |
           ops/load/bundle-budget.sh "$TIKKIT_WEB_IMAGE"
-          LOAD_API_IMAGE="$TIKKIT_API_IMAGE" LOAD_WEB_IMAGE="$TIKKIT_WEB_IMAGE" ops/load/run.sh smoke
+          LOAD_SMTP=1 LOAD_API_IMAGE="$TIKKIT_API_IMAGE" LOAD_WEB_IMAGE="$TIKKIT_WEB_IMAGE" ops/load/run.sh smoke
       - name: Backup and restore drill (reduced)
         run: |
           # Own projects, volumes and ports; the stack above stays untouched.
