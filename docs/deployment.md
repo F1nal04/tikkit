@@ -8,6 +8,16 @@ same release revision where possible. The web and API versions can differ
 because their tags are independent, so use the pair tested together for the
 release.
 
+## Size the host
+
+Use 4 vCPU and 8 GiB RAM as the starting size for a single-organization
+deployment close to the [measured capped reference](performance-baseline.md#capped-reference-rerun-results)
+of 30 active workload lanes and 30,000 historical tickets. The reference
+allocated 4 vCPU and 4 GiB of container memory across the stack and local test
+peers. It ran on an ARM developer workstation with container caps and a
+co-located load driver. Treat that result as sizing guidance for this workload
+and measure storage separately for your attachment and backup retention.
+
 ## Configure the host and secrets
 
 1. Place [docker-compose.prod.example.yml](../docker-compose.prod.example.yml),

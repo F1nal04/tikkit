@@ -1,0 +1,494 @@
+{
+  "api_restart_mid_load": {
+    "passed": true,
+    "ms": 6012,
+    "committed": 1,
+    "clean_failures": 7
+  },
+  "postgres_restart_in_flight": {
+    "passed": true,
+    "ms": 6401,
+    "interrupted_status": 500,
+    "receipt_preserved": true,
+    "traffic": {
+      "queue_ms": {
+        "count": 1,
+        "p50": 259.9,
+        "p95": 259.9,
+        "p99": 259.9,
+        "max": 259.9
+      },
+      "direct_ms": {
+        "count": 1,
+        "p50": 5.5,
+        "p95": 5.5,
+        "p99": 5.5,
+        "max": 5.5
+      },
+      "unavailable_reads": {
+        "500": 2
+      },
+      "db_samples": 12,
+      "db": {
+        "active_or_in_transaction": 1,
+        "pool_open": 10,
+        "client_backends": 11,
+        "max_connections": 100,
+        "api_pool_cap": 10,
+        "unavailable_samples": 7
+      },
+      "containers": {
+        "api": {
+          "cpu_percent": 2.88,
+          "memory_bytes": 4742709,
+          "memory_limit_bytes": 805306368,
+          "configured_memory_bytes": 805306368,
+          "configured_nanocpus": 1000000000
+        },
+        "postgres": {
+          "cpu_percent": 6.7,
+          "memory_bytes": 40621834,
+          "memory_limit_bytes": 2147483648,
+          "configured_memory_bytes": 2147483648,
+          "configured_nanocpus": 2000000000
+        },
+        "provider": {
+          "cpu_percent": 0,
+          "memory_bytes": 17343447,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "proxy": {
+          "cpu_percent": 1.4,
+          "memory_bytes": 19283313,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 300000000
+        },
+        "smtp": {
+          "cpu_percent": 0.58,
+          "memory_bytes": 19419628,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "web": {
+          "cpu_percent": 9.35,
+          "memory_bytes": 39856374,
+          "memory_limit_bytes": 536870912,
+          "configured_memory_bytes": 536870912,
+          "configured_nanocpus": 400000000
+        }
+      }
+    }
+  },
+  "provider_network_disconnect": {
+    "passed": true,
+    "ms": 22985,
+    "traffic": {
+      "queue_ms": {
+        "count": 21,
+        "p50": 53.2,
+        "p95": 76.9,
+        "p99": 92,
+        "max": 92
+      },
+      "direct_ms": {
+        "count": 1,
+        "p50": 13,
+        "p95": 13,
+        "p99": 13,
+        "max": 13
+      },
+      "unavailable_reads": {},
+      "db_samples": 89,
+      "db": {
+        "active_or_in_transaction": 1,
+        "pool_open": 5,
+        "client_backends": 5,
+        "max_connections": 100,
+        "api_pool_cap": 10
+      },
+      "containers": {
+        "api": {
+          "cpu_percent": 1.96,
+          "memory_bytes": 25417482,
+          "memory_limit_bytes": 805306368,
+          "configured_memory_bytes": 805306368,
+          "configured_nanocpus": 1000000000
+        },
+        "postgres": {
+          "cpu_percent": 23.81,
+          "memory_bytes": 99342090,
+          "memory_limit_bytes": 2147483648,
+          "configured_memory_bytes": 2147483648,
+          "configured_nanocpus": 2000000000
+        },
+        "provider": {
+          "cpu_percent": 0.16,
+          "memory_bytes": 18874368,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "proxy": {
+          "cpu_percent": 1.51,
+          "memory_bytes": 19377684,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 300000000
+        },
+        "smtp": {
+          "cpu_percent": 0.29,
+          "memory_bytes": 19660800,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "web": {
+          "cpu_percent": 9.95,
+          "memory_bytes": 41366323,
+          "memory_limit_bytes": 536870912,
+          "configured_memory_bytes": 536870912,
+          "configured_nanocpus": 400000000
+        }
+      }
+    }
+  },
+  "provider_total_timeout": {
+    "passed": true,
+    "ms": 122732,
+    "handoff_after_ms": 121103,
+    "traffic": {
+      "queue_ms": {
+        "count": 119,
+        "p50": 22.4,
+        "p95": 53.5,
+        "p99": 70.2,
+        "max": 165.4
+      },
+      "direct_ms": {
+        "count": 2,
+        "p50": 15.7,
+        "p95": 16,
+        "p99": 16,
+        "max": 16
+      },
+      "unavailable_reads": {},
+      "db_samples": 485,
+      "db": {
+        "active_or_in_transaction": 1,
+        "pool_open": 6,
+        "client_backends": 6,
+        "max_connections": 100,
+        "api_pool_cap": 10
+      },
+      "containers": {
+        "api": {
+          "cpu_percent": 3.93,
+          "memory_bytes": 45696942,
+          "memory_limit_bytes": 805306368,
+          "configured_memory_bytes": 805306368,
+          "configured_nanocpus": 1000000000
+        },
+        "postgres": {
+          "cpu_percent": 21.31,
+          "memory_bytes": 145542349,
+          "memory_limit_bytes": 2147483648,
+          "configured_memory_bytes": 2147483648,
+          "configured_nanocpus": 2000000000
+        },
+        "provider": {
+          "cpu_percent": 0.09,
+          "memory_bytes": 19178455,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "proxy": {
+          "cpu_percent": 1.35,
+          "memory_bytes": 19639828,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 300000000
+        },
+        "smtp": {
+          "cpu_percent": 0.72,
+          "memory_bytes": 20279460,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "web": {
+          "cpu_percent": 10.46,
+          "memory_bytes": 62904074,
+          "memory_limit_bytes": 536870912,
+          "configured_memory_bytes": 536870912,
+          "configured_nanocpus": 400000000
+        }
+      }
+    }
+  },
+  "sigkill_ai_in_flight": {
+    "passed": true,
+    "ms": 154335,
+    "usage_lease_released_after_ms": 154315
+  },
+  "provider_slowness_and_outage": {
+    "passed": true,
+    "ms": 26935,
+    "peak_provider_calls": 2,
+    "circuit_open_refusals": 8,
+    "traffic": {
+      "queue_ms": {
+        "count": 26,
+        "p50": 19.3,
+        "p95": 83.1,
+        "p99": 161.5,
+        "max": 161.5
+      },
+      "direct_ms": {
+        "count": 1,
+        "p50": 5.6,
+        "p95": 5.6,
+        "p99": 5.6,
+        "max": 5.6
+      },
+      "unavailable_reads": {},
+      "db_samples": 100,
+      "db": {
+        "active_or_in_transaction": 2,
+        "pool_open": 10,
+        "client_backends": 10,
+        "max_connections": 100,
+        "api_pool_cap": 10
+      },
+      "containers": {
+        "api": {
+          "cpu_percent": 4.24,
+          "memory_bytes": 6697255,
+          "memory_limit_bytes": 805306368,
+          "configured_memory_bytes": 805306368,
+          "configured_nanocpus": 1000000000
+        },
+        "postgres": {
+          "cpu_percent": 29.41,
+          "memory_bytes": 162424422,
+          "memory_limit_bytes": 2147483648,
+          "configured_memory_bytes": 2147483648,
+          "configured_nanocpus": 2000000000
+        },
+        "provider": {
+          "cpu_percent": 0.36,
+          "memory_bytes": 19524485,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "proxy": {
+          "cpu_percent": 1.05,
+          "memory_bytes": 21873295,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 300000000
+        },
+        "smtp": {
+          "cpu_percent": 1.37,
+          "memory_bytes": 21957181,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "web": {
+          "cpu_percent": 9.96,
+          "memory_bytes": 45025853,
+          "memory_limit_bytes": 536870912,
+          "configured_memory_bytes": 536870912,
+          "configured_nanocpus": 400000000
+        }
+      }
+    }
+  },
+  "sigkill_unacknowledged_smtp": {
+    "passed": true,
+    "ms": 3369
+  },
+  "sigkill_after_smtp_receipt": {
+    "passed": true,
+    "ms": 11372
+  },
+  "smtp_stop_mid_delivery": {
+    "passed": true,
+    "ms": 33095,
+    "traffic": {
+      "queue_ms": {
+        "count": 32,
+        "p50": 19.4,
+        "p95": 87.4,
+        "p99": 130.4,
+        "max": 130.4
+      },
+      "direct_ms": {
+        "count": 1,
+        "p50": 8.5,
+        "p95": 8.5,
+        "p99": 8.5,
+        "max": 8.5
+      },
+      "unavailable_reads": {},
+      "db_samples": 114,
+      "db": {
+        "active_or_in_transaction": 1,
+        "pool_open": 9,
+        "client_backends": 9,
+        "max_connections": 100,
+        "api_pool_cap": 10
+      },
+      "containers": {
+        "api": {
+          "cpu_percent": 4.48,
+          "memory_bytes": 5266997,
+          "memory_limit_bytes": 805306368,
+          "configured_memory_bytes": 805306368,
+          "configured_nanocpus": 1000000000
+        },
+        "postgres": {
+          "cpu_percent": 23.28,
+          "memory_bytes": 133903155,
+          "memory_limit_bytes": 2147483648,
+          "configured_memory_bytes": 2147483648,
+          "configured_nanocpus": 2000000000
+        },
+        "provider": {
+          "cpu_percent": 0.01,
+          "memory_bytes": 17836278,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "proxy": {
+          "cpu_percent": 0.97,
+          "memory_bytes": 22041068,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 300000000
+        },
+        "smtp": {
+          "cpu_percent": 0.01,
+          "memory_bytes": 18360566,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "web": {
+          "cpu_percent": 9.33,
+          "memory_bytes": 64204308,
+          "memory_limit_bytes": 536870912,
+          "configured_memory_bytes": 536870912,
+          "configured_nanocpus": 400000000
+        }
+      }
+    }
+  },
+  "mail_outage_retry": {
+    "passed": true,
+    "ms": 31974,
+    "accepted_after_ms": 31541,
+    "traffic": {
+      "queue_ms": {
+        "count": 31,
+        "p50": 18.9,
+        "p95": 31.7,
+        "p99": 33.8,
+        "max": 33.8
+      },
+      "direct_ms": {
+        "count": 1,
+        "p50": 10.8,
+        "p95": 10.8,
+        "p99": 10.8,
+        "max": 10.8
+      },
+      "unavailable_reads": {},
+      "db_samples": 111,
+      "db": {
+        "active_or_in_transaction": 1,
+        "pool_open": 9,
+        "client_backends": 9,
+        "max_connections": 100,
+        "api_pool_cap": 10
+      },
+      "containers": {
+        "api": {
+          "cpu_percent": 3.42,
+          "memory_bytes": 25386025,
+          "memory_limit_bytes": 805306368,
+          "configured_memory_bytes": 805306368,
+          "configured_nanocpus": 1000000000
+        },
+        "postgres": {
+          "cpu_percent": 22.38,
+          "memory_bytes": 147220070,
+          "memory_limit_bytes": 2147483648,
+          "configured_memory_bytes": 2147483648,
+          "configured_nanocpus": 2000000000
+        },
+        "provider": {
+          "cpu_percent": 0.02,
+          "memory_bytes": 17836278,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "proxy": {
+          "cpu_percent": 0.75,
+          "memory_bytes": 25815941,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 300000000
+        },
+        "smtp": {
+          "cpu_percent": 0.3,
+          "memory_bytes": 19230884,
+          "memory_limit_bytes": 268435456,
+          "configured_memory_bytes": 268435456,
+          "configured_nanocpus": 150000000
+        },
+        "web": {
+          "cpu_percent": 9.02,
+          "memory_bytes": 63763907,
+          "memory_limit_bytes": 536870912,
+          "configured_memory_bytes": 536870912,
+          "configured_nanocpus": 400000000
+        }
+      }
+    }
+  },
+  "overdue_proposals_two_workers": {
+    "passed": true,
+    "ms": 21449,
+    "replicas": 2,
+    "concurrent_batch_closures_by_replica": [
+      0,
+      8
+    ],
+    "closures_by_replica": [
+      1,
+      9
+    ],
+    "max_due_lag_ms": 1933,
+    "timed_out": 10,
+    "requester_confirmed": 4
+  },
+  "retention_catches_up_after_restart": {
+    "passed": true,
+    "ms": 1441,
+    "processing_lag_seconds": 5.71079
+  },
+  "reconciliation": {
+    "accepted_mail": 153,
+    "duplicate_mail": 0,
+    "duplicate_outbox": 0
+  }
+}

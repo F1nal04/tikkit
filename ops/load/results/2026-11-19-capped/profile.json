@@ -1,0 +1,400 @@
+{
+  "clock_seconds": 307.883,
+  "users": 30,
+  "seconds": 300,
+  "accounts": 300,
+  "seeded_tickets": 30000,
+  "configured_provider_ms": 250,
+  "smtp_enabled": true,
+  "groups": {
+    "sign_in": {
+      "count": 1530,
+      "p50": 13.7,
+      "p95": 18.4,
+      "p99": 21.4,
+      "max": 31.2,
+      "errors": {}
+    },
+    "queue_staff_detail": {
+      "count": 9669,
+      "p50": 2,
+      "p95": 42.7,
+      "p99": 49.9,
+      "max": 63.7,
+      "errors": {}
+    },
+    "screenshot_upload": {
+      "count": 300,
+      "p50": 6.4,
+      "p95": 8.6,
+      "p99": 9.6,
+      "max": 15.9,
+      "errors": {}
+    },
+    "requester_reads": {
+      "count": 3957,
+      "p50": 1.5,
+      "p95": 2.2,
+      "p99": 3.2,
+      "max": 11.4,
+      "errors": {}
+    },
+    "submission": {
+      "count": 3000,
+      "p50": 5.2,
+      "p95": 6.7,
+      "p99": 9,
+      "max": 13.1,
+      "errors": {}
+    },
+    "staff_writes": {
+      "count": 3630,
+      "p50": 2,
+      "p95": 4.8,
+      "p99": 6.5,
+      "max": 13.7,
+      "errors": {}
+    },
+    "admin_report": {
+      "count": 100,
+      "p50": 781.6,
+      "p95": 909.4,
+      "p99": 925.7,
+      "max": 991.2,
+      "errors": {}
+    },
+    "admin_submissions": {
+      "count": 100,
+      "p50": 20.3,
+      "p95": 22.5,
+      "p99": 23.6,
+      "max": 23.8,
+      "errors": {}
+    },
+    "admin_audit": {
+      "count": 100,
+      "p50": 1.7,
+      "p95": 2.2,
+      "p99": 2.5,
+      "max": 4.7,
+      "errors": {}
+    },
+    "admin_combined": {
+      "count": 300,
+      "p50": 20.3,
+      "p95": 867,
+      "p99": 919.4,
+      "max": 991.2
+    }
+  },
+  "warmup_seconds": 12,
+  "history": {
+    "ai_solved": 48,
+    "confirmed": 7488,
+    "awaiting_confirmation": 167,
+    "screenshot_bearing": 48
+  },
+  "driver": {
+    "cpu_seconds": 8.604628,
+    "peak_sampled_rss_bytes": 16024224,
+    "mean_cores": 0.02869117887330988
+  },
+  "lanes": [
+    {
+      "lane": 1,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 2,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 3,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 4,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 5,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 6,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 7,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 8,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 9,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 10,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 11,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 12,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 13,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 14,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 15,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 16,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 17,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 18,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 19,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 20,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 21,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 22,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 23,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 24,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 25,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 26,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 27,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 28,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 29,
+      "scheduled": 50,
+      "completed": 50
+    },
+    {
+      "lane": 30,
+      "scheduled": 50,
+      "completed": 50
+    }
+  ],
+  "admin_lane": {
+    "scheduled": 100,
+    "completed": 100
+  },
+  "checks": {
+    "submit_races": 1501,
+    "claim_races": 313,
+    "confirmation_races": 313,
+    "ai_decision_races": 251,
+    "operator_passes": 192
+  },
+  "expected": {
+    "submitted": 1501,
+    "ai": 251,
+    "ai_solved": 126,
+    "confirmed": 313,
+    "public_replies": 313,
+    "notes": 313,
+    "attachments": 301,
+    "claims": 313
+  },
+  "resources": {
+    "samples": 94,
+    "db": {
+      "active_or_in_transaction": 4,
+      "pool_open": 9,
+      "client_backends": 9,
+      "max_connections": 100,
+      "api_pool_cap": 10
+    },
+    "workers": {
+      "ai_attempts": {
+        "pending_jobs": 2,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      },
+      "notifications": {
+        "pending_jobs": 1725,
+        "due_jobs": 1725,
+        "oldest_due_seconds": 2.034688
+      },
+      "auto_close": {
+        "pending_jobs": 167,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      },
+      "retention": {
+        "pending_jobs": 0,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      }
+    },
+    "containers": {
+      "api": {
+        "cpu_percent": 39.92,
+        "memory_bytes": 95514788,
+        "memory_limit_bytes": 805306368,
+        "configured_memory_bytes": 805306368,
+        "configured_nanocpus": 1000000000
+      },
+      "postgres": {
+        "cpu_percent": 155.24,
+        "memory_bytes": 403806618,
+        "memory_limit_bytes": 2147483648,
+        "configured_memory_bytes": 2147483648,
+        "configured_nanocpus": 2000000000
+      },
+      "provider": {
+        "cpu_percent": 0.64,
+        "memory_bytes": 28437381,
+        "memory_limit_bytes": 268435456,
+        "configured_memory_bytes": 268435456,
+        "configured_nanocpus": 150000000
+      },
+      "proxy": {
+        "cpu_percent": 3.83,
+        "memory_bytes": 28416410,
+        "memory_limit_bytes": 268435456,
+        "configured_memory_bytes": 268435456,
+        "configured_nanocpus": 300000000
+      },
+      "smtp": {
+        "cpu_percent": 4.98,
+        "memory_bytes": 34519122,
+        "memory_limit_bytes": 268435456,
+        "configured_memory_bytes": 268435456,
+        "configured_nanocpus": 150000000
+      },
+      "web": {
+        "cpu_percent": 10.41,
+        "memory_bytes": 63271076,
+        "memory_limit_bytes": 536870912,
+        "configured_memory_bytes": 536870912,
+        "configured_nanocpus": 400000000
+      }
+    },
+    "sampling_interval_ms": {
+      "count": 93,
+      "p50": 3237.4,
+      "p95": 3248.9,
+      "p99": 3250.2,
+      "max": 3250.2
+    },
+    "db_samples": 1199,
+    "db_sampling_interval_ms": {
+      "count": 1198,
+      "p50": 250.3,
+      "p95": 262.9,
+      "p99": 273.6,
+      "max": 281.5
+    }
+  },
+  "reconciliation": {
+    "submitted": 1501,
+    "submit_keys": 1501,
+    "submit_events": 1501,
+    "ai_solved": 126,
+    "ai_not_solved": 125,
+    "reply_events": 313,
+    "note_events": 313,
+    "ai": 251,
+    "confirmed": 313,
+    "public_replies": 313,
+    "notes": 313,
+    "attachments": 301,
+    "claims": 313,
+    "duplicate_notifications": 0,
+    "ai_solved_staff_notifications": 0,
+    "emails_sent": 3905,
+    "outbox_pending": 0,
+    "ai_duration_ms": {
+      "p50": 1391.723,
+      "p95": 1877.891,
+      "p99": 1972.464,
+      "max": 1983.988
+    }
+  },
+  "smtp_accepted": 3906,
+  "provider_duration_ms": {
+    "count": 250,
+    "p50": 251,
+    "p95": 254,
+    "p99": 256,
+    "max": 256
+  },
+  "result": "pass"
+}

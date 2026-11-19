@@ -64,7 +64,143 @@ queue's SSR entry JavaScript budget is 100 KiB and the total client gzip
 budget is 200 KiB. Recovery probes use the steady queue read and direct
 submission p99 targets when PostgreSQL is reachable.
 
-## Reference environment
+## Capped reference rerun results
+
+Measured on the same Apple M4 Pro developer workstation (14 cores, 48 GiB,
+macOS 27.0.1) with Docker Desktop. For deployment sizing, the reference is
+**4 vCPU and 8 GiB RAM**. The table records the caps actually applied. The
+Docker VM exposed 14 vCPU and about 7.75 GiB RAM during the test. The 4-vCPU
+budget comes from container limits on this machine, with 4 GiB of the reference
+memory reserved for Docker and the host. These measurements come from one
+developer workstation.
+
+| Container | vCPU limit | RAM limit | Sampled peak CPU | Sampled peak RAM |
+| --- | ---: | ---: | ---: | ---: |
+| api | 1.00 | 768 MiB | 39.92% | 91.1 MiB |
+| postgres | 2.00 | 2048 MiB | 155.24% | 385.1 MiB |
+| provider | 0.15 | 256 MiB | 0.64% | 27.1 MiB |
+| proxy | 0.30 | 256 MiB | 3.83% | 27.1 MiB |
+| smtp | 0.15 | 256 MiB | 4.98% | 32.9 MiB |
+| web | 0.40 | 512 MiB | 10.41% | 60.3 MiB |
+
+The co-located Bun driver used 8.60 CPU seconds, averaging 0.029 cores
+(0.72% of the 4-vCPU reference), and reached 15.3 MiB sampled RSS. Docker CLI
+and subprocess overhead remains unmeasured.
+
+The steady run uses 30 workload lanes, 300 requester accounts, and 30,000
+historical tickets, including 48 AI-solved tickets with API-uploaded
+screenshots and 167 pending proposals. SQL history uses evenly spaced dates and fresh indexes. The
+12-second read warm-up and seed activity are excluded. The steady scheduling
+window was 300 seconds over loopback HTTPS. The closed-loop workload completed
+all 1,500 scheduled slots and the Admin lane completed all 100 slots. The
+artifact records the schedule and completion count for each lane.
+
+### Latency and reconciliation
+
+| Endpoint group | Samples | Target p50 / p95 / p99 (ms) | Measured p50 / p95 / p99 (ms) | Result |
+| --- | ---: | ---: | ---: | --- |
+| Sign-in | 1,530 | 150 / 450 / 900 | 13.7 / 18.4 / 21.4 | Met |
+| Ticket submission | 3,000 | 100 / 300 / 750 | 5.2 / 6.7 / 9.0 | Met |
+| Screenshot upload | 300 | 100 / 300 / 750 | 6.4 / 8.6 / 9.6 | Met |
+| Requester reads | 3,957 | 75 / 200 / 500 | 1.5 / 2.2 / 3.2 | Met |
+| Queue, search and staff detail | 9,669 | 100 / 300 / 750 | 2.0 / 42.7 / 49.9 | Met |
+| Workflow writes | 3,630 | 100 / 300 / 750 | 2.0 / 4.8 / 6.5 | Met |
+| Admin report | 100 | 750 / 1,000 / 1,500 | 781.6 / 909.4 / 925.7 | Missed |
+| Admin submissions | 100 | 100 / 300 / 750 | 20.3 / 22.5 / 23.6 | Met |
+| Admin audit | 100 | 100 / 300 / 750 | 1.7 / 2.2 / 2.5 | Met |
+| Admin combined comparison | 300 | 250 / 750 / 1,500 | 20.3 / 867.0 / 919.4 | Missed |
+| 10,000-row report CSV | 8 | 1,500 / 2,500 / 4,000 | 191.0 / 199.4 / 199.4 | Met |
+| 10,000-row audit CSV | 8 | 1,500 / 2,500 / 4,000 | 46.3 / 49.3 / 49.3 | Met |
+
+CSV figures are a separate export-only exercise with eight measured runs
+per endpoint, after one warm-up. The CSV p95 and p99 are the maximum with
+eight samples. The first test toggled JIT for the disposable DB role.
+Report CSV p95 went from 552.6 to 197.2 ms. Audit CSV p95 went from 50.2 to
+54.6 ms. The production report export now disables JIT only for its
+transaction. The audit export retained
+default JIT behavior. The rerun above uses the new API image and default DB
+role. The original combined Admin comparison remains in the historical
+results below. The report p50 missed its 750 ms target by 31.6 ms. Its p95
+and p99 met their targets. The combined Admin p95 also missed its original
+750 ms target. The report-only figures describe the known cost for this
+dataset under caps. The evidence supported tuning the CSV path.
+
+The steady workload recorded zero unexpected responses in 22,386 requests
+and reconciled 1,501 unique submissions, 301 live screenshots, 251 live AI
+attempts, 126 AI confirmations, 313 accepted human proposals and 3,905 ticket
+emails.
+Outbox, visibility, and event duplicate counters were zero. Operator and Team
+Lead access checks ran while live work changed the queues. The independent
+DB sampler took 1,199 samples at a median interval of 250.3 ms. Peaks were
+4 active API-role connections out of 10, 9 open API-role connections, and
+9 total client backends out of 100. The connection and 200% sampled CPU
+targets were met.
+Worker and container samples use a separate, slower loop.
+
+| Worker | Peak pending | Peak overdue lag | Lag target |
+| --- | ---: | ---: | ---: |
+| AI sweep | 2 | 0.000 s | 15 s |
+| Outbox | 1,725 | 2.035 s | 60 s |
+| Auto-close | 167 | 0.000 s | 5 s |
+| Retention | 0 | 0.000 s | 30 s |
+
+Historical proposals had future deadlines throughout the steady window.
+The recovery drill measured overdue closure and retention catch-up. Live AI
+attempts completed within 1.98 s. The provider stub delays and AI completion are tracked separately from API
+request time. Individual screenshot timings describe 1280 × 720 synthetic
+PNGs of about 218 KB. They provide latency evidence for that payload, while
+testing the present limits would require a separate size and burst profile.
+
+### Recovery under caps
+
+The full drill used `--long`. During faults the queue and direct-submission
+checks use the 750 ms p99 targets as maximums on successful requests.
+Failures while PostgreSQL was unavailable are counted separately.
+
+| Condition | Successful queue reads | Max queue read | Max direct submit | Peak active API DB connections |
+| --- | ---: | ---: | ---: | ---: |
+| PostgreSQL stop during a locked API submission | 1 | 259.9 ms | 5.5 ms | 1 / 10 |
+| Provider interface disconnected in flight | 21 | 92.0 ms | 13.0 ms | 1 / 10 |
+| Provider retry then hung through the 120 s deadline | 119 | 165.4 ms | 16.0 ms | 1 / 10 |
+| Provider slowness and HTTP 503 | 26 | 161.5 ms | 5.6 ms | 2 / 10 |
+| SMTP relay stopped while holding DATA | 32 | 130.4 ms | 8.5 ms | 1 / 10 |
+| SMTP 451 and recovery | 31 | 33.8 ms | 10.8 ms | 1 / 10 |
+
+- PostgreSQL stopped with an HTTP submission waiting on its real DB advisory
+  lock. It returned HTTP 500, readiness failed, and retry with the same key
+  committed once after restart.
+- Reattaching the provider bridge restored AI service. The hung generation
+  reached its deadline after 121.10 s and handed off once with the timeout
+  outcome.
+- SMTP stopped with a held DATA command. The outbox retried after restart.
+  The recovery run had zero duplicate mail acceptances or outbox entries.
+- One replica handled all eight timeout closures in the competitive batch.
+  One targeted ticket per replica then verified both workers could close
+  tickets against the same database. Final per-process counters were 1 and 9,
+  with four additional requester confirmations. Maximum due-to-close lag
+  was 1.93 s. Retention caught up in 5.71 s.
+
+### Web budget and scope
+
+The production image contained 169,409 gzip bytes of client JS
+against the 204,800-byte cap. The SSR queue entry declared
+88,467 gzip bytes against the 102,400-byte cap.
+CI verifies both budgets. Raise a budget deliberately in the same PR as the
+change that needs it, with before/after measurements.
+
+The separate browser run measured 85,074 bytes of actual cold queue
+JavaScript transfer. At p95 it measured 171.8 ms TTFB, 296.0 ms FCP and LCP,
+30.5 ms click-to-paint, and 47.8 ms queue-to-detail. The smoke budget uses
+the SSR preload and bootstrap list. Browser transfer and
+interaction timing use Playwright and stay separate from API and provider times.
+
+The [capped results](../ops/load/results/2026-11-19-capped) preserve the raw
+aggregate evidence alongside the [earlier results](../ops/load/results/2026-11-19).
+The evidence covers synthetic peer delays and the exercised profile. Dedicated
+Linux host performance, sustained soak, real external delivery latency,
+large retention backlogs and field INP remain unmeasured.
+
+## Original uncapped reference environment
 
 Measured 2026-11-19 on an Apple M4 Pro developer workstation running macOS
 27.0.1 (26A434), with 14 cores (10 performance, 4 efficiency) and 48 GiB RAM.
