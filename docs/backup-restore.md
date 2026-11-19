@@ -611,17 +611,18 @@ the database and the volume so the durations can be extrapolated.
 ### Latest recorded run
 
 Run on 2026-11-19 on a developer workstation (Docker Desktop, Apple silicon, API/web images
-built from this branch), `ops/backup/drill.sh` in full mode: **37 checks passed**
-in 165 seconds, including all four failure simulations. Durations of the
-mechanical steps:
+built from this branch), `ops/backup/drill.sh` in full mode: **88 checks passed**
+in 217 seconds, including every failure simulation, with the surrounding shell
+deliberately exporting conflicting `HTTP_PORT`, `HTTPS_PORT`, `PUBLIC_ORIGIN` and
+`COMPOSE_FILE`. Durations of the mechanical steps:
 
 | Step | Seed data (a few tickets, 4 screenshots) | `DRILL_BULK_MB=1024` (1.24 GB database, 1.07 GB volume) |
 |---|---|---|
-| Backup run (dump, encrypt, archive, checksums) | under 1 s, 156 KB | 47 s, 1.69 GB encrypted (random data does not compress) |
-| Restore, total (`restore.sh`) | 26 s | 71 s |
-| of which database restore | 1 s | 13 s |
+| Backup run (snapshot, dump, encrypt, archive, checksums) | about 1 s, 156 KB | 54 s, 1.69 GB encrypted (random data does not compress) |
+| Restore, total (`restore.sh`, including the cutover) | 27 s | 73 s |
+| of which database restore | under 1 s | 13 s |
 | of which screenshot restore | under 1 s | 21 s |
-| Stack start, health waits, verification | about 25 s | about 37 s |
+| Stack start, health waits, verification | about 25 s | about 39 s |
 
 These are measurements of one machine, not guarantees. The rest of the drill's
 time is seeding, the 25-second restore-mode idle check and the failure
@@ -659,12 +660,12 @@ part (`restore_total`, with `database_restore_seconds` and
 
 | Data (database + volume) | Backup run | Mechanical restore (`restore_total`) |
 |---|---|---|
-| a few MB | under 1 s | about 30 s |
-| 1.24 GB + 1.07 GB (measured) | 47 s | 71 s |
+| a few MB | about 1 s | about 27 s |
+| 1.24 GB + 1.07 GB (measured) | 54 s | 73 s |
 
 Beyond a fixed start-up of about 25 to 30 seconds, restore cost grew by roughly
 15 to 20 seconds per GB of data on the test machine, and backup cost by about
-20 seconds per GB. A single-host deployment with tens of GB therefore restores
+23 seconds per GB. A single-host deployment with tens of GB therefore restores
 mechanically in minutes.
 
 **The measured values above are mechanical restore time only**

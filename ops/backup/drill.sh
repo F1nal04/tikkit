@@ -663,8 +663,8 @@ mark restore_total "$(($(date +%s) - RESTORE_START))s"
 mark restore_detail "$(cat "$WORK/restore.summary")"
 check "restore left the backup directory exactly as it was (no decrypted metadata written into it)" \
   test "$(ls -A "$WORK/offsite/$STAMP")" = "$BACKUP_LISTING"
-check "main: restore reports no rows without a file and no files without a row" \
-  grep -q 'screenshot_rows_without_file=0 screenshot_files_without_row=0' "$WORK/restore.summary"
+check "main: restore reports no rows without a file and no files without a row (bulk files have no row, by design)" \
+  grep -q "screenshot_rows_without_file=0 screenshot_files_without_row=$((BULK_MB / 5)) " "$WORK/restore.summary"
 check "main: the email cutover suppressed exactly the email rows pending at the backup" \
   grep -q "email_suppressed=$SRC_PENDING_EMAIL\$" "$WORK/restore.summary"
 fetch_ca dst "$DST_HTTPS"
