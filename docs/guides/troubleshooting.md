@@ -186,6 +186,19 @@ password** again; they are re-encrypted with the current key. Nothing else needs
 backups. Reference: [AI configuration](../ai-configuration.md#encryption-key-rotation-and-recovery),
 [backup and restore](../backup-restore.md#when-encryption_key-is-missing-or-wrong-after-a-restore).
 
+## A save fails or the session expires while someone is typing
+
+**Symptom.** A form shows an error, the portal says "Your session has expired.", or
+the page is offline; users worry that their text is lost.
+
+**Behavior.** Typed input stays in the form. After a refused submit, focus moves to
+an error summary that links to each field; a network or server failure shows its own
+message and a retry; retrying unchanged input reuses its idempotency key, so no
+duplicate ticket, reply or decision appears. For an expired session the user signs
+in again in the new tab the banner offers and submits again. If every save is
+refused, see [`csrf_rejected`](#every-save-is-refused-with-csrf_rejected). Reference:
+[accessibility, failure recovery](../accessibility.md#failure-recovery).
+
 ## Other quick answers
 
 | Symptom | Cause and fix |

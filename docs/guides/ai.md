@@ -42,7 +42,7 @@ provider requires it), and outbound HTTPS from the API to the provider. Open
 1. **Provider** and **Model.** Choose one provider, then a model. The selector lists
    only models this release supports **that accept image input**, because
    screenshots are sent as images. There is no free-text model field; if a later
-   release drops a model you selected, the status becomes "model unsupported" and you
+   release drops a model you selected, the page says this version no longer supports the selected model and you
    choose another. Save the selection first; the connection test uses the saved
    selection.
 2. **API key.** Under **API keys**, paste the key for the selected provider and

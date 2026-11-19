@@ -86,7 +86,7 @@ link, and access is checked again on arrival.
 - `GET`/`PUT /api/notification-preferences` `{email, in_app}`.
 - Admin: `GET /api/admin/notifications` (counts by status and failure codes) and
   `POST /api/admin/notifications/retry` (re-queues `failed` rows; audited as
-  `notifications_retried`; no duplicates thanks to the idempotency key).
+  `notifications_retried`; recorded keys prevent resends).
 
 ## Not here
 

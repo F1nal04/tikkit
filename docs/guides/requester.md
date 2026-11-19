@@ -180,10 +180,29 @@ If your organization set up email, you also get emails. They only link back to t
 portal: **replying to a notification email does not update your ticket**. Post
 your reply in the portal. Turn email or in-app notifications off in **Profile**.
 
+## Keyboard, screen readers and errors
+
+The portal is built for WCAG 2.2 A and AA: you can do everything with the keyboard,
+the first Tab stop is **Skip to main content**, and after you follow a link focus
+moves to the page heading. Layouts work on phone widths and with larger text, in
+both languages. Automated tests check this; a human screen-reader review is still
+outstanding ([accessibility](../accessibility.md)).
+
+When something fails, your work is kept:
+
+- **A save or submit is refused** (for example a missing field). Focus moves to
+  an error summary at the top of the form that lists each problem as a link to its
+  field. Choose a link to jump to that field. Everything you typed stays.
+- **The network or the server fails.** The page says so, keeps your text and lets
+  you retry. Retrying unchanged input does not create a second ticket, reply or
+  decision.
+- **Your session expires while you type.** You see "Your session has expired."
+  What you typed stays on the page. Choose **Sign in (opens in a new tab)**, sign
+  in there, return to the first tab and submit again. See
+  [failure recovery](../accessibility.md#failure-recovery) for exactly what is tested.
+
 ## If something looks wrong
 
 - "Open the portal at its configured address…": use the link your administrator
   gave you, not an IP address or another hostname.
 - "Too many requests": wait a minute and try again.
-- Your session expired while you typed: the page keeps your text; sign in again
-  in the new tab it offers, then resubmit.

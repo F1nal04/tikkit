@@ -19,12 +19,14 @@ detail; the guides give the working steps and link to them.
 | Deciding whether to use AI, or setting up a provider key | [AI assistance guide](ai.md) |
 | An Operator, Specialist or Team Lead working tickets | [Help desk guide](operator.md) |
 | Anyone who submits tickets (every role) | [Requester guide](requester.md) |
-| Checking that every documented promise is covered | [Coverage map](coverage.md) |
+| Checking that every documented promise is covered | [Coverage map](coverage.md); the [workflow test coverage](../workflow-coverage.md) lists the tests behind each workflow |
+| Checking accessibility, or planning a screen-reader review | [Accessibility](../accessibility.md) (what is scanned, keyboard and failure-recovery tests, the screen-reader checklist) |
+| Sizing the host or judging performance | [Performance baseline and capacity](../performance-baseline.md) |
 
 Reference pages behind the guides: [deployment](../deployment.md),
 [backup and restore](../backup-restore.md), [operations](../operations.md),
 [configuration](../configuration.md), [security](../security.md),
-[retention](../retention.md), [audit](../audit.md),
+[retention](../retention.md), [audit](../audit.md), [testing](../testing.md),
 [admin reports](../admin-reports.md), [lifecycle](../lifecycle.md),
 [queues](../queues.md), [authorization](../authorization.md). Developers
 start with the repository [README](../../README.md) and [AGENTS.md](../../AGENTS.md).
@@ -83,12 +85,26 @@ These are **not in this release**. Do not plan around them:
   registry are still pending. If the image tag you need is not published, build
   both images from your checkout ([install, step 1](install.md#1-get-the-files-and-the-images)).
 - There is no Admin-side password reset. Password recovery needs outbound email.
-- The **My team** page for Team Leads is a placeholder; Team Leads manage their team
-  from the General queue page's **Team queue** tab and the ticket pages.
+  Without it, an Admin can deactivate the account and issue a new invitation,
+  which creates a new account.
+- The **My team** page for Team Leads is a placeholder. Team Leads work from the
+  **Team queue** tab of the General queue page and from the ticket pages.
+- Rate limits are counted per API process and reset on restart, so one API replica
+  is supported.
+- Email delivery is at least once across a crash: in the moment between the relay
+  accepting a message and Tikkit recording it, a crash can send that message again.
+- If two Admins edit the same team at the same moment, the later save wins; there
+  is no conflict warning for team edits.
+- A human screen-reader pass is still outstanding. Automated checks cover
+  WCAG 2.2 A and AA; the [screen-reader checklist](../accessibility.md#screen-reader-pass)
+  is what a person with VoiceOver or NVDA still has to walk.
 - Notification outbox counts and the retry of failed email rows are available only
-  through the Admin API, not as portal controls.
-- Recovery objectives are measured numbers on one machine, not guarantees
-  ([backup and restore](../backup-restore.md#recovery-objectives)).
+  through the Admin API, not as portal controls
+  ([operations](../operations.md#reading-the-outbox-and-retrying-failed-email)).
+- Recovery objectives and the performance baseline are measurements on one
+  machine, not guarantees
+  ([backup and restore](../backup-restore.md#recovery-objectives),
+  [performance baseline](../performance-baseline.md)).
 
 ## Conventions
 

@@ -218,6 +218,18 @@ note text. Links open the portal; **replies to notification emails are not read*
 and change nothing. You stop receiving notifications for a ticket as soon as you
 lose access to it.
 
+## Keyboard, announcements and recovery
+
+All help desk controls work from the keyboard (see
+[accessibility](../accessibility.md#keyboard-tests)). The queue announces **The queue
+was updated.** to screen readers each time a poll sees a change. A failed save
+(rate limit, server error, offline, or an expired session) keeps your unsent reply,
+note or summary on the page, shows what failed in an error summary that links to the
+field, and lets you retry; retrying unchanged text does not send it twice. If the
+ticket changed under you, the page refreshes and keeps your unsent text. The
+automated checks and the outstanding human screen-reader pass are described in
+[accessibility](../accessibility.md#screen-reader-pass).
+
 ## Quick reference
 
 | I want to… | Do this |

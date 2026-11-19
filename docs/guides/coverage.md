@@ -43,3 +43,11 @@ Each acceptance criterion of the documentation issue
 | 34 | Requesters see handling team and assignee name, with general-queue/unassigned states | [requester: where your ticket goes](requester.md#where-your-ticket-goes) |
 | 35 | English/German selector and preference, fallback, localized notifications, AI language, content stays in original language | [requester: sign in](requester.md#sign-in-and-your-account); [admin: language](admin.md#language); [index](README.md) |
 | 36 | SvelteKit/Svelte and Rust/Axum, check/test commands, Node-adapter build/start, dev proxy, production routing | Repository [README](../../README.md) (Commands, Production), [AGENTS.md](../../AGENTS.md), [deployment: runtime services](../deployment.md#runtime-services-and-probes), [frontend](../frontend.md); [index: how Tikkit is arranged](README.md#how-tikkit-is-arranged). No separate architecture page: those sources are complete and were corrected where stale. |
+
+## Related evidence
+
+- The tests behind each workflow the guides describe: [workflow coverage](../workflow-coverage.md).
+- Accessibility behavior described in the requester and help desk guides (error summary,
+  focus, announcements, session expiry): [accessibility](../accessibility.md), with the
+  human screen-reader pass still outstanding.
+- Host sizing and performance: [performance baseline](../performance-baseline.md).

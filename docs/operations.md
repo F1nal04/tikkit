@@ -127,7 +127,9 @@ rm admin.jar
 
 The first call returns counts by status and the stable failure codes; the second
 re-queues every `failed` row (audited as `notifications_retried`). Rows keep
-their idempotency key, so a message the relay already accepted is not sent twice.
+their idempotency key, so a message whose acceptance was recorded is not sent
+again (delivery is at least once across a crash, see
+[notifications](notifications.md#worker)).
 
 ## Resolution confirmation timeouts
 
