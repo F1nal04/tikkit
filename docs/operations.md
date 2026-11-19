@@ -202,6 +202,28 @@ reset on API restart and track operations observed by that process. The
 backlog gauges reflect shared database state. Metric labels contain no request
 IDs, ticket identifiers, category names or requester data.
 
+## Load and recovery drill
+
+Use the [capacity profile](performance-baseline.md) and the
+[disposable Compose runner](../ops/load/README.md) to rehearse recovery.
+During a database outage, [readiness](#api-and-database) should fail while API
+liveness stays up. After connectivity returns, verify both readiness and
+[worker polling](#worker-health). Retry an interrupted submission with the
+original idempotency key and input.
+
+For a stuck AI attempt, watch [AI handoffs](#ai-handoffs-and-provider-failures)
+and confirm that the requester can still submit through an exempt category.
+For delayed email, check [outbox retries and SMTP](#notifications-and-smtp).
+A relay acceptance followed by a lost response or a process crash before the
+delivery receipt commits is an ambiguous SMTP outcome. A durable receipt
+suppresses retries, but the relay can deliver twice inside that gap.
+
+After an API restart, check [overdue confirmations](#resolution-confirmation-timeouts)
+and [retention runs](#data-retention) for catch-up. The drill starts two API
+replicas briefly to exercise concurrent workers against the same data.
+Operate one API replica in production because the per-account and sign-in
+rate limits live in each process.
+
 ## Backups
 
 The optional backup sidecar logs `level=error` lines, reports health in

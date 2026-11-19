@@ -59,8 +59,9 @@ Recipients are accounts, never addresses: accounts sharing an email each get
 their own message, which names the intended username.
 
 Email uses `mail::deliver` with one SMTP try per row and the idempotency key
-`notification:<id>`; a crash after the relay accepted a message makes the retry a
-recorded no-op, never a second email. Failures retry with 30 s doubling backoff
+`notification:<id>`; a retry after the delivery receipt has committed is a no-op. A relay can
+accept a message before a timeout or crash prevents the receipt from committing.
+SMTP does not guarantee exactly-once delivery for that ambiguous outcome. Failures retry with 30 s doubling backoff
 (max 1 h) up to `MAX_ATTEMPTS` (8), then become `failed`. A failure never rolls
 back portal work; the in-app channel is independent of the email channel. The
 stable error code is kept in `last_error`, logged, and SMTP failures also show on

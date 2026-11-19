@@ -1,0 +1,107 @@
+{
+  "clock_seconds": 5.128,
+  "users": 2,
+  "seconds": 5,
+  "accounts": 12,
+  "seeded_tickets": 12,
+  "configured_provider_ms": 250,
+  "smtp_enabled": true,
+  "groups": {
+    "sign_in": {
+      "count": 4,
+      "p50": 12.5,
+      "p95": 13,
+      "p99": 13,
+      "max": 13,
+      "errors": {}
+    },
+    "submit_upload": {
+      "count": 5,
+      "p50": 6.6,
+      "p95": 7.7,
+      "p99": 7.7,
+      "max": 7.7,
+      "errors": {}
+    },
+    "requester_reads": {
+      "count": 4,
+      "p50": 1.3,
+      "p95": 1.9,
+      "p99": 1.9,
+      "max": 1.9,
+      "errors": {}
+    },
+    "queue_staff_detail": {
+      "count": 16,
+      "p50": 1.9,
+      "p95": 2.7,
+      "p99": 2.7,
+      "max": 2.7,
+      "errors": {}
+    },
+    "staff_writes": {
+      "count": 20,
+      "p50": 2.3,
+      "p95": 3.7,
+      "p99": 4,
+      "max": 4,
+      "errors": {}
+    },
+    "admin": {
+      "count": 3,
+      "p50": 4.9,
+      "p95": 7.1,
+      "p99": 7.1,
+      "max": 7.1,
+      "errors": {}
+    }
+  },
+  "checks": {
+    "submit_races": 2,
+    "claim_races": 2,
+    "confirmation_races": 2,
+    "ai_decision_races": 0,
+    "operator_passes": 0
+  },
+  "expected": {
+    "submitted": 2,
+    "ai": 0,
+    "ai_solved": 0,
+    "confirmed": 2,
+    "public_replies": 2,
+    "notes": 2,
+    "attachments": 1,
+    "claims": 2
+  },
+  "resources": {},
+  "reconciliation": {
+    "submitted": 2,
+    "submit_keys": 2,
+    "submit_events": 2,
+    "ai_solved": 0,
+    "ai_not_solved": 0,
+    "reply_events": 2,
+    "note_events": 2,
+    "ai": 0,
+    "confirmed": 2,
+    "public_replies": 2,
+    "notes": 2,
+    "attachments": 1,
+    "claims": 2,
+    "duplicate_notifications": 0,
+    "ai_solved_staff_notifications": 0,
+    "emails_sent": 10,
+    "outbox_pending": 0,
+    "ai_duration_ms": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    }
+  },
+  "smtp_accepted": 11,
+  "provider_duration_ms": {
+    "count": 0
+  },
+  "result": "pass"
+}
