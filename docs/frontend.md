@@ -198,3 +198,10 @@ read", and "Load more". Text is already localized by the API, in the recipient's
 account language. Notification preferences (email, in-app) are on `/profile`.
 Opening a link while signed out goes through `/login?next=…` and back; the ticket
 page then applies the current access rules. See [notifications.md](notifications.md).
+
+## Accessibility
+
+Keyboard operation, the axe scan, live regions, and the screen-reader checklist
+are in [accessibility.md](accessibility.md). Shared controls
+(`Field`, `Alert`, `Dialog`, `Table`) carry the labels, error summary, and
+focus behaviour those checks rely on.
