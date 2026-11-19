@@ -38,6 +38,32 @@ successful assertions. Report unexpected HTTP errors separately from them.
   Cold queue initial JS transfer at most 200 KiB, all client JS compressed
   at most 512 KiB. Track these budgets separately from API/provider timings.
 
+## Capped reference rerun targets
+
+Set before measuring the review rerun. The reference host is 4 vCPU and 8 GiB
+RAM. The load overlay allocates 4 vCPU and 4 GiB across the six services,
+leaving the remainder of host memory for Docker and the OS. The host-side
+driver is measured separately. Keep the 30 lanes, 300 requesters, and 30,000
+historical tickets. Use a 12-second warm-up and 300-second measured window.
+A dedicated Admin lane schedules one report, submissions list and audit list
+every three seconds. Aim for at least 95 samples per Admin endpoint.
+
+| Group | p50 / p95 / p99 target (ms) |
+| --- | ---: |
+| Submission | 100 / 300 / 750 |
+| Screenshot upload | 100 / 300 / 750 |
+| Admin report | 750 / 1,000 / 1,500 |
+| Admin submissions | 100 / 300 / 750 |
+| Admin audit | 100 / 300 / 750 |
+| Admin combined comparison | 250 / 750 / 1,500 |
+| 10,000-row report CSV | 1,500 / 2,500 / 4,000 |
+| 10,000-row audit CSV | 1,500 / 2,500 / 4,000 |
+
+The original endpoint targets still apply to the other groups. The cold
+queue's SSR entry JavaScript budget is 100 KiB and the total client gzip
+budget is 200 KiB. Recovery probes use the steady queue read and direct
+submission p99 targets when PostgreSQL is reachable.
+
 ## Reference environment
 
 Measured 2026-11-19 on an Apple M4 Pro developer workstation running macOS
