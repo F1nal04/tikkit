@@ -174,6 +174,27 @@ test('reopening defaults off, honors current policy changes, then reopens only a
   await expect(page.getByRole('form', { name: 'Public reply' })).toBeVisible()
 })
 
+test('after retention, removed screenshots are named instead of linked and no reopen is offered', async ({ page }) => {
+  const ids = await setup(page)
+  await request(page, '/api/test/policy', { allow_reopening: true })
+  // Screenshots removed, text still stored: a note, no broken previews, and reopening still works.
+  await request(page, '/api/test/retention-ticket', { id: ids.closed, removed_screenshots: 2 })
+  await detail(page, ids.closed)
+  await expect(page.getByTestId('screenshots-removed')).toHaveText('Screenshots removed under the data retention policy: 2.')
+  await expect(page.getByRole('main').locator('img')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Reopen ticket' })).toBeVisible()
+  // Text removed as well: the notice explains it, and the reopen that would be refused is not offered.
+  await request(page, '/api/test/retention-ticket', { id: ids.closed, content_removed_at: '2026-11-01T00:00:00Z' })
+  await page.reload()
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByText('The content of this ticket was removed under the data retention policy.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reopen ticket' })).toHaveCount(0)
+  await expect(page.locator('.badge[data-status="closed"]')).toBeVisible()
+  await page.goto(`${new URL(page.url()).pathname}?lang=de`)
+  await expect(page.getByText('Der Inhalt dieses Tickets wurde gemäß der Aufbewahrungsrichtlinie entfernt.')).toBeVisible()
+  await expect(page.getByTestId('screenshots-removed')).toHaveText('Gemäß der Aufbewahrungsrichtlinie entfernte Screenshots: 2.')
+})
+
 test('AI-solved history is read-only, shows the confirmed suggestion, and rejects direct reopen/escalation', async ({ page }) => {
   const ids = await setup(page)
   await request(page, '/api/test/policy', { allow_reopening: true })

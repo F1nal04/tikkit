@@ -214,6 +214,7 @@
     </dl>
     <p class="prose">{ticket.intake_snapshot?.description ?? ticket.description}</p>
     <ScreenshotGallery ids={ticket.intake_snapshot?.screenshot_ids ?? []} locale={data.locale} />
+    {#if ticket.removed_screenshots > 0}<p class="hint" data-testid="screenshots-removed">{t.retention.screenshotsRemoved.replace('{count}', String(ticket.removed_screenshots))}</p>{/if}
     {#if ticket.ai}
       {@const ai = ticket.ai}
       <h3>{s.aiSuggestion}</h3>

@@ -69,6 +69,7 @@
   <h3>{s.description}</h3>
   <p class="prose" data-testid="description">{intake?.description ?? d.description}</p>
   <ScreenshotGallery ids={intake?.screenshot_ids ?? []} locale={data.locale} />
+    {#if d.removed_screenshots > 0}<p class="hint" data-testid="screenshots-removed">{t.retention.screenshotsRemoved.replace('{count}', String(d.removed_screenshots))}</p>{/if}
 </section>
 
 {#if ai}

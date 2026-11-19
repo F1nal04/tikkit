@@ -35,18 +35,30 @@ test('an Admin sets periods, previews the deletion, and confirms a run by typing
   await expect(preview.locator('tr[data-count="audit_events"] td')).toHaveText('0')
   await expect(page.getByText('Save or discard your changes first.')).toBeVisible()
 
-  // Automatic deletion is saved only with the typed confirmation.
+  // Automatic deletion is saved only with the typed confirmation of a preview of these periods.
   await page.getByLabel('Apply these periods automatically once a day').check()
   const save = page.getByRole('button', { name: 'Save periods' })
   await expect(save).toBeDisabled()
   await page.getByLabel('Type DELETE to confirm').fill('delete')
   await expect(save).toBeDisabled()
+  // Editing a period clears the preview, and with it the confirmation.
+  await page.getByLabel('Unsubmitted drafts', { exact: true }).fill('31')
+  await expect(preview).toHaveCount(0)
+  await expect(page.getByTestId('needs-preview')).toBeVisible()
+  await expect(page.getByLabel('Type DELETE to confirm')).toHaveCount(0)
+  await expect(save).toBeDisabled()
+  await page.getByLabel('Unsubmitted drafts', { exact: true }).fill('30')
+  await expect(preview).toHaveCount(0)
   await page.getByLabel('Apply these periods automatically once a day').uncheck()
   await save.click()
   await expect(page.getByRole('status')).toHaveText('Retention periods saved.')
 
-  // The run: irreversible, so the button stays off until DELETE is typed.
+  // The run: bound to a preview of the saved periods, and off until DELETE is typed.
   const run = page.getByRole('button', { name: 'Delete now' })
+  await expect(run).toHaveCount(0)
+  await expect(page.getByText('Preview the deletion first.')).toBeVisible()
+  await page.getByRole('button', { name: 'Preview deletion' }).click()
+  await expect(preview.locator('tr[data-count="ticket_content"] td')).toHaveText('5')
   await expect(run).toBeDisabled()
   await page.getByLabel('Type DELETE to confirm').fill('DELETE')
   await run.click()
@@ -63,6 +75,48 @@ test('an Admin sets periods, previews the deletion, and confirms a run by typing
   // The saved periods survive a reload.
   await page.reload()
   await expect(page.getByLabel('Ticket content', { exact: true })).toHaveValue('365')
+})
+
+test('a confirmation in a stale tab deletes nothing: the policy another Admin saved was never previewed', async ({ page }) => {
+  await signIn(page, 'admin')
+  await page.goto('/admin/retention')
+  await page.getByLabel('Ticket content', { exact: true }).fill('365')
+  await page.getByRole('button', { name: 'Save periods' }).click()
+  await expect(page.getByRole('status')).toHaveText('Retention periods saved.')
+  await page.getByRole('button', { name: 'Preview deletion' }).click()
+  await expect(page.getByTestId('preview')).toBeVisible()
+
+  // Meanwhile another Admin shortens the period to one day.
+  await page.evaluate(() => fetch('/api/admin/retention/test-other-admin', { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'tikkit' }, body: JSON.stringify({ ticket_content_days: 1 }) }))
+
+  await page.getByLabel('Type DELETE to confirm').fill('DELETE')
+  await page.getByRole('button', { name: 'Delete now' }).click()
+  await expect(page.getByRole('alert')).toContainText('The retention periods were changed after you previewed them')
+  await expect(page.getByRole('alert')).toContainText('Nothing was deleted or saved.')
+  // No run started; the page shows what is stored now and asks for a new preview.
+  await expect(page.locator('tr[data-run]')).toHaveCount(0)
+  await expect(page.getByLabel('Ticket content', { exact: true })).toHaveValue('1')
+  await expect(page.getByTestId('preview')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Delete now' })).toHaveCount(0)
+  await expect(page.getByText('Preview the deletion first.')).toBeVisible()
+
+  // The same for switching automatic deletion on from a stale preview.
+  await page.getByRole('button', { name: 'Preview deletion' }).click()
+  await page.getByLabel('Apply these periods automatically once a day').check()
+  await page.getByLabel('Type DELETE to confirm').first().fill('DELETE')
+  await page.evaluate(() => fetch('/api/admin/retention/test-other-admin', { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'tikkit' }, body: JSON.stringify({ ticket_content_days: 7 }) }))
+  await page.getByRole('button', { name: 'Save periods' }).click()
+  await expect(page.getByRole('alert')).toContainText('The retention periods were changed after you previewed them')
+  await expect(page.getByLabel('Ticket content', { exact: true })).toHaveValue('7')
+  await expect(page.getByLabel('Apply these periods automatically once a day')).not.toBeChecked()
+
+  // In German too.
+  await page.goto('/admin/retention?lang=de')
+  await page.getByRole('button', { name: 'Löschvorschau' }).click()
+  await page.evaluate(() => fetch('/api/admin/retention/test-other-admin', { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'tikkit' }, body: JSON.stringify({ ticket_content_days: 3 }) }))
+  await page.getByLabel('Zur Bestätigung DELETE eingeben').fill('DELETE')
+  await page.getByRole('button', { name: 'Jetzt löschen' }).click()
+  await expect(page.getByRole('alert')).toContainText('Die Aufbewahrungsfristen wurden nach Ihrer Vorschau geändert')
 })
 
 test('an Admin exports and anonymizes one account after typing its username', async ({ page }) => {
@@ -127,6 +181,8 @@ test('German retention page at phone width', async ({ page }) => {
   await expect(page.getByTestId('preview').locator('tr[data-count="ticket_content"]')).toContainText('Tickets (Inhalt)')
   await page.getByRole('button', { name: 'Fristen speichern' }).click()
   await expect(page.getByRole('status')).toHaveText('Aufbewahrungsfristen gespeichert.')
+  await expect(page.getByText('Sehen Sie sich zuerst die Löschvorschau an.')).toBeVisible()
+  await page.getByRole('button', { name: 'Löschvorschau' }).click()
   await expect(page.getByLabel('Zur Bestätigung DELETE eingeben')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Jetzt löschen' })).toBeDisabled()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
@@ -146,7 +202,7 @@ for (const who of ['requester', 'operator', 'lead']) {
       return [
         (await fetch('/api/admin/retention')).status,
         await post('/api/admin/retention/preview', {}),
-        await post('/api/admin/retention/runs', { confirm: 'DELETE' }),
+        await post('/api/admin/retention/runs', { confirm: 'DELETE', preview_token: 'x', as_of: '2026-11-18T09:00:00Z' }),
         (await fetch('/api/admin/personal-data?username=requester')).status,
         await post(`/api/admin/accounts/${id}/personal-data/export`, { username: 'requester' }),
         await post(`/api/admin/accounts/${id}/anonymize`, { username: 'requester' }),

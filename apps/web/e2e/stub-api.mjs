@@ -213,7 +213,7 @@ function detailOf(t) {
     view: 'requester', category_id: c.id, category_name: c.name, priority_id: p.id, priority_name: p.name,
     assignment: { team_name: null, assignee_display_name: null },
     intake_snapshot: { subject: t.subject ?? t.intake?.subject ?? 'Printer', description: t.description ?? t.intake?.description ?? 'Jammed', catalog: { category_id: c.id, category_name: c.name, skip_ai: c.skip_ai, priority_id: p.id, priority_name: p.name, answers: [] }, screenshot_ids: t.intake?.screenshot_ids ?? [] },
-    resolution_source: null, closure_reason: null, requester: null, ai: null,
+    resolution_source: null, closure_reason: null, requester: null, ai: null, content_removed_at: null, removed_screenshots: 0,
     proposal_version: 0, confirmation_deadline: null, transitions: [],
     created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z', ...t,
   }
@@ -450,13 +450,16 @@ createServer(async (req, res) => {
     const invalid = (fields) => reply(res, 422, { error: { code: 'validation_failed', message: 'invalid', details: { fields } }, request_id: 'stub' })
     const keep = { draft_days: null, screenshot_days: null, ai_content_days: null, ticket_content_days: null, audit_days: null }
     const r = (retention[tokenOf(req)] ??= {
-      settings: { policy: keep, automatic: false, updated_at: '2026-11-01T00:00:00Z' },
+      settings: { policy: keep, automatic: false, version: 1, updated_at: '2026-11-01T00:00:00Z' },
       runs: [],
       accounts: [
         { account_id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'Requester', role: 'user', is_active: true, anonymized_at: null, tickets: 3, open_tickets: 1, final_tickets_with_content: 2, drafts: 1, pending_screenshots: 0, sessions: 2, audit_events: 14 },
         { account_id: '40000000-0000-4000-8000-000000000009', username: 'former.user', display_name: 'Former User', role: 'operator', is_active: false, anonymized_at: null, tickets: 5, open_tickets: 0, final_tickets_with_content: 5, drafts: 2, pending_screenshots: 1, sessions: 0, audit_events: 31 },
       ],
     })
+    // A preview is bound to the periods it showed and the settings version it was made under.
+    const tokenFor = (p) => `v${r.settings.version}|${Object.keys(keep).map((k) => p[k] ?? '-').join('|')}`
+    const stale = () => fail(res, 409, 'retention_preview_stale')
     // What the sample data holds beyond each period.
     const affected = (p) => ({
       drafts: p.draft_days ? 4 : 0,
@@ -482,23 +485,31 @@ createServer(async (req, res) => {
       return reply(res, 200, { settings: r.settings, limits: { min_days: 1, max_days: 3650, audit_min_days: 30 }, runs: r.runs.map(({ seen, ...run }) => run) })
     }
     if (route === 'PUT /api/admin/retention') {
-      const { automatic, confirm, ...policy } = await readBody(req)
+      const { automatic, confirm, preview_token, ...policy } = await readBody(req)
       const fields = range(policy)
-      if (automatic && Object.values(policy).some((d) => d !== null) && confirm !== 'DELETE') fields.confirm = ['invalid']
+      const deletes = automatic && Object.values(policy).some((d) => d !== null)
+      if (deletes && confirm !== 'DELETE') fields.confirm = ['invalid']
       if (Object.keys(fields).length) return invalid(fields)
-      r.settings = { policy, automatic, updated_at: '2026-11-18T09:00:00Z' }
+      if (deletes && preview_token !== tokenFor(policy)) return stale()
+      r.settings = { policy, automatic, version: r.settings.version + 1, updated_at: '2026-11-18T09:00:00Z' }
       return reply(res, 200, r.settings)
+    }
+    // Another Admin saves different periods meanwhile (the stale-tab case).
+    if (route === 'POST /api/admin/retention/test-other-admin') {
+      r.settings = { ...r.settings, policy: { ...r.settings.policy, ...(await readBody(req)) }, version: r.settings.version + 1 }
+      return reply(res, 204)
     }
     if (route === 'POST /api/admin/retention/preview') {
       const policy = await readBody(req)
       const fields = range(policy)
       if (Object.keys(fields).length) return invalid(fields)
-      return reply(res, 200, { as_of: '2026-11-18T09:00:00Z', policy, affected: affected(policy) })
+      return reply(res, 200, { as_of: '2026-11-18T09:00:00Z', policy, affected: affected(policy), token: tokenFor(policy) })
     }
     if (route === 'POST /api/admin/retention/runs') {
-      const { confirm } = await readBody(req)
+      const { confirm, preview_token, as_of } = await readBody(req)
       if (confirm !== 'DELETE') return invalid({ confirm: ['invalid'] })
       if (Object.values(r.settings.policy).every((d) => d === null)) return invalid({ policy: ['not_configured'] })
+      if (preview_token !== tokenFor(r.settings.policy) || !as_of) return stale()
       if (r.runs.some((run) => run.state === 'pending')) return fail(res, 409, 'conflict')
       const run = { id: randomUUID(), state: 'pending', requested_by: '40000000-0000-4000-8000-000000000006', requested_by_username: 'admin', created_at: '2026-11-18T09:00:00Z', as_of: '2026-11-18T09:00:00Z', finished_at: null, policy: r.settings.policy, deleted: affected(keep) }
       r.runs.unshift(run)
@@ -677,6 +688,8 @@ createServer(async (req, res) => {
   const shotId = /^\/api\/screenshots\/([^/]+)(\/(?:preview|download))?$/.exec(pathname)
   st.policy ??= {}
   st.messages ??= new Map()
+  // What the retention policy did to a ticket (docs/retention.md): { id, content_removed_at?, removed_screenshots? }.
+  if (route === 'POST /api/test/retention-ticket') { const { id, ...flags } = await readBody(req); const t = st.tickets.find((t) => t.id === id); if (!t) return fail(res, 404, 'not_found'); Object.assign(t, flags); if (flags.content_removed_at) Object.assign(t, { subject: '—', description: '—' }); return reply(res, 204) }
   if (route === 'POST /api/test/policy') { Object.assign(st.policy, await readBody(req)); return reply(res, 204) }
   if (route === 'POST /api/test/assignment') { const input = await readBody(req); const t = st.tickets.find((t) => t.id === input.id); if (!t) return fail(res, 404, 'not_found'); t.assignment = input.assignment; return reply(res, 204) }
   if (route === 'POST /api/test/history') return reply(res, 200, seedHistory(st, user))

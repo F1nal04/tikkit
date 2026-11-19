@@ -110,7 +110,8 @@ export interface paths {
         /**
          * Exports the personal data of one account as a JSON document (Admin only).
          *     The typed `username` must be the account's. Bounded: each section holds at
-         *     most 10,000 rows and `truncated` names the sections that were cut. Never
+         *     most 10,000 rows and `truncated` names the sections that were cut, and the
+         *     whole export at most 16 MiB (`413 export_too_large` otherwise). Never
          *     contains credentials, hashes, internal notes, or other people's data; see
          *     docs/retention.md for the exact contents. Writes `personal_data_exported`.
          */
@@ -360,8 +361,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Starts applying the saved policy now (Admin only). The retention worker
-         *     does the work in batches; `GET /api/admin/retention` shows its progress.
+         * Starts applying the saved policy as previewed (Admin only). The preview must
+         *     be of the saved periods, made under the current settings, and at most an
+         *     hour old; otherwise `409 retention_preview_stale` and nothing starts. The
+         *     retention worker does the work in batches; `GET /api/admin/retention` shows
+         *     its progress.
          */
         post: operations["start_retention_run"];
         delete?: never;
@@ -2493,7 +2497,7 @@ export interface components {
          * @description Stable machine-readable error codes. Never translated; clients map them to text.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
+        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "retention_preview_stale" | "export_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
         ErrorDetails: {
             /** @description Invalid input fields (dotted paths) and their stable error codes. */
             fields: {
@@ -3323,6 +3327,8 @@ export interface components {
             /** Format: date-time */
             as_of: string;
             policy: components["schemas"]["RetentionPolicy"];
+            /** @description Send this back, with `as_of`, to confirm what this preview showed. */
+            token: string;
         };
         /** @description One application of the policy. */
         RetentionRun: {
@@ -3357,6 +3363,11 @@ export interface components {
             policy: components["schemas"]["RetentionPolicy"];
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: int64
+             * @description Bumped by every save. Previews are bound to it.
+             */
+            version: number;
         };
         /** @description Every period is required; `null` keeps that category for good. */
         RetentionSettingsWrite: {
@@ -3372,6 +3383,11 @@ export interface components {
             confirm?: string | null;
             /** Format: int64 */
             draft_days: number | null;
+            /**
+             * @description The `token` of a preview of exactly these periods, required together
+             *     with `confirm`: what was confirmed is what was reviewed.
+             */
+            preview_token?: string | null;
             /** Format: int64 */
             screenshot_days: number | null;
             /** Format: int64 */
@@ -3562,8 +3578,16 @@ export interface components {
          */
         StaleFilter: "view" | "team_id" | "status" | "category_id" | "priority_id" | "q";
         StartRetentionRun: {
+            /**
+             * Format: date-time
+             * @description The `as_of` of that preview: the run's clock, so it removes what the
+             *     preview counted.
+             */
+            as_of: string;
             /** @description Must be `DELETE`. */
             confirm: string;
+            /** @description The `token` of the preview the Admin confirmed. */
+            preview_token: string;
         };
         /**
          * @description The ticket's AI attempt as Admins see it: the stored suggestion, the
@@ -3609,6 +3633,11 @@ export interface components {
             /** @description Every event of the ticket, oldest first. */
             events: components["schemas"]["SubmissionEvent"][];
             intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            /**
+             * Format: int64
+             * @description Intake screenshots the retention policy has removed.
+             */
+            removed_screenshots: number;
             summary: components["schemas"]["SubmissionSummary"];
         };
         /**
@@ -3804,6 +3833,11 @@ export interface components {
              * @description Stable human-facing number.
              */
             reference: number;
+            /**
+             * Format: int64
+             * @description Intake screenshots the retention policy has removed.
+             */
+            removed_screenshots: number;
             requester: null | components["schemas"]["TicketRequester"];
             resolution_source: null | components["schemas"]["ResolutionSource"];
             staff_access: null | components["schemas"]["StaffAccess"];
@@ -4217,6 +4251,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description `conflict`: a ticket of the account is being changed right now; try again */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description `validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`) */
             422: {
                 headers: {
@@ -4272,6 +4315,15 @@ export interface operations {
             };
             /** @description `not_found` */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `export_too_large`: the account's data exceeds 16 MiB */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4887,6 +4939,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description `retention_preview_stale`: with `automatic` on, the periods were not previewed or the settings changed since the preview */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description `validation_failed` (a period: `out_of_range`; `confirm`: `invalid`) */
             422: {
                 headers: {
@@ -4987,7 +5048,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `conflict`: a run is already pending */
+            /** @description `retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending */
             409: {
                 headers: {
                     [name: string]: unknown;

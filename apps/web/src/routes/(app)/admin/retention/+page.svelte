@@ -34,8 +34,22 @@
   let error = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
   let notice = $state('')
+  // A confirmation is bound to this preview: its token and clock go back to the server, which
+  // refuses them if the stored policy is no longer what was previewed (docs/retention.md).
   let preview = $state<Schemas['RetentionPreview'] | null>(null)
+  // Only a preview of exactly what is in the inputs counts; editing a period clears it.
+  let shown = $derived(preview && samePolicy(preview.policy, policy) ? preview : null)
   let runConfirm = $state('')
+
+  /** The stored policy changed under this page: show what is stored now and start over. */
+  async function reload() {
+    preview = null
+    saveConfirm = ''
+    runConfirm = ''
+    await invalidateAll()
+    form = periodForm(data.retention.settings.policy)
+    automatic = data.retention.settings.automatic
+  }
 
   async function act(name: string, work: () => Promise<void>) {
     if (busy) return
@@ -48,6 +62,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      if (e instanceof ApiError && e.code === 'retention_preview_stale') await reload().catch(() => {})
     } finally {
       busy = ''
     }
@@ -56,7 +71,7 @@
   const save = (event: SubmitEvent) => {
     event.preventDefault()
     return act('save', async () => {
-      await apiClient(data.locale).request('put', '/api/admin/retention', { body: { ...policy, automatic, confirm: needsConfirm ? saveConfirm : null } })
+      await apiClient(data.locale).request('put', '/api/admin/retention', { body: { ...policy, automatic, confirm: needsConfirm ? saveConfirm : null, preview_token: needsConfirm ? (shown?.token ?? null) : null } })
       saveConfirm = ''
       preview = null
       await invalidateAll()
@@ -71,7 +86,8 @@
   const start = (event: SubmitEvent) => {
     event.preventDefault()
     return act('run', async () => {
-      await apiClient(data.locale).request('post', '/api/admin/retention/runs', { body: { confirm: runConfirm } })
+      if (!shown) return
+      await apiClient(data.locale).request('post', '/api/admin/retention/runs', { body: { confirm: runConfirm, preview_token: shown.token, as_of: shown.as_of } })
       runConfirm = ''
       preview = null
       await invalidateAll()
@@ -133,31 +149,35 @@
   <h2 id="policy-heading">{s.policy}</h2>
   <p class="hint">{fill(s.policyHint, { min: limits.min_days, max: number.format(limits.max_days), audit: limits.audit_min_days })}</p>
   <form onsubmit={save} novalidate aria-busy={busy === 'save'}>
-    {#each PERIODS as key (key)}
-      <Field name={key} type="number" label={s.periods[key]} hint={s.periodHints[key]} bind:value={form[key]} error={fieldText(t, fields[key]?.[0])} />
-    {/each}
+    <div class="periods" oninput={() => (preview = null)}>
+      {#each PERIODS as key (key)}
+        <Field name={key} type="number" label={s.periods[key]} hint={s.periodHints[key]} bind:value={form[key]} error={fieldText(t, fields[key]?.[0])} />
+      {/each}
+    </div>
     <label class="check"><input type="checkbox" bind:checked={automatic} />{s.automatic}</label>
     <p class="hint">{s.automaticHint}</p>
-    {#if needsConfirm}
+    {#if needsConfirm && !shown}
+      <p class="hint" data-testid="needs-preview">{s.automaticNeedsPreview}</p>
+    {:else if needsConfirm}
       <Field name="save_confirm" label={fill(s.typeToConfirm, { word: CONFIRM })} hint={s.automaticConfirmHint} autocomplete="off" bind:value={saveConfirm} error={fieldText(t, fields.confirm?.[0])} />
     {/if}
     <div class="actions">
-      <button type="submit" disabled={!!busy || (needsConfirm && saveConfirm !== CONFIRM)}>{busy === 'save' ? t.saving : s.save}</button>
+      <button type="submit" disabled={!!busy || (needsConfirm && (!shown || saveConfirm !== CONFIRM))}>{busy === 'save' ? t.saving : s.save}</button>
       <button type="button" class="secondary" onclick={runPreview} disabled={!!busy}>{s.preview}</button>
     </div>
   </form>
 </section>
 
-{#if preview}
+{#if shown}
   <section aria-labelledby="preview-heading" data-testid="preview">
     <h2 id="preview-heading">{s.previewTitle}</h2>
-    <p>{totalOf(preview.affected) === 0 ? s.previewNothing : fill(s.previewIntro, { time: when(preview.as_of) })}</p>
+    <p>{totalOf(shown.affected) === 0 ? s.previewNothing : fill(s.previewIntro, { time: when(shown.as_of) })}</p>
     <Table caption={s.previewTitle} empty="" isEmpty={false}>
       {#snippet head()}
         <tr><th scope="col">{s.category}</th><th scope="col">{s.affected}</th></tr>
       {/snippet}
       {#each COUNTS as key (key)}
-        <tr data-count={key}><th scope="row">{s.counts[key]}</th><td>{number.format(preview.affected[key])}</td></tr>
+        <tr data-count={key}><th scope="row">{s.counts[key]}</th><td>{number.format(shown.affected[key])}</td></tr>
       {/each}
     </Table>
     <p class="hint">{s.previewHint}</p>
@@ -173,6 +193,8 @@
   {:else if pending}
     <p>{s.runPending}</p>
     <div class="actions"><button type="button" class="secondary" onclick={refresh} disabled={!!busy}>{s.refresh}</button></div>
+  {:else if !shown}
+    <p>{s.runNeedsPreview}</p>
   {:else}
     <p>{s.runHint}</p>
     <form onsubmit={start} novalidate aria-busy={busy === 'run'}>
@@ -248,7 +270,7 @@
 <style>
   p { margin: 0; }
   section { display: grid; gap: 0.75rem; margin-top: 1.5rem; }
-  form { display: grid; gap: 0.75rem; max-width: 42rem; }
+  form, .periods { display: grid; gap: 0.75rem; max-width: 42rem; }
   .actions { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
   dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 0.25rem 1rem; margin: 0; max-width: 42rem; }
   dd { margin: 0; }
