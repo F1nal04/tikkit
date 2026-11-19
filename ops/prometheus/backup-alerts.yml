@@ -1,0 +1,27 @@
+groups:
+  - name: tikkit-backup
+    rules:
+      - alert: TikkitBackupFailed
+        expr: tikkit_backup_last_run_success{job="tikkit-backup"} == 0
+        for: 5m
+        annotations:
+          summary: The most recent backup run failed. The previous good backup is still in place.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/backup-restore.md#failure-alerts
+      - alert: TikkitBackupStale
+        # 30 hours: a daily schedule plus slack. Use 1.25 times your schedule interval.
+        expr: time() - tikkit_backup_last_success_timestamp_seconds{job="tikkit-backup"} > 108000
+        for: 10m
+        annotations:
+          summary: No successful backup for more than 30 hours.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/backup-restore.md#failure-alerts
+      - alert: TikkitBackupMissingScreenshots
+        expr: tikkit_backup_screenshots_missing{job="tikkit-backup"} > 0
+        annotations:
+          summary: The database references screenshots whose files are missing from the volume.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/backup-restore.md#consistency-between-database-and-screenshots
+      - alert: TikkitBackupSidecarDown
+        expr: up{job="tikkit-backup"} == 0
+        for: 10m
+        annotations:
+          summary: The backup sidecar's status endpoint cannot be scraped.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/backup-restore.md#failure-alerts
