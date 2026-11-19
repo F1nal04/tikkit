@@ -52,12 +52,11 @@ impl TestDb {
         conn.execute(format!("CREATE DATABASE {name}").as_str())
             .await
             .unwrap();
-        let pool = PgPoolOptions::new()
-            .connect_with(admin.clone().database(&name))
-            .await
-            .unwrap();
-        db::migrate(&pool).await.unwrap();
-        Some(Self { pool, name, admin })
+        let pool = PgPoolOptions::new().connect_lazy_with(admin.clone().database(&name));
+        // Own cleanup before the first connection/migration can fail.
+        let test = Self { pool, name, admin };
+        db::migrate(&test.pool).await.unwrap();
+        Some(test)
     }
 
     /// Another pool on the same database: a second process (the API and a worker).
