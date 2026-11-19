@@ -65,7 +65,7 @@
     "@tikkit/web#start": {
       "cache": false,
       "persistent": true,
-      "env": ["HOST", "PORT", "API_ORIGIN", "ORIGIN", "PROTOCOL_HEADER", "HOST_HEADER", "XFF_DEPTH"]
+      "env": ["HOST", "PORT", "API_ORIGIN", "PROTOCOL_HEADER", "HOST_HEADER", "XFF_DEPTH"]
     }
   }
 }
