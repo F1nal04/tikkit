@@ -7,7 +7,6 @@ reference pages for detail:
 [deployment](../deployment.md), [backup and restore](../backup-restore.md),
 [operations](../operations.md), [configuration](../configuration.md).
 
-Plan about an hour for a first install, plus time for DNS.
 
 ## Before you start
 
@@ -358,7 +357,9 @@ the checklist and leave restore mode.
 
    If you built the backup image under another name, pass it with `--image`
    and set `TIKKIT_BACKUP_IMAGE`.
-2. Run, from the deployment directory:
+2. Run, from the deployment directory of the machine doing the restore (it needs
+   Docker, `jq`, and the `tikkit-backup` image from
+   [step 8](#8-set-up-backups-before-real-tickets)):
 
    ```sh
    ops/backup/restore.sh \
