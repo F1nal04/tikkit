@@ -856,3 +856,44 @@ async fn shared_email_admin_can_dispatch_leads_request_with_separate_audit_ident
         ]
     );
 }
+
+#[tokio::test]
+async fn a_claim_racing_requester_cancellation_cannot_resurrect_the_ticket() {
+    let Some(w) = world().await else { return };
+    let id = w.seed("owner", "queued", Some(w.desk), None).await;
+    let at = w.updated_at(id).await;
+    let path = format!("/api/tickets/{id}/actions");
+    let (claim, cancel) = tokio::join!(
+        w.change_at(id, "op", act("claim"), at),
+        call(
+            &w.app,
+            "POST",
+            &path,
+            Some(json!({ "action": "cancel", "reason": "Support no longer needed" })),
+            Some(&w.cookies["owner"])
+        ),
+    );
+    assert_eq!(cancel.status, 200, "{}", cancel.body);
+    assert!(
+        matches!(claim.status.as_u16(), 200 | 403 | 409),
+        "{}",
+        claim.body
+    );
+    assert_eq!(
+        w.placement(id).await,
+        (Some(w.desk), (claim.status == 200).then_some(w.ids["op"]))
+    );
+    assert_eq!(w.events(id).await.len(), usize::from(claim.status == 200));
+
+    let detail = w.detail(id, "owner").await;
+    assert_eq!(detail.body["status"], "cancelled");
+    let events: Vec<String> = sqlx::query_scalar(
+        "SELECT event_type FROM ticket_events WHERE ticket_id = $1 AND event_type = 'cancel'",
+    )
+    .bind(id)
+    .fetch_all(&w.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(events, ["cancel"]);
+    assert!(!w.queue("op", "mine").await.contains(&id));
+}

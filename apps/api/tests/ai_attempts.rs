@@ -2012,7 +2012,11 @@ async fn provider_workflow(provider: Provider) {
     )
     .await;
     assert_eq!(program.status, 201, "{}", program.body);
-    let other_category = create("/api/categories", json!({ "name": "Unrelated category" })).await;
+    let other_category = create(
+        "/api/categories",
+        json!({ "name": "Unrelated category", "skip_ai": true }),
+    )
+    .await;
     assert_eq!(other_category.status, 201, "{}", other_category.body);
     let hidden = create(
         "/api/intake-fields",
@@ -2024,6 +2028,40 @@ async fn provider_workflow(provider: Provider) {
     assert_eq!(hidden.status, 201, "{}", hidden.body);
     let program_id = program.body["id"].as_str().unwrap();
     let hidden_id = hidden.body["id"].as_str().unwrap();
+
+    let mut prior = w.intake();
+    prior["category_id"] = other_category.body["id"].clone();
+    prior["description"] = json!("PRIOR-TICKET-MARKER");
+    let prior = w.submit_with(prior, false).await;
+    assert_eq!(prior.status, 201, "{}", prior.body);
+    assert_eq!(prior.body["status"], "queued");
+    let prior_id = serde_json::from_value(prior.body["id"].clone()).unwrap();
+    let lead = fixtures::account(w.pool(), Role::TeamLead, "prior-lead").await;
+    let team = fixtures::team(w.pool(), "Prior support team", lead)
+        .await
+        .unwrap();
+    let detail = w.detail(prior_id, &w.admin).await;
+    let assignment_path = format!("/api/tickets/{prior_id}/assignment");
+    let dispatched = create(
+        &assignment_path,
+        json!({
+            "action": "dispatch", "team_id": team, "expected_updated_at": detail.body["updated_at"],
+        }),
+    )
+    .await;
+    assert_eq!(dispatched.status, 200, "{}", dispatched.body);
+    let private_image = png(&image::RgbImage::from_pixel(11, 8, image::Rgb([2, 8, 10])));
+    let private_id = upload(&w.app, &w.admin, private_image.clone()).await;
+    let note_path = format!("/api/tickets/{prior_id}/notes");
+    let note = create(
+        &note_path,
+        json!({
+            "idempotency_key": Uuid::new_v4(), "body": "PRIVATE-NOTE-MARKER",
+            "screenshot_ids": [private_id],
+        }),
+    )
+    .await;
+    assert_eq!(note.status, 201, "{}", note.body);
 
     // One authorized screenshot, and one equally valid upload never attached.
     // Pixels spelling “KEY?” stand in for untrusted text inside a screenshot.
@@ -2108,6 +2146,7 @@ async fn provider_workflow(provider: Provider) {
     let requests = w.mock.bodies();
     assert_eq!(requests.len(), 4);
     let unrelated = base64::engine::general_purpose::STANDARD.encode(unrelated);
+    let private_image = base64::engine::general_purpose::STANDARD.encode(private_image);
     for (index, request) in requests.iter().enumerate() {
         let has_image = index == 0 || index == 3;
         for excluded in [
@@ -2116,6 +2155,10 @@ async fn provider_workflow(provider: Provider) {
             "shared@example.com",
             "STALE-ANSWER-MARKER",
             "Hidden field",
+            "PRIOR-TICKET-MARKER",
+            "PRIVATE-NOTE-MARKER",
+            &private_image,
+            &private_id.to_string(),
             &unrelated,
             &unrelated_id.to_string(),
             &w.requester_id.to_string(),
