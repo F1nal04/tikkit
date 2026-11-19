@@ -969,6 +969,23 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
     let report = w.get(&path, "admin").await;
     assert_eq!(report.status, 200, "{}", report.body);
     assert_eq!(report.body["submissions"], 14);
+    for (group, filter) in [("categories", "category_id"), ("priorities", "priority_id")] {
+        let rows = report.body[group].as_array().unwrap();
+        assert_eq!(rows.len(), if group == "categories" { 2 } else { 1 });
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["count"].as_u64().unwrap())
+                .sum::<u64>(),
+            14
+        );
+        for row in rows {
+            let id = row["id"].as_str().unwrap();
+            let submissions = w.list(&format!("{range}&{filter}={id}")).await;
+            assert!(!submissions.is_empty(), "{group} {id}");
+            assert_eq!(row["count"], submissions.len(), "{group} {id}");
+        }
+    }
+
     assert_eq!(report.body["ai_attempts"], 7);
     assert_eq!(report.body["ai_rate_numerator"], 1);
     assert_eq!(report.body["ai_rate_denominator"], 4);
@@ -1261,6 +1278,15 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
         .execute(w.pool())
         .await
         .unwrap();
+    let other_category = w.submit(w.network, "Outside the category", false).await;
+    sqlx::query(
+        "UPDATE tickets SET created_at = '2026-01-15T12:00:00Z', team_id = $2 WHERE id = $1",
+    )
+    .bind(other_category)
+    .bind(w.desk)
+    .execute(w.pool())
+    .await
+    .unwrap();
     let query = format!(
         "created_from=2026-01-14T19:00:00-05:00&created_before=2026-01-15T19:00:00-05:00&category_id={}&team_id={}",
         w.software, w.desk,
@@ -1268,6 +1294,14 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
     let report_path = format!("/api/admin/reports?{query}");
     let report = w.get(&report_path, "admin").await;
     assert_eq!(report.status, 200, "{}", report.body);
+    assert_eq!(
+        report.body["categories"],
+        json!([{"id": w.software, "name": "Software", "count": 1}])
+    );
+    assert_eq!(
+        report.body["priorities"],
+        json!([{"id": w.priority, "name": "Normal", "count": 1}])
+    );
     assert_eq!(
         report.body["daily"],
         json!([{"day": "2026-01-15", "count": 1}])
