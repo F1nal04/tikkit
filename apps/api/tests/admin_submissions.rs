@@ -946,6 +946,18 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
             .await;
         assert_eq!(r.status, 200, "{}", r.body);
     }
+    let urgent: Uuid =
+        sqlx::query_scalar("INSERT INTO priorities (name) VALUES ('Urgent') RETURNING id")
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    sqlx::query("UPDATE tickets SET priority_id = $2 WHERE id = $1")
+        .bind(orphan)
+        .bind(urgent)
+        .execute(w.pool())
+        .await
+        .unwrap();
+
     let (first, last): (String, String) = sqlx::query_as(
         "SELECT to_char(min(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
                 to_char((max(created_at) AT TIME ZONE 'UTC') + interval '1 day', 'YYYY-MM-DD')
@@ -971,7 +983,7 @@ async fn reports_match_the_submission_cohort_and_do_not_count_denied_reopens() {
     assert_eq!(report.body["submissions"], 14);
     for (group, filter) in [("categories", "category_id"), ("priorities", "priority_id")] {
         let rows = report.body[group].as_array().unwrap();
-        assert_eq!(rows.len(), if group == "categories" { 2 } else { 1 });
+        assert_eq!(rows.len(), 2);
         assert_eq!(
             rows.iter()
                 .map(|row| row["count"].as_u64().unwrap())
@@ -1268,6 +1280,15 @@ async fn utc_team_cohort_timing_reopen_and_csv_cells_are_exact() {
         "UPDATE tickets SET created_at = '2026-01-16T00:00:00Z', team_id = $2 WHERE id = $1",
     )
     .bind(outside)
+    .bind(w.desk)
+    .execute(w.pool())
+    .await
+    .unwrap();
+    let earlier = w.submit(w.software, "Before the interval", false).await;
+    sqlx::query(
+        "UPDATE tickets SET created_at = '2026-01-14T23:59:59Z', team_id = $2 WHERE id = $1",
+    )
+    .bind(earlier)
     .bind(w.desk)
     .execute(w.pool())
     .await
