@@ -34,6 +34,8 @@
   let items = $derived(data.page?.items ?? [])
   let nextCursor = $derived(data.page?.next_cursor ?? null)
   let retrying = $state(false)
+  // Set only when a poll sees a change, so the first paint and an unchanged poll stay quiet.
+  let queueNotice = $state('')
 
   // Saved views: the API reports filters that no longer apply; links leave them out.
   let viewName = $state('')
@@ -137,7 +139,10 @@
       try {
         const counts = await api(data.locale).request('get', '/api/queue/counts')
         if (!current()) return
-        if (counts.version !== data.counts.version) await invalidateAll()
+        if (counts.version !== data.counts.version) {
+          queueNotice = q.refreshed
+          await invalidateAll()
+        }
       } catch (e) {
         // Signed out or no longer staff: reload into the real answer.
         if (!current()) return
@@ -167,6 +172,7 @@
 <svelte:head><title>{viewLabel(params.view)}</title></svelte:head>
 
 <h1>{viewLabel(params.view)}</h1>
+<p class="sr-only" role="status" data-testid="queue-announcement">{queueNotice}</p>
 
 <nav aria-label={q.views} class="tabs">
   <ul>

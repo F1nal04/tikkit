@@ -6,6 +6,7 @@
   import Alert from '#lib/components/Alert.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import { messages, errorText, fieldText } from '#lib/i18n.ts'
   import { attemptFor, type Attempt } from '#lib/intake.ts'
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
@@ -96,6 +97,7 @@
   async function act(input: StaffInput) {
     if (busy || !ticket) return
     start(); busy = true
+    let errored = false
     try {
       await api(data.locale).request('post', '/api/tickets/{id}/staff-actions', {
         path: { id: ticket.id },
@@ -105,11 +107,13 @@
       if (input.action === 'propose_resolution') summary = ''
       if (input.action === 'set_priority') priorityId = ''
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function change(input: AssignmentInput) {
     if (busy || !ticket) return
     start(); busy = true
+    let errored = false
     try {
       const receipt = await api(data.locale).request('post', '/api/tickets/{id}/assignment', {
         path: { id: ticket.id },
@@ -119,24 +123,27 @@
       if (!receipt.visible) { moved = receipt; return }
       feedback = 'action'
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function send() {
     if (busy || uploading || !ticket || !canHandle) return
     start()
-    if (!body.trim()) { fields = { body: ['required'] }; return }
-    if ([...body].length > 10000) { fields = { body: ['too_long'] }; return }
+    if (!body.trim()) { fields = { body: ['required'] }; await focusFormErrors(); return }
+    if ([...body].length > 10000) { fields = { body: ['too_long'] }; await focusFormErrors(); return }
     busy = true
     const input = { body, screenshot_ids: screenshots }
     attempt = attemptFor(attempt, JSON.stringify({ ticket: ticket.id, kind, ...input }))
     const note = kind === 'note'
+    let errored = false
     try {
       await api(data.locale).request('post', note ? '/api/tickets/{id}/notes' : '/api/tickets/{id}/replies', {
         path: { id: ticket.id }, body: { ...input, idempotency_key: attempt.key },
       })
       body = ''; screenshots = []; attempt = null; feedback = note ? 'note' : 'reply'
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function loadMore() {
     if (loadingMore || !cursor || !ticket) return
@@ -164,7 +171,7 @@
   <div class="actions"><StatusBadge status={ticket.status} label={t.statuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{s.refresh}</button></div>
   {#if ticket.closure_reason}<p>{t.closureReasons[ticket.closure_reason]}</p>{/if}
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? s.replySent : feedback === 'note' ? s.noteSent : s.actionSaved}</Alert>{/if}
-  {#if changed}<Alert>{s.changed}</Alert>{:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}
+  {#if changed}<Alert summary>{s.changed}</Alert>{:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>{:else if failure}<Alert summary>{errorText(t, failure)}</Alert>{:else if Object.keys(fields).length}<Alert summary>{t.errors.validation_failed}</Alert>{/if}
   {#if reason}<Alert kind="info">{s.readOnly[reason]}</Alert>{/if}
 
   <dl class="facts">

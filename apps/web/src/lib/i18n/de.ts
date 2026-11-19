@@ -206,6 +206,8 @@ export default {
   restoreModeBanner:
     'Der Wiederherstellungsmodus ist aktiv: Dies ist eine wiederhergestellte Kopie. Es werden keine E-Mails gesendet, keine KI-Anbieter aufgerufen und keine Hintergrundjobs ausgeführt. Arbeiten Sie die Checkliste nach der Wiederherstellung ab und starten Sie dann ohne RESTORE_MODE neu.',
   loading: 'Wird geladen …',
+  dialogOpened: 'Dialog geöffnet: {title}',
+  dialogClosed: 'Dialog geschlossen.',
   menu: 'Menü',
   mainNavigation: 'Hauptnavigation',
   account: 'Konto',
@@ -378,6 +380,7 @@ export default {
     first: 'Erste Seite',
     next: 'Nächste Seite',
     retry: 'Erneut versuchen',
+    refreshed: 'Die Warteschlange wurde aktualisiert.',
     search: 'Suche',
     searchHint: 'Eine Ticketnummer oder mindestens 3 Zeichen aus Betreff, Beschreibung, Kategorie, Antragsteller oder Nachrichten.',
     savedViews: 'Gespeicherte Ansichten',

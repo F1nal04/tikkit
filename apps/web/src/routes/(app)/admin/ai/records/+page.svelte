@@ -106,7 +106,8 @@
 <style>
   p { margin: 0; }
   h3 { margin: 1rem 0 0; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
+  dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 1rem; margin: 0; }
+  dt { overflow-wrap: anywhere; }
   dd { margin: 0; }
   .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; }
   .pager { display: flex; gap: 1rem; }

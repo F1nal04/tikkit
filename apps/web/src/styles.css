@@ -116,11 +116,14 @@ form { display: grid; gap: 1rem; }
 
 input, select, textarea, button {
   font: inherit;
+  max-width: 100%;
   min-height: 2.75rem; /* comfortable touch target (WCAG 2.2 target size) */
   padding: 0.5rem 0.75rem;
   border: 1px solid #6f7d73;
   border-radius: 0.375rem;
 }
+input[type='file'], select, textarea { width: 100%; }
+.field, form, fieldset { min-width: 0; max-width: 100%; }
 input, select, textarea { background: var(--surface); color: var(--ink); }
 textarea { min-height: 8rem; resize: vertical; }
 input[aria-invalid='true'], select[aria-invalid='true'], textarea[aria-invalid='true'] { border-color: var(--danger); border-width: 2px; }
@@ -147,11 +150,21 @@ fieldset { min-width: 0; padding: 1rem; border: 1px solid var(--line); border-ra
 .alert.success::before { content: '✓'; color: var(--ok); }
 .alert.info::before { content: 'ℹ'; }
 .alert a { font-weight: 600; }
+/* Programmatic focus (a failed submit) must be visible; :focus-visible does not apply to it. */
+.alert[tabindex='-1']:focus { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 .loading { position: fixed; top: 0.75rem; right: 1rem; z-index: 5; display: flex; gap: 0.5rem; align-items: center; margin: 0; padding: 0.375rem 0.75rem; background: var(--surface); border: 1px solid var(--line); border-radius: 0.375rem; }
 .spinner { width: 1rem; height: 1rem; border: 2px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 .empty { padding: 2rem 1rem; text-align: center; background: var(--surface); border: 1px dashed #6f7d73; border-radius: 0.5rem; }
 .empty p { margin: 0; }
@@ -165,7 +178,9 @@ fieldset { min-width: 0; padding: 1rem; border: 1px solid var(--line); border-ra
 
 /* Tables and dialogs */
 
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 0.5rem; }
+.table-wrap { overflow-x: auto; max-width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 0.5rem; }
+img, svg, video { max-width: 100%; height: auto; }
+pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
@@ -187,7 +202,8 @@ dialog .actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin
 .button { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 1rem; border: 1px solid var(--accent); border-radius: 0.5rem; text-decoration: none; }
 .button.secondary { border-color: #6f7d73; color: var(--ink); background: var(--surface); }
 td.wrap { white-space: normal; min-width: 14rem; }
-.pager { display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem; }
+.pager { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: flex-end; margin-top: 1rem; }
+.pager a { display: inline-flex; align-items: center; min-height: 1.5rem; min-width: 1.5rem; }
 .filters .field:has(input[type='search']) { flex: 1 1 18rem; }
 .saved-views { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin: 0 0 1rem; padding: 0; list-style: none; }
 .saved-views li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }

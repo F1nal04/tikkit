@@ -4,6 +4,7 @@
   import Alert from '#lib/components/Alert.svelte'
   import Field from '#lib/components/Field.svelte'
   import { api } from '#lib/api.ts'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import { errorText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -24,6 +25,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError && e.code === 'invalid_credentials') password = ''
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -36,7 +38,7 @@
 <form onsubmit={submit} novalidate>
   <Field label={t.username} name="username" autocomplete="username" required bind:value={username} />
   <Field label={t.password} name="password" type="password" autocomplete="current-password" required bind:value={password} />
-  {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
+  {#if error}<Alert summary>{errorText(t, error)}</Alert>{/if}
   <button type="submit" disabled={busy}>{t.signIn}</button>
 </form>
 <p><a href="/forgot-password">{t.forgotPassword}</a></p>

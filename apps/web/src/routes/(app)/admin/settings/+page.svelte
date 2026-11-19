@@ -4,6 +4,7 @@
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -35,6 +36,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -44,7 +46,7 @@
 <svelte:head><title>{t.settingsTitle}</title></svelte:head>
 
 <h1>{t.settingsTitle}</h1>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
+{#if error}<Alert summary>{errorText(t, error)}</Alert>{/if}
 {#if saved}<Alert kind="success">{t.saved}</Alert>{/if}
 <form onsubmit={save} novalidate aria-busy={busy}>
   <Field name="name" label={t.organizationName} bind:value={form.name} error={fieldText(t, fields.name?.[0])} />

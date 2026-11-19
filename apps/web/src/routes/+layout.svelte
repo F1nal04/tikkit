@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../styles.css'
-  import { goto } from '$app/navigation'
+  import { afterNavigate, goto } from '$app/navigation'
   import { navigating, page } from '$app/state'
   import Alert from '#lib/components/Alert.svelte'
   import Loading from '#lib/components/Loading.svelte'
@@ -15,6 +15,12 @@
   // SSR sets <html lang>; keep it right when the language changes client-side.
   $effect(() => {
     document.documentElement.lang = data.locale
+  })
+  // A link that leaves the document would otherwise drop focus on the body. Land on the content.
+  afterNavigate((nav) => {
+    if (nav.type === 'enter') return
+    const active = document.activeElement
+    if (!active || active === document.body || !active.isConnected) document.getElementById('main')?.focus()
   })
 
   async function logout() {
