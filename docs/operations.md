@@ -110,19 +110,30 @@ API restart. Avoid manual status changes or queue deletion.
 ### Reading the outbox and retrying failed email
 
 Both calls need an Admin session and the CSRF header (the session cookie is
-`HttpOnly`, so sign in with the same API). Replace `<PUBLIC_HOST>`; the
-password is read without echo:
+`HttpOnly`, so sign in with the same API). The snippet is for **bash** and needs
+`curl` and `jq`. Replace `<PUBLIC_HOST>` and the username. It asks for the password
+without echoing it, keeps the session cookie in a private temporary file, and signs
+out before deleting that file (deleting the file alone would leave the session
+valid on the server):
 
 ```sh
-host=https://<PUBLIC_HOST>
-read -rsp 'Admin password: ' pw; echo
-jq -n --arg u '<admin username>' --arg p "$pw" '{username:$u,password:$p}' \
-  | curl -fsS -c admin.jar -H 'X-Requested-With: tikkit' -H "Origin: $host" \
-      -H 'Content-Type: application/json' --data @- "$host/api/auth/login" > /dev/null
-curl -fsS -b admin.jar -H 'X-Requested-With: tikkit' "$host/api/admin/notifications"
-curl -fsS -b admin.jar -X POST -H 'X-Requested-With: tikkit' -H "Origin: $host" \
-  "$host/api/admin/notifications/retry"
-rm admin.jar
+(
+  umask 077
+  host=https://<PUBLIC_HOST>
+  jar=$(mktemp)
+  read -rsp 'Admin password: ' pw; echo
+  jq -n --arg u '<admin username>' --arg p "$pw" '{username:$u,password:$p}' \
+    | curl -fsS -c "$jar" -H 'X-Requested-With: tikkit' -H "Origin: $host" \
+        -H 'Content-Type: application/json' --data @- "$host/api/auth/login" > /dev/null
+  curl -fsS -b "$jar" -H 'X-Requested-With: tikkit' "$host/api/admin/notifications"
+  echo
+  curl -fsS -b "$jar" -X POST -H 'X-Requested-With: tikkit' -H "Origin: $host" \
+    "$host/api/admin/notifications/retry"
+  echo
+  curl -fsS -b "$jar" -X POST -H 'X-Requested-With: tikkit' -H "Origin: $host" \
+    "$host/api/auth/logout"
+  rm -f "$jar"
+)
 ```
 
 The first call returns counts by status and the stable failure codes; the second
