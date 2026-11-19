@@ -24,12 +24,12 @@ directly over the private network. Only the proxy publishes ports.
 | MIME sniffing / active content via uploads | Magic-byte detection, full re-encode, SVG/HTML/PDF/polyglots rejected; served with stored type, `nosniff`, `Content-Disposition`, `sandbox` CSP, never a public URL | `screenshots.rs` | `screenshots::spoofed_corrupt_animated_oversized_and_disallowed_files_are_rejected`, `screenshots::each_supported_format_is_decoded_reencoded_and_served_safely` |
 | Spreadsheet formula injection | Every export cell goes through `csv::cell` | `csv.rs` | `csv` unit test, `admin_submissions::csv_neutralizes_dangerous_prefixes_in_all_three_name_columns`, `audit::export_is_permissioned_bounded_neutralized_and_audited` |
 | Prompt injection through ticket text or images | The model sees only the frozen, minimized intake (`ai_privacy::minimize`); its output is stored as plain text and can change nothing: routing is manual, only the requester's explicit decision ends AI, no tools, no URLs fetched, no other ticket's data in the request | `ai_privacy.rs`, `ai_attempts.rs`, `docs/ai-decisions.md` | `ai_attempts::later_replies_and_screenshots_never_reach_the_provider`, `ai_guard::secrets_and_ticket_content_reach_neither_the_provider_storage_nor_logs`, `ai_decisions::*`, `e2e/ai-step.spec.ts` |
-| SSRF through AI or SMTP settings | AI: fixed official hosts only, no redirects, private ranges refused. SMTP: Admin-only; TLS required and verified; link-local (cloud metadata), unspecified, multicast and broadcast hosts refused on save and after DNS at send time | `ai/http.rs`, `smtp::forbidden_destination`, `mail::send_once` | `ai_providers::private_destinations_need_an_explicit_policy`, `ai_providers::redirects_are_never_followed`, `boundary::smtp_settings_refuse_metadata_destinations_and_header_injection`, `smtp` unit test |
+| SSRF through AI or SMTP settings | AI: fixed official hosts only, no redirects, private ranges refused. SMTP: Admin-only; TLS required and verified; link-local (cloud metadata), unspecified, multicast and broadcast addresses, `fd00:ec2::254`, and IPv6 forms embedding such an IPv4 address (mapped, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) are refused on save and after DNS at send time; host names with a numeric last label (`2852039166`, `0xa9fea9fe`) are refused on save. Loopback and private relays stay allowed | `ai/http.rs`, `smtp::forbidden_destination`, `mail::send_once` | `ai_providers::private_destinations_need_an_explicit_policy`, `ai_providers::redirects_are_never_followed`, `boundary::smtp_settings_refuse_metadata_destinations_and_header_injection`, `smtp::a_host_resolving_to_a_refused_address_is_never_contacted`, `smtp` unit test |
 | Mail header injection | Sender name/address and recipients reject control characters and extra addresses; test sends go only to the acting Admin's or the sender address | `smtp.rs`, `auth::valid_email` | `boundary::smtp_settings_refuse_…` |
 | Forged inbound mail or webhooks | There is no inbound channel: no route accepts mail- or webhook-shaped input, nothing creates, replies to, or reopens a ticket except the authenticated endpoints in the matrix | router | `boundary::there_is_no_inbound_email_or_webhook_channel`, `authz_matrix::*` |
-| Spoofed client IP | `X-Forwarded-For` is honoured only from `TRUSTED_PROXIES` peers, read right to left; malformed entries never become the address | `security::TrustedProxies` | `security` unit tests, `boundary::forwarding_headers_count_only_from_trusted_proxies` |
+| Spoofed client IP | `X-Forwarded-For` is honoured only from `TRUSTED_PROXIES` peers (no network wider than /8 or /16), read right to left, ports stripped; malformed entries never become the address | `security::TrustedProxies` | `security` unit tests, `boundary::forwarding_headers_count_only_from_trusted_proxies` |
 | Forged request IDs | The public proxy strips `X-Request-ID`; the API accepts only a UUIDv4 and otherwise generates one ([operations.md](operations.md)) | proxy, `telemetry::http_request` | `lib` `request_ids_are_generated_or_propagated`, `observability::*` |
-| Brute force and abuse | Sign-in limits per IP and username; per-account route budgets; caps on bodies, pages, exports, uploads, drafts; request deadline (below) | `auth.rs`, `security.rs` | `auth::login_is_rate_limited_per_username_and_ip`, `accounts::token_endpoints_are_rate_limited_per_ip`, `boundary::costly_routes_have_per_account_budgets`, `boundary::open_drafts_are_capped_per_account` |
+| Brute force, abuse, targeted lockout | Sign-in failures limited per client network, per username and network, and per username (sparing the owner's known network); per-account route budgets; caps on bodies, pages, exports, uploads, drafts; request deadline (below) | `auth.rs`, `security.rs` | `auth::login_is_rate_limited_per_username_and_ip`, `auth::sign_in_limits_count_failures_and_cannot_lock_out_the_owner`, `auth` unit tests, `boundary::a_stuck_request_ends_at_the_deadline_and_commits_nothing`, `accounts::token_endpoints_are_rate_limited_per_ip`, `boundary::costly_routes_have_per_account_budgets`, `boundary::open_drafts_are_capped_per_account` |
 | Username enumeration | Login failures are one `401 invalid_credentials` with equal timing; recovery always `202`; setup after completion always `409`; invitation lookups need the secret token | `auth.rs`, `accounts.rs` | `auth::login_failures_are_indistinguishable`, `accounts::recovery_is_neutral_and_bound_to_one_account` |
 | Privilege escalation, cross-team access | Rust authorization on every route (below) | `authz.rs` | [Authorization matrix](#authorization-matrix) |
 | Secret disclosure | AI keys and SMTP credentials encrypted, write-only, never logged or audited | `ai_config.rs`, `smtp.rs`, `audit.rs` | `ai_config::keys_are_encrypted_masked_replaceable_and_removable`, `smtp::admin_stores_the_password_encrypted_and_never_returns_it`, `audit::secrets_and_ticket_content_never_reach_the_log` |
@@ -45,12 +45,24 @@ SSR server, scripts, tests) are judged by the header alone; a browser cannot
 send the header cross-site without a preflight the API never answers. Safe
 methods (`GET`, `HEAD`, `OPTIONS`) never change state.
 
+`PUBLIC_ORIGIN` is the anchor: the portal must be opened exactly under that
+origin, in development too (`http://localhost:3000`; `127.0.0.1` or a LAN
+address gets `403 csrf_rejected` on every save, and the message tells the
+user to open the configured address). The check stays strict on purpose:
+allowing other origins would let any page on them write as the user.
+
 The web server's pages have no form actions or endpoints with business logic.
 SvelteKit's own check still refuses cross-site `POST`/`PUT`/`PATCH`/`DELETE`
 form submissions with `403`. With adapter-node 6 (SvelteKit 3) there is no
-runtime `ORIGIN` variable: the page origin is `https://` plus the `Host` the
-proxy forwards (or `PROTOCOL_HEADER`/`HOST_HEADER` when set), so the proxy must
-pass the public host name unchanged.
+runtime `ORIGIN` variable. Unless the build sets `kit.paths.origin` (we do
+not: one image serves every deployment), the page origin `event.url.origin`
+is `https://` plus the request's `Host` (`HOST_HEADER` / `PROTOCOL_HEADER`
+change the source). Two things use it today: SvelteKit's form-post origin
+check, and `handleFetch`, which sends SSR fetches to `/api/*` on that origin
+(and only those) to `API_ORIGIN` with the session cookie. Both rely on the
+reverse proxy accepting only the configured site host and passing it
+unchanged: a proxy that answered any `Host` would make the checked origin
+whatever the client sent.
 
 ## Security headers
 
@@ -69,9 +81,16 @@ route announcer uses a style attribute), `img-src`/`font-src`/`connect-src
 'self'`, `frame-src`/`object-src 'none'`, `base-uri 'none'`,
 `form-action 'self'`, `frame-ancestors 'none'` — plus the same nosniff,
 framing, referrer, COOP/CORP headers, a permissions policy denying camera,
-microphone, geolocation, payment and USB, and HSTS when the page URL is https.
-Static build assets are served by adapter-node before hooks run: the proxy
-should add `X-Content-Type-Options: nosniff` for them.
+microphone, geolocation, payment and USB. Pages send HSTS only when
+`PROTOCOL_HEADER` is configured and the request came in as https: without it
+adapter-node merely assumes https, which proves nothing.
+
+Some web responses never pass the hooks: static build assets (served by
+adapter-node first), SvelteKit's own plain-text `403` for refused form posts,
+and the static fallback error page. The reverse proxy must therefore add
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+frame-ancestors 'none'` to every response it serves (a second identical
+`frame-ancestors` is harmless where the app already set its CSP).
 
 ## Reverse-proxy trust
 
@@ -79,22 +98,38 @@ should add `X-Content-Type-Options: nosniff` for them.
 `X-Forwarded-For` the API believes: the public proxy and the SSR server. For
 those peers the header is read from the right, skipping trusted hops; the first
 other address is the client. Anything a client wrote to the left is ignored, a
-malformed entry stops the walk, and a header from any other peer is ignored
-entirely, so a forged header cannot reset a rate limit or change the IP in an
+malformed entry stops the walk (an entry with a port, `1.2.3.4:5678` or
+`[::1]:5678`, is read without it), and a header from any other peer is ignored
+entirely. Networks wider than IPv4 /8 or IPv6 /16 are a configuration error,
+so no list can trust "everyone" by halves; IPv4-mapped IPv6 networks are the
+IPv4 network they denote. All of this means so a forged header cannot reset a rate limit or change the IP in an
 audit event. `X-Forwarded-Proto` and `X-Forwarded-Host` are never read by the
 API: links, cookies and HSTS derive from `PUBLIC_ORIGIN`.
 
-For the production stack (#46):
+### Requirements for the production stack (#46)
 
-- Put the proxy, web, and API on a network with a fixed subnet and set
-  `TRUSTED_PROXIES` to it (the example Compose file uses `172.30.0.0/24`).
-- The proxy overwrites `X-Forwarded-For` with the peer address (Caddy's default
-  without `trusted_proxies`), strips `X-Request-ID` on `/api/*`, passes `Host`,
-  and adds `nosniff` for static assets. Keep header-read and idle timeouts at
-  the proxy: the API itself has no slow-header timeout.
-- The SSR server forwards the incoming `X-Forwarded-For` to the API; it must
-  only be reachable through the proxy.
-- Publish neither the API, the web server, nor the metrics port.
+1. Proxy, web, and API share a network with a fixed subnet; the API's
+   `TRUSTED_PROXIES` is that subnet (the example Compose file uses
+   `172.30.0.0/24`). Nothing else joins it.
+2. The proxy serves only the configured site host (`PUBLIC_HOST`) and passes
+   `Host` unchanged; requests for any other host get no portal (Caddy's site
+   block does this).
+3. The proxy overwrites `X-Forwarded-For` with the peer address (Caddy's
+   default without `trusted_proxies`) and `X-Forwarded-Proto`, and strips
+   `X-Request-ID` on `/api/*`.
+4. The web server runs with `PROTOCOL_HEADER=x-forwarded-proto` (pages send
+   HSTS) and without `ORIGIN` (ignored by adapter-node 6; harmless if left).
+5. `PUBLIC_ORIGIN` is `https://<PUBLIC_HOST>`, exactly what users open.
+6. The proxy adds `X-Content-Type-Options: nosniff` and
+   `Content-Security-Policy: frame-ancestors 'none'` to every response
+   (static assets, SvelteKit's own `403`, fallback error page), and may add
+   HSTS with `includeSubDomains`/`preload` if the whole domain is https-only.
+7. Header-read, body and idle timeouts are set at the proxy (the API has no
+   slow-header timeout of its own; its request deadline is 60 s, so proxy
+   upstream timeouts should be longer than that).
+8. The SSR server forwards the incoming `X-Forwarded-For` to the API; it must
+   only be reachable through the proxy.
+9. Neither the API, the web server, nor the metrics port is published.
 
 ## Bounded resource use
 
@@ -116,20 +151,35 @@ Per-minute budgets (`429 rate_limited` with `Retry-After`), fixed windows:
 
 | Scope | Key | Limit |
 | --- | --- | --- |
-| Sign-in, setup, password change, invitation acceptance, recovery | client IP, then username | 10 / 5 |
+| Sign-in, password change: failures only. Setup, invitation acceptance, recovery: every request | client network (IPv4 address, IPv6 /64) / username + network / username over all networks, except networks the account signed in from in the last 30 days | 10 / 5 / 30 |
 | Invitation lookup, password reset | client IP | 10 |
 | Ticket submission (direct and from a draft) | account | 10 |
-| Draft create/save | account | 60 |
+| Draft create/save | account | 120 (autosave is debounced at 1.2 s; a refused save keeps the input and retries after 5 s) |
 | Replies and internal notes | account | 30 |
 | Screenshot uploads | account | 30 |
 | Queue lists and search | account | 120 |
 | CSV exports (reports, audit) | account | 6 |
 | AI and SMTP connection tests | account | 5 |
 
-The budgets are spent before the body is read and only by signed-in requests.
-The counters live in memory, per API process, bounded to 10,000 live keys per
-table (sign-in and route budgets use separate tables). Running several API
-processes multiplies the effective limits; a shared store would be needed then.
+Route budgets are spent before the body is read and only by signed-in
+requests. Sign-in checks run before any account lookup and answer known and
+unknown usernames identically.
+
+**Lockout trade-off.** A per-username limit alone lets anyone lock a known
+account by failing five times a minute. Instead the tight limit (5) is per
+username *and* client network, so an attacker locks only themselves. The
+per-username ceiling (30 a minute over all networks) still slows a guessing
+botnet, which needs many networks to reach it; while it is reached, everyone
+but the owner's known-good networks (successful sign-in there in the last 30
+days, remembered per process) waits for the window to pass. IPv6 is counted
+per /64, so rotating addresses inside one allocation buys nothing.
+
+The counters live in memory, per API process, bounded to 10,000 keys per
+table (sign-in, route budgets and known-good networks are separate tables). A
+full table drops expired windows and then the oldest one, so new clients are
+never refused for want of room; flushing a victim's counter that way takes
+thousands of fresh networks per minute. Running several API processes
+multiplies the effective limits; a shared store would be needed then.
 
 ## Authorization matrix
 
@@ -137,17 +187,30 @@ processes multiplies the effective limits; a shared store would be needed then.
 document, checks that the router's `.route(...)` paths are exactly the
 documented ones and that every undocumented method on them is `405`, and then
 calls each operation as signed out, a User, an Operator, a Specialist, a Team
-Lead and an Admin against one scenario: the User's ticket dispatched to a team
-and claimed by the Operator, with the Specialist a non-assignee member and the
-Team Lead its lead. Each row states the expected outcome per caller (allowed,
-`401`, `403`, `404`). Nested resources (activity, messages, replies, notes,
+Lead, an Admin, and two strangers against one scenario: the User's ticket
+dispatched to a team and claimed by the Operator, with the Specialist a
+non-assignee member and the Team Lead its lead; `other` is a User who is not
+the requester and `outsider` an Operator of a second team. Every ticket-scoped
+row, the requester's draft, pending upload and notification, and the
+Operator's saved view must deny both strangers. Each row states the expected
+outcome per caller: allowed (a `2xx` for reads; for writes a `2xx` or the
+handler's own `4xx`, never `429` or `5xx`), `401`, `403`, `404`; a row can pin
+an exact status (deleting an attached original is `409`), and bulk rows are
+judged by the per-ticket result. An operation can have rows for several
+resources (attached and pending screenshots).
+
+Route discovery reads every file under `apps/api/src`: it collects the literal
+`.route("/api/...")` paths of `lib.rs`, requires them to equal the OpenAPI
+paths, and fails on anything it could not see (`.nest`, `.merge`,
+`.route_service`, fallbacks, routers outside `lib.rs`, non-literal paths); the
+private `/metrics` listener is the one named exception. Nested resources (activity, messages, replies, notes,
 assignment, staff actions), screenshot metadata/preview/download, counts,
 search, bulk, every Admin export, and the activity poll (the only "event
 stream") are rows.
 
 **A new route fails `every_route_has_a_matrix_row` until it has a row.** For
 new Admin endpoints (e.g. retention or personal-data export) the row is
-usually `"UFFFFA"`; point the target at a throwaway resource if the Admin call
+usually `"UFFFFAFF"`; point the target at a throwaway resource if the Admin call
 changes state.
 
 The scenarios the issue lists are covered by focused tests:
@@ -196,6 +259,20 @@ Focused read of the code paths, against the running test suite.
   and tested against the production build. SvelteKit 3's adapter-node no
   longer reads `ORIGIN`; documented above for the deployment.
 
+### Follow-up review (2026-11-18)
+
+An independent review of this branch found no bypass of the origin policy,
+proxy trust, budgets, or CSP. Fixed from it: the matrix could not see a
+missing object-level check (strangers added, "allowed" tightened); the
+deadline and send-time DNS check had no failing test without them; route
+discovery missed non-literal routes; `TRUSTED_PROXIES` accepted `/1` halves,
+mis-masked IPv4-mapped networks and stopped at `ip:port` entries; sign-in
+limits allowed targeted lockouts, keyed IPv6 per address, counted successes,
+and refused new clients when full; SMTP refusal missed NAT64, 6to4, the EC2
+IPv6 metadata address and numeric host names; page HSTS trusted adapter-node's
+https assumption; two busy autosaving tabs could exceed the draft budget, and
+a refused save waited for the next keystroke.
+
 ## Known limits
 
 - Rate-limit counters are per process and reset on restart.
@@ -208,3 +285,7 @@ Focused read of the code paths, against the running test suite.
   that check and the connection is still bound by verified TLS.
 - HSTS is sent without `includeSubDomains`/`preload`; add them at the proxy if
   the whole domain is https-only.
+- The known-good network memory is per process: after a restart, the owner is
+  subject to the per-username ceiling until they sign in once.
+- SMTP: only the well-known NAT64 prefix is decoded; a site-specific NAT64
+  prefix (RFC 8215 local use) is judged as a plain IPv6 address.

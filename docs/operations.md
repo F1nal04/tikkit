@@ -1,5 +1,15 @@
 # Operations runbook
 
+## Upgrading
+
+- **#44: `TRUST_PROXY_HEADERS` is gone.** An API with `TRUST_PROXY_HEADERS=true`
+  exits at startup with a message naming `TRUSTED_PROXIES`. Remove the old
+  variable and list the proxy's and web server's network in `TRUSTED_PROXIES`
+  ([configuration.md](configuration.md#upgrading)).
+- **#44: `PUBLIC_ORIGIN` is enforced for browser writes.** Users who open the
+  portal under another host name or address get `403 csrf_rejected` on every
+  save; make the proxy serve only the configured host.
+
 Tikkit runs the notification outbox, AI attempt processor and sweeper,
 resolution-confirmation timeout worker, and data retention worker in the API
 process. A self-hosted Compose

@@ -20,7 +20,8 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST, e.g. help.example.com}
+      ORIGIN: https://${PUBLIC_HOST:?set PUBLIC_HOST, e.g. help.example.com} # ignored by adapter-node 6, see docs/security.md
+      PROTOCOL_HEADER: x-forwarded-proto # Caddy overwrites it; pages send HSTS for https
       API_ORIGIN: http://api:3001 # server-side rendering calls the API directly
     networks: [edge]
 
