@@ -13,7 +13,9 @@ resolution-confirmation timeout worker, and data retention worker in the API
 process. A self-hosted Compose
 operator can use the health endpoints and service logs directly. Prometheus is
 optional and uses the same database readiness check. See the
-[deployment guide](deployment.md) for installation and version changes.
+[deployment guide](deployment.md) for installation and version changes and
+[backup and restore](backup-restore.md) for the encrypted backup sidecar, its
+failure alerts and the restore drill.
 
 ## API and database
 
@@ -199,3 +201,13 @@ timestamp of zero means it has yet to complete a successful poll. Counters
 reset on API restart and track operations observed by that process. The
 backlog gauges reflect shared database state. Metric labels contain no request
 IDs, ticket identifiers, category names or requester data.
+
+## Backups
+
+The optional backup sidecar logs `level=error` lines, reports health in
+`docker compose ps`, and exposes `tikkit_backup_*` metrics to the same private
+Prometheus. Apply the
+[backup alert overlay](../docker-compose.backup-alerts.example.yml) beside the
+observability overlay to load the `TikkitBackupFailed`, `TikkitBackupStale`,
+`TikkitBackupMissingScreenshots` and `TikkitBackupSidecarDown` rules. Their
+causes and fixes are in [failure alerts](backup-restore.md#failure-alerts).
