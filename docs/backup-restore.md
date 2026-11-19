@@ -142,7 +142,7 @@ session**.
 - **The lock.** `SELECT pg_advisory_lock(screenshot_files_lock_key())` before
   the dump, `SELECT pg_advisory_unlock(screenshot_files_lock_key())` after the
   screenshot copy. Background work that deletes screenshot files (data
-  retention and the stray-file sweep, #43) defers those deletions while it is
+  retention and the stray-file sweep) defers those deletions while it is
   held, so no file the dump references can vanish before it is archived (the
   [contract](retention.md#backups) is defined by migration `0028`, which creates
   the function: use the function, never its number). A database that predates the
@@ -504,8 +504,9 @@ Do steps 1 to 5 in restore mode, in order. The jobs do not run until step 6.
    never delivered is not mailed now. The in-app inbox cannot duplicate (one
    inbox row per outbox row). If you chose `--keep-pending-email`, rows still
    pending are delivered once when jobs start, so recipients may get a repeat.
-   The retry schedule is capped at 8 attempts; use the Admin retry action for
-   rows that reached `failed`.
+   The retry schedule is capped at 8 attempts; re-queue rows that reached
+   `failed` with `POST /api/admin/notifications/retry`
+   ([operations](operations.md#reading-the-outbox-and-retrying-failed-email)).
 4. **AI attempts in flight.** An attempt still `processing` keeps its original
    deadline. Past the deadline (the usual case, since the deadline is minutes)
    the sweep hands the ticket to the shared queue exactly once, with no provider
@@ -548,11 +549,11 @@ Do steps 1 to 5 in restore mode, in order. The jobs do not run until step 6.
    - Details and the reasoning are on the [retention page](retention.md#backups),
      which says the same from the other side.
 8. **Open to users and take a fresh backup.** Point DNS and the public bind at the
-   host, watch the logs for worker start-up, the Admin Email page for outbox
-   counts, and the [operations runbook](operations.md) metrics for falling queue
-   lag. Take a fresh backup straight away and confirm the first scheduled run.
-
-8. **Take a fresh backup** straight away and confirm the first scheduled run.
+   host, watch the logs for worker start-up, the outbox counts
+   (`GET /api/admin/notifications`, see
+   [operations](operations.md#reading-the-outbox-and-retrying-failed-email)),
+   and the [operations runbook](operations.md) metrics for falling queue lag.
+   Take a fresh backup straight away and confirm the first scheduled run.
 
 ## Restore drill
 

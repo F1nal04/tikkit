@@ -45,7 +45,7 @@ Background sends try transient failures at most 3 times; the Admin test sends on
 
 ## Upgrading
 
-**`TRUST_PROXY_HEADERS` was replaced by `TRUSTED_PROXIES` (#44).** The old
+**`TRUST_PROXY_HEADERS` was replaced by `TRUSTED_PROXIES`.** The old
 switch trusted `X-Forwarded-For` from any peer. An API refuses to start if the old switch is enabled. A disabled
 legacy switch means no proxy is trusted.
 Migrate by removing `TRUST_PROXY_HEADERS` and setting `TRUSTED_PROXIES` to
@@ -138,7 +138,9 @@ No new environment variables are required. The Admin-only PUT endpoint is
   the database as well ([retention.md](retention.md)). Every period defaults
   to "keep"; there is no environment variable for them.
 
-This issue stores lifecycle policies for the ticket workflows that follow.
-Enforcement, snapshotted proposals and timeout processing belong to their
-respective ticket/lifecycle issues. Admin-managed SMTP is tracked in #28;
-category/priority configuration is tracked in #15.
+The lifecycle policies above are enforced by `lifecycle::transition`
+([lifecycle.md](lifecycle.md)): proposals snapshot the timeout and deadline, the
+auto-close worker applies the timeout, and reopening and cancellation read the
+current policy under lock. Outbound SMTP is configured at `/admin/email`
+([auth.md](auth.md#email-delivery)); categories, priority levels and conditional
+fields are managed at `/admin/catalog`.

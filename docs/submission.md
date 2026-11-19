@@ -137,8 +137,9 @@ Admin gets only their own submissions here. Rows include reference, status,
 subject, category name, effective priority name, timestamps, and the public
 `TicketAssignmentView`; no staff IDs, internal notes, or requester identity.
 `GET /api/tickets/{id}` retains the lifecycle visibility policy and now includes
-the frozen intake. Full requester UI, filtering, replies and actions are #20;
-staff queues are #22.
+the frozen intake. The requester pages are described in
+[frontend.md](frontend.md#requester-history-and-detail) and the staff queues in
+[queues.md](queues.md).
 
 Own history now also accepts `status`, `created_from` (inclusive RFC 3339
 instant), and `created_before` (exclusive RFC 3339 instant). Invalid dates,

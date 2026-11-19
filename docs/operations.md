@@ -86,16 +86,19 @@ API restart. Avoid manual status changes or queue deletion.
 
 ## Notifications and SMTP
 
-- Use the Admin Email page for outbox counts, error codes, and connection
-  testing. The API logs `notification delivery failed` with the stable code
+- The Admin Email page (`/admin/email`) tests the connection and shows the last
+  delivery problem. Outbox counts and failure codes come from the Admin API,
+  `GET /api/admin/notifications` (see [below](#reading-the-outbox-and-retrying-failed-email)).
+  The API logs `notification delivery failed` with the stable code
   and outbox ID. SMTP failures affect email delivery independently of the
   in-app inbox and ticket work.
 - For `TikkitNotificationOutboxStuck` or `TikkitNotificationEmailFailing`,
   check `notifications` polling, then verify the configured relay's outbound
   port, TLS trust, DNS, authentication, and sender policy. A scheduled
   backoff remains pending until its next eligible delivery time. Once the
-  relay is repaired, let pending rows retry. Use the Admin retry action for
-  rows that reached the terminal failed state. Verify that due lag and
+  relay is repaired, let pending rows retry. Re-queue rows that reached the
+  terminal failed state with `POST /api/admin/notifications/retry` (there is no
+  portal button for it). Verify that due lag and
   failures stop climbing. SMTP disabled by policy suppresses email.
 - For `smtp_tls_failed`, check the certificate chain and hostname. For a private
   relay, check the mounted [`SMTP_CA_FILE`](configuration.md) contains CA
@@ -103,6 +106,28 @@ API restart. Avoid manual status changes or queue deletion.
   send time. Unset the private bundle for a public relay.
 - Invitation and password-reset mail diagnostics also use stable failure
   logs. The notification worker series track the durable ticket outbox.
+
+### Reading the outbox and retrying failed email
+
+Both calls need an Admin session and the CSRF header (the session cookie is
+`HttpOnly`, so sign in with the same API). Replace `<PUBLIC_HOST>`; the
+password is read without echo:
+
+```sh
+host=https://<PUBLIC_HOST>
+read -rsp 'Admin password: ' pw; echo
+jq -n --arg u '<admin username>' --arg p "$pw" '{username:$u,password:$p}' \
+  | curl -fsS -c admin.jar -H 'X-Requested-With: tikkit' -H "Origin: $host" \
+      -H 'Content-Type: application/json' --data @- "$host/api/auth/login" > /dev/null
+curl -fsS -b admin.jar -H 'X-Requested-With: tikkit' "$host/api/admin/notifications"
+curl -fsS -b admin.jar -X POST -H 'X-Requested-With: tikkit' -H "Origin: $host" \
+  "$host/api/admin/notifications/retry"
+rm admin.jar
+```
+
+The first call returns counts by status and the stable failure codes; the second
+re-queues every `failed` row (audited as `notifications_retried`). Rows keep
+their idempotency key, so a message the relay already accepted is not sent twice.
 
 ## Resolution confirmation timeouts
 

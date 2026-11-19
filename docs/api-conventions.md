@@ -130,7 +130,7 @@ OpenAPI enums. They never change with the interface language. Clients send
 `Accept-Language` for display preferences only; it never affects authorization
 or business rules. Timestamps are RFC 3339 UTC.
 
-## Requester ticket assignment (contract for upcoming ticket endpoints)
+## Requester ticket assignment
 
 Requester-facing ticket responses include `TicketAssignmentView`:
 `team_name` (`null` = shared general queue) and `assignee_display_name`

@@ -216,7 +216,7 @@ stream") are rows.
 
 **A new route fails `every_route_has_a_matrix_row` until it has a row.** For
 new Admin endpoints (e.g. retention or personal-data export) the row is
-usually `"UFFFFAFF"` (as for #43's retention and personal-data routes, whose
+usually `"UFFFFAFF"` (as for the retention and personal-data routes, whose
 rows use an all-"keep" policy, a run token that matches no preview, and an
 active account that anonymization must refuse with `422 account: active`);
 point the target at a throwaway resource if the Admin call
@@ -285,7 +285,7 @@ a refused save waited for the next keystroke.
 ### Retention and personal data (#43, 2026-11-19)
 
 Read `retention.rs`, `personal_data.rs`, migration `0028` and
-[retention.md](retention.md) after rebasing onto #43, against the boundary
+[retention.md](retention.md) against the boundary
 controls above.
 
 - **Ordering with the account lock.** Every personal-data writer takes
@@ -305,7 +305,7 @@ controls above.
 - **Removed screenshots.** *Result:* no defect: reads and deletes are `404`
   like an unknown ID for every caller, and detail views no longer name them.
 - **Export.** *Result:* no injection: rows are PostgreSQL JSON text, the
-  filename is the account ID, and the API headers apply. Noted for #43: the
+  filename is the account ID, and the API headers apply. Noted: the
   export confirms the username with `SELECT … FOR UPDATE`, so while one is
   built (up to 16 MiB) the account's own writers (sign-in, profile, drafts)
   wait for it; and `GET /api/admin/personal-data?username=` puts a username in
