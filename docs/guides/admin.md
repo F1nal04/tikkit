@@ -26,6 +26,24 @@ labels. One deployment serves exactly one organization.
   Lead** and **Admin**; see the [help desk guide](operator.md#the-five-roles).
 - Protection: the last active Admin cannot be demoted or deactivated.
 
+## Permissions at a glance
+
+| Capability | User | Operator | Specialist | Team Lead | Admin |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| Submit and follow own tickets | yes | yes | yes | yes | yes |
+| See the general queue, dispatch to a team | - | yes | yes | yes | yes |
+| Claim an unclaimed ticket of their team | - | yes | yes | yes | never |
+| Assign or reassign within a team | - | - | - | own team | any team |
+| Public replies, internal notes, priority, propose resolution | - | yes | yes | yes | yes |
+| Accounts, teams, catalog, settings, email, AI, reports, audit, retention | - | - | - | - | yes |
+
+"Yes" for ticket work is always limited by the ticket rules: never on a ticket the
+account submitted itself, only in the team a ticket was dispatched to (Admins:
+any), and on a claimed ticket only the assignee, their Team Lead and Admins write.
+The Specialist title adds no permissions. Rust enforces every rule; the portal only
+hides what you cannot use. The full matrix is in
+[authorization](../authorization.md#rolepermission-matrix).
+
 ## First day checklist
 
 Do these in order. Requesters cannot submit tickets until a category and a
@@ -277,8 +295,10 @@ Errors are shown as stable messages, never the server's text: for example "The m
 server rejected the username or password", "Could not establish a verified TLS
 connection to the mail server", "The mail server could not be reached", "The mail
 server refused the message". Background delivery retries (a failure never undoes
-ticket work); the page shows outbox counts and **Last delivery problem**, and you
-can re-queue failed rows. Recipients are individual accounts, so accounts sharing an
+ticket work); the page shows **Last delivery problem**. Outbox counts and the
+retry for rows that reached the failed state are available through the Admin API
+(`GET /api/admin/notifications`, `POST /api/admin/notifications/retry`), not as
+page controls in this release. Recipients are individual accounts, so accounts sharing an
 email each get their own message, and mail to staff who lost access is suppressed.
 See [troubleshooting](troubleshooting.md#smtp-test-fails-or-no-email-arrives).
 
@@ -354,4 +374,4 @@ knowledge-base articles and AI grounding or citations; providers beyond OpenAI,
 Google Gemini and Anthropic, and self-hosted models; enterprise SSO; inbound email;
 arbitrary file attachments; multiple organizations per deployment; hosted-platform
 and Kubernetes guides. The resolution-confirmation timeout above *is* in this release
-and is separate from SLAs. See the [guide index](README.md#not-in-this-release).
+and is separate from SLAs. See the [guide index](README.md#release-limitations).

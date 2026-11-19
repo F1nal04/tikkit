@@ -1,6 +1,6 @@
 ## What this is
 
-Tikkit is a self-hosted IT ticketing system (one organization per deployment) with a requester portal, a shared help-desk queue, team-based support, admin, and optional BYOK AI assistance. The code is currently a scaffold (health endpoint + landing page); the agreed product requirements live in `spec.md` and implementation is tracked in GitHub issues (roadmap: F1nal04/tikkit#2). **Read `spec.md` before implementing any feature — it is the source of truth for behavior.**
+Tikkit is a self-hosted IT ticketing system (one organization per deployment) with a requester portal, a shared help-desk queue, team-based support, admin, and optional BYOK AI assistance. The agreed product requirements live in `spec.md` and implementation is tracked in GitHub issues (roadmap: F1nal04/tikkit#2); guides for operators and users are in `docs/guides/`. **Read `spec.md` before implementing any feature — it is the source of truth for behavior.**
 
 ## Commands
 
@@ -66,7 +66,7 @@ Bun + Turborepo monorepo, two apps, same-origin routing by path prefix:
 - `apps/api` — Rust crate `tikkit-api` (Axum 0.8, Tokio, serde). `lib.rs` exposes `app() -> Router`; `main.rs` only binds the listener (`API_ADDR`, default `127.0.0.1:3001`) and handles graceful shutdown. Keep routes/handlers in the lib so tests can drive the router with `tower::ServiceExt::oneshot` without a socket (see the existing health test). The `package.json` in this dir exists solely to let Turbo invoke Cargo.
 - All public backend routes are mounted under `/api/*`. The optional `/metrics` exporter has a separate loopback listener. In production a reverse proxy sends `/api/*` to Rust and everything else to the Node frontend; changing the API dev port means also changing the Vite proxy.
 
-Planned per `spec.md` (not yet present): private filesystem volume for screenshots, durable job processing (AI attempts, notification outbox, resolution-confirmation timeouts), Docker Compose deployment. Validation and authorization are enforced in Rust, not the frontend.
+Screenshots live on a private filesystem volume, durable jobs (AI attempts, notification outbox, resolution-confirmation timeouts, retention) run inside the API process, and `docs/deployment.md` describes the Docker Compose deployment. Validation and authorization are enforced in Rust, not the frontend.
 
 ## Product invariants that code must preserve
 
