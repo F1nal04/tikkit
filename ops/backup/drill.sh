@@ -48,6 +48,9 @@ WORK_CREATED=0
 if [ -z "${DRILL_WORKDIR:-}" ]; then WORK_CREATED=1; fi
 WORK=${DRILL_WORKDIR:-$(mktemp -d "${TMPDIR:-/tmp}/tikkit-drill.XXXXXX")}
 PASSED=0
+# A fixed report range (at most 366 days), so source and restore are asked the same thing.
+RANGE_FROM=$(date -u -d '30 days ago' +%Y-%m-%dT00:00:00Z 2> /dev/null || date -u -v-30d +%Y-%m-%dT00:00:00Z)
+RANGE_TO=$(date -u -d '2 days' +%Y-%m-%dT00:00:00Z 2> /dev/null || date -u -v+2d +%Y-%m-%dT00:00:00Z)
 TIMES=$WORK/durations.txt
 mkdir -p "$WORK"/{jars,ids,ca,offsite,capture}
 : > "$TIMES"
@@ -216,10 +219,21 @@ seed_phase_a() {
   api "$admin" "$BASE_SRC" POST /api/categories '{"name":"Printing"}' | jq -r .id > "$WORK/ids/category"
   api "$admin" "$BASE_SRC" POST /api/priorities '{"name":"Normal"}' | jq -r .id > "$WORK/ids/priority"
   invite lead team_lead; invite spec specialist; invite req1 user; invite req2 user; invite req3 user
+  invite req4 user; invite req5 user
   api "$admin" "$BASE_SRC" POST /api/teams "$(jq -n --arg l "$(cat "$WORK/ids/lead")" '{name:"Desk", lead_account_id:$l}')" | jq -r .id > "$WORK/ids/team"
   api "$admin" "$BASE_SRC" PUT "/api/accounts/$(cat "$WORK/ids/spec")" \
     "$(jq -n --arg t "$(cat "$WORK/ids/team")" '{role:"specialist", team_id:$t, expertise:"Printers"}')" > /dev/null
-  for user in lead spec req1 req2 req3; do login src "$BASE_SRC" "$user"; done
+  for user in lead spec req1 req2 req3 req5; do login src "$BASE_SRC" "$user"; done
+  # An account that was anonymized before the backup (a restore must keep it anonymized).
+  api "$admin" "$BASE_SRC" POST "/api/accounts/$(cat "$WORK/ids/req4")/deactivate" > /dev/null
+  api "$admin" "$BASE_SRC" POST "/api/admin/accounts/$(cat "$WORK/ids/req4")/anonymize" '{"username":"req4"}' > /dev/null
+  # A retention policy that deletes nothing yet (every period but drafts keeps for good).
+  api "$admin" "$BASE_SRC" PUT /api/admin/retention '{"draft_days":90,"screenshot_days":null,"ai_content_days":null,"ticket_content_days":null,"audit_days":null,"automatic":false}' > /dev/null
+  # An account with a cancelled ticket and a screenshot, for the file-deletion deferral test later.
+  local purge_shot; purge_shot=$(upload req5 "$PNG3" purge)
+  echo "$purge_shot" > "$WORK/ids/shot_purge"
+  local purge_ticket; purge_ticket=$(submit req5 "To be purged" "$purge_shot")
+  requester req5 "$purge_ticket" '{"action":"cancel","reason":"Not needed."}' > /dev/null
   # An SMTP relay is stored (password encrypted with ENCRYPTION_KEY) but left disabled.
   api "$admin" "$BASE_SRC" PUT /api/settings/smtp \
     '{"host":"smtp.invalid","port":587,"security":"starttls","sender_name":"Tikkit","sender_address":"help@example.invalid","username":"mailer","password":"drill-smtp-password","enabled":false}' > /dev/null
@@ -325,6 +339,10 @@ capture() { # <stack name: src|dst> <base> <stack fn> <dir>
   for path in /api/admin/ai/outcomes /api/admin/ai/records "/api/admin/submissions?limit=100" /api/settings/ai/usage; do
     api "$(jar_of "$stack" admin)" "$base" GET "$path" | jq -S . > "$dir/admin-$(echo "$path" | tr -c 'a-z0-9\n' '_').json"
   done
+  # Report totals, the retention settings and the account list (an anonymized account stays one).
+  api "$(jar_of "$stack" admin)" "$base" GET "/api/admin/reports?created_from=$RANGE_FROM&created_before=$RANGE_TO" | jq -S . > "$dir/admin-report.json"
+  api "$(jar_of "$stack" admin)" "$base" GET /api/admin/retention | jq -S . > "$dir/admin-retention.json"
+  api "$(jar_of "$stack" admin)" "$base" GET "/api/accounts?limit=100" | jq -S . > "$dir/admin-accounts.json"
   # AI-solved records are final: requester and staff are refused, whatever is asked.
   id=$(cat "$WORK/ids/t_ai_solved")
   {
@@ -348,7 +366,10 @@ capture() { # <stack name: src|dst> <base> <stack fn> <dir>
     sql "$fn" -c "SELECT 'events', event_type, count(*) FROM ticket_events GROUP BY 2 ORDER BY 2"
     sql "$fn" -c "SELECT 'ai_attempts', state, count(*) FROM ai_attempts GROUP BY 2 ORDER BY 2"
     sql "$fn" -c "SELECT 'ai_usage', count(*) FROM ai_usage"
-    sql "$fn" -c "SELECT 'audit', count(*) FROM audit_events WHERE event_type <> 'login_succeeded'"
+    # The audit log by action, minus what this very drill adds around the restore: sign-ins,
+    # its own denied-action probes and the cutover's event.
+    sql "$fn" -c "SELECT 'audit', event_type, count(*) FROM audit_events WHERE event_type NOT IN ('login_succeeded', 'notifications_suppressed_on_restore') AND event_type NOT LIKE '%\_denied' GROUP BY 2 ORDER BY 2"
+    sql "$fn" -c "SELECT 'retention', (SELECT count(*) FROM retention_runs), (SELECT version FROM retention_settings)"
     sql "$fn" -c "SELECT 'accounts', role::text, count(*) FROM accounts GROUP BY 2 ORDER BY 2"
     sql "$fn" -c "SELECT 'screenshots', count(*), count(ticket_id) FROM screenshots"
   } > "$dir/aggregates.txt"
@@ -494,6 +515,13 @@ check "source has pending email rows that a cutover must deal with (the test is 
 # Retention: dated placeholders older than BACKUP_RETENTION_DAYS go, the newest good copies stay.
 src exec -T backup sh -c 'mkdir -m 700 /backups/20200101T000000Z /backups/20200102T000000Z /backups/20200103T000000Z'
 
+say "backup against a database without the screenshot-files lock function (an older database)"
+sql src -c "ALTER FUNCTION screenshot_files_lock_key() RENAME TO screenshot_files_lock_key_hidden"
+run_backup "$WORK/backup-nolock.log" || { cat "$WORK/backup-nolock.log" >&2; sql src -c "ALTER FUNCTION screenshot_files_lock_key_hidden() RENAME TO screenshot_files_lock_key"; die "backup without the lock function failed"; }
+sql src -c "ALTER FUNCTION screenshot_files_lock_key_hidden() RENAME TO screenshot_files_lock_key"
+check "an older database without screenshot_files_lock_key() still backs up, with a visible warning" \
+  grep -q 'screenshot_files_lock_key() does not exist in this database: running WITHOUT' "$WORK/backup-nolock.log"
+
 say "taking the backup"
 BACKUP_START=$(date +%s)
 run_backup "$WORK/backup.log" || { cat "$WORK/backup.log" >&2; die "backup run failed"; }
@@ -501,8 +529,8 @@ BACKUP_SECONDS=$(($(date +%s) - BACKUP_START))
 mark backup_run "${BACKUP_SECONDS}s"
 STAMP=$(backup_dirs | tail -n 1)
 mark backup_size_bytes "$(metric tikkit_backup_last_size_bytes)"
-check "this base has no screenshot-files lock: the backup says so and still runs" \
-  grep -q 'screenshot_files_lock_key() does not exist in this database: running WITHOUT' "$WORK/backup.log"
+check "the real screenshot_files_lock_key() exists (migration 0028): the backup takes the lock, with no warning" \
+  bash -c '! grep -q "running WITHOUT" "$1" && grep -q "holding the screenshot-files lock" "$1"' _ "$WORK/backup.log"
 check "old backups past retention were removed" test "$(src exec -T backup sh -c 'ls /backups | grep -c "^2020"')" = 0
 check "newest backups were kept" test "$(src exec -T backup sh -c 'ls /backups | grep -c "^2026\|^20[3-9]"')" -ge 1
 check "backup files are private (0600) and the directory 0700" \
@@ -565,9 +593,7 @@ check "the newest complete copies survive even when bogus directories sort first
 src exec -T backup sh -c 'rmdir /backups/20991231T000001Z /backups/20991231T000002Z'
 
 say "failure simulation: the database session (and the screenshot-files lock) is lost mid-backup"
-sql src -c "CREATE TABLE drill_gate (id int); ALTER TABLE drill_gate OWNER TO tikkit;
-  CREATE FUNCTION screenshot_files_lock_key() RETURNS bigint LANGUAGE sql IMMUTABLE AS 'SELECT 4711::bigint';
-  ALTER FUNCTION screenshot_files_lock_key() OWNER TO tikkit"
+sql src -c "CREATE TABLE drill_gate (id int); ALTER TABLE drill_gate OWNER TO tikkit"
 dirs_before=$(backup_dirs)
 metric_before=$(metric tikkit_backup_last_success_timestamp_seconds)
 # Hold pg_dump behind a table lock so the session stays open for a while.
@@ -579,8 +605,8 @@ for _ in $(seq 1 60); do
   [ "$(sql src -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pg_dump' AND wait_event_type = 'Lock'")" -ge 1 ] && break
   sleep 1
 done
-check "while the dump runs, the backup session holds the screenshot-files advisory lock" \
-  test "$(sql src -c "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE l.locktype = 'advisory' AND l.granted AND a.application_name = 'tikkit-backup'")" = 1
+check "while the dump runs, the backup session holds the advisory lock whose key IS screenshot_files_lock_key()" \
+  test "$(sql src -c "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE l.locktype = 'advisory' AND l.granted AND a.application_name = 'tikkit-backup' AND l.objsubid = 1 AND l.classid::bigint = (screenshot_files_lock_key() >> 32) & 4294967295 AND l.objid::bigint = screenshot_files_lock_key() & 4294967295")" = 1
 sql src -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'tikkit-backup'" > /dev/null
 sql src -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(40)%' AND pid <> pg_backend_pid()" > /dev/null || true
 LOCKRC=0
@@ -598,6 +624,56 @@ check "the lock-protected backup recorded that it held the lock" \
   bash -c 'docker run --rm -i --user "$(id -u):$(id -g)" -v "$1":/identity:ro "$2" age -d -i /identity < "$3/manifest.txt.age" | grep -q "^screenshot_lock_held=yes$"' _ "$WORK/identity.txt" "$BACKUP_IMAGE" "$WORK/offsite/$LOCKED_STAMP"
 check "no advisory lock is left after a successful run" \
   test "$(sql src -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted")" = 0
+
+say "retention: a file deletion is deferred while a backup holds the lock, and happens after it"
+# The deletion goes through the product's own path (anonymization with purge of the
+# account's final tickets -> retention_delete_screenshots -> screenshots::remove_files),
+# so the API must run its workers: email is switched off, then it leaves restore mode.
+admin_jar=$(jar_of src admin)
+api "$admin_jar" "$BASE_SRC" PUT /api/settings/smtp \
+  '{"host":"smtp.invalid","port":587,"security":"starttls","sender_name":"Tikkit","sender_address":"help@example.invalid","enabled":false}' > /dev/null
+src up -d --wait --force-recreate --no-deps api
+wait_ready "$BASE_SRC"
+for user in admin; do login src "$BASE_SRC" "$user"; done
+PURGE_SHOT=$(cat "$WORK/ids/shot_purge")
+api "$admin_jar" "$BASE_SRC" POST "/api/accounts/$(cat "$WORK/ids/req5")/deactivate" > /dev/null
+check "the screenshot to be purged is on the volume before the test" \
+  src exec -T api test -f "/var/lib/tikkit/screenshots/$PURGE_SHOT"
+src exec -T postgres psql -U postgres -d tikkit -c "BEGIN; LOCK TABLE drill_gate IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(60); COMMIT" > /dev/null 2>&1 &
+GATE=$!
+sleep 2
+run_backup "$WORK/backup-defer.log" & DEFERRUN=$!
+for _ in $(seq 1 60); do
+  [ "$(sql src -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pg_dump' AND wait_event_type = 'Lock'")" -ge 1 ] && break
+  sleep 1
+done
+api "$admin_jar" "$BASE_SRC" POST "/api/admin/accounts/$(cat "$WORK/ids/req5")/anonymize" '{"username":"req5","purge_ticket_content":true}' > /dev/null
+check "the retention routine deleted the screenshot row while the backup holds the lock" \
+  test "$(sql src -c "SELECT count(*) FROM screenshots WHERE id = '$PURGE_SHOT'")" = 0
+check "...but its file deletion was deferred: the file is still on the volume" \
+  src exec -T api test -f "/var/lib/tikkit/screenshots/$PURGE_SHOT"
+sql src -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(60)%' AND pid <> pg_backend_pid()" > /dev/null || true
+DEFERRC=0
+wait "$DEFERRUN" || DEFERRC=$?
+wait "$GATE" 2> /dev/null || true
+check "the backup that held the lock succeeded" test "$DEFERRC" = 0
+DEFER_STAMP=$(backup_dirs | tail -n 1)
+src cp "backup:/backups/$DEFER_STAMP" "$WORK/offsite/$DEFER_STAMP" > /dev/null
+check "...is not degraded (the row's file made it into the archive)" test ! -f "$WORK/offsite/$DEFER_STAMP/DEGRADED"
+check "...and its manifest lists the purged screenshot's file" \
+  bash -c 'docker run --rm -i --user "$(id -u):$(id -g)" -v "$1":/identity:ro "$2" age -d -i /identity < "$3/manifest.txt.age" | grep -q "^[0-9a-f]\{64\}  \./$4$"' _ "$WORK/identity.txt" "$BACKUP_IMAGE" "$WORK/offsite/$DEFER_STAMP" "$PURGE_SHOT"
+check "after the lock is released the file is still there until the stray-file sweep (deferred, not forgotten)" \
+  src exec -T api test -f "/var/lib/tikkit/screenshots/$PURGE_SHOT"
+# The hourly sweep removes files without a row that are older than 24 hours; it runs
+# when the API starts, so age the file and restart the API.
+src exec -T api touch -d '2 days ago' "/var/lib/tikkit/screenshots/$PURGE_SHOT"
+src up -d --wait --force-recreate --no-deps api
+for _ in $(seq 1 30); do src exec -T api test -f "/var/lib/tikkit/screenshots/$PURGE_SHOT" || break; sleep 2; done
+file_absent() { ! src exec -T api test -f "$1"; }
+check "the sweep removed the deferred file once the lock was gone" file_absent "/var/lib/tikkit/screenshots/$PURGE_SHOT"
+# Back to restore mode for the rest of the drill (no jobs, nothing outbound).
+src_seed up -d --wait --force-recreate --no-deps api
+wait_ready "$BASE_SRC"
 
 say "scheduler: a sidecar that comes back late catches up with the due slot"
 # Last success 20 hours ago (inside the old 26-hour threshold), due time 10 minutes ago.
@@ -675,8 +751,8 @@ verify_restored() { # <label>
   capture dst "$BASE_DST" dst "$dir"
   check "$1: ticket content, activity, operator views and AI-solved rules match the source" \
     bash -c 'cd "$1" && for f in *; do [ "$f" = outbox.txt ] || [ "$f" = volume-files.txt ] || [ "$f" = aggregates.txt ] || [ "$f" = screenshot-downloads.txt ] || diff -u "$2/$f" "$f" || exit 1; done' _ "$dir" "$WORK/capture/source"
-  check "$1: report and aggregate statistics are equal (the cutover's own audit event aside)" \
-    bash -c 'diff -u <(grep -v "^audit|" "$1") <(grep -v "^audit|" "$2")' _ "$WORK/capture/source/aggregates.txt" "$dir/aggregates.txt"
+  check "$1: aggregate statistics and audit event counts by action are equal (the cutover's own event and the drill's probes aside)" \
+    diff -u "$WORK/capture/source/aggregates.txt" "$dir/aggregates.txt"
   check "$1: screenshot files match the source by SHA-256" diff -u "$WORK/capture/source/volume-files.txt" "$dir/volume-files.txt"
   check "$1: screenshot bytes served through the API match the source" diff -u "$WORK/capture/source/screenshot-downloads.txt" "$dir/screenshot-downloads.txt"
   check "$1: notification outbox rows are carried over (suppressed ones counted as the pending rows they were)" diff -u "$WORK/capture/source/outbox.txt" "$dir/outbox.txt"
@@ -694,6 +770,18 @@ for f in queue-general.json queue-team.json; do
 done
 check "main: AI-solved ticket is final for requester and refused to staff" \
   bash -c 'jq -e ".status == \"ai_solved\"" "$1/ticket-ai_solved.json" > /dev/null && { grep -qx 404 "$1/operator-code-ai_solved.txt" || grep -qx 403 "$1/operator-code-ai_solved.txt"; }' _ "$WORK/capture/restored-main"
+check "main: the account anonymized before the backup is still anonymized after the restore" \
+  bash -c '[ "$(jq "[.. | .username? // empty | select(startswith(\"anonymized-\"))] | length" "$1/admin-accounts.json")" = 1 ] && ! grep -q "\"req4\"" "$1/admin-accounts.json"' _ "$WORK/capture/restored-main"
+check "main: the retention settings, the report totals and the account list equal the source (diffed above)" \
+  bash -c 'test -s "$1/admin-report.json" && test -s "$1/admin-retention.json" && jq -e "[.. | .draft_days? // empty] | any(. == 90)" "$1/admin-retention.json" > /dev/null && jq -e ".submissions > 0" "$1/admin-report.json" > /dev/null' _ "$WORK/capture/restored-main"
+RUN_BODY='{"confirm":"DELETE","preview_token":"x","as_of":"2026-01-01T00:00:00Z"}'
+check "main: starting a retention run is refused in restore mode, localized and without side effects" \
+  test "$(code_of "$(jar_of dst admin)" "$BASE_DST" POST /api/admin/retention/runs "$RUN_BODY")" = 409 \
+  -a "$(sql dst -c "SELECT count(*) FROM retention_runs")" = "$(grep '^retention|' "$WORK/capture/source/aggregates.txt" | cut -d'|' -f2)"
+check "main: anonymizing an account is refused in restore mode" \
+  test "$(code_of "$(jar_of dst admin)" "$BASE_DST" POST "/api/admin/accounts/$(cat "$WORK/ids/req3")/anonymize" '{"username":"req3"}')" = 409
+check "main: ...with the stable restore_mode_blocked code" \
+  bash -c 'curl -sS --cacert "$1" -b "$2" -H "X-Requested-With: tikkit" -H "Origin: $3" -H "content-type: application/json" --data "$4" "$3/api/admin/retention/runs" | jq -e ".error.code == \"restore_mode_blocked\"" > /dev/null' _ "$WORK/ca/$DST_HTTPS.crt" "$(jar_of dst admin)" "$BASE_DST" "$RUN_BODY"
 check "main: the ticket created after the backup is not in the restore (recovery point)" \
   test "$(code_of "$(jar_of dst req1)" "$BASE_DST" GET "/api/tickets/$(cat "$WORK/ids/t_late")")" = 404
 dst_logs_have() { local out; out=$(dst logs api 2>&1); grep -q "$1" <<< "$out"; }
@@ -722,7 +810,7 @@ sleep 25
 capture dst "$BASE_DST" dst "$WORK/capture/restored-main-later"
 check "main: pending notifications stayed as they were (nothing was sent)" diff -u "$WORK/capture/source/outbox.txt" "$WORK/capture/restored-main-later/outbox.txt"
 check "main: the in-flight AI attempt made no provider call (attempt still processing, no usage)" \
-  bash -c 'diff -u <(grep -v "^audit|" "$1") <(grep -v "^audit|" "$2")' _ "$WORK/capture/source/aggregates.txt" "$WORK/capture/restored-main-later/aggregates.txt"
+  diff -u "$WORK/capture/source/aggregates.txt" "$WORK/capture/restored-main-later/aggregates.txt"
 dst_creds() { dst run --rm -T --no-deps api credentials-check 2> /dev/null | tail -n 1; }
 check "main: stored credentials are readable with the same ENCRYPTION_KEY (read back by the API image)" \
   test "$(dst_creds)" = "ai_credentials=readable smtp_credentials=readable"
