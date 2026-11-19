@@ -845,3 +845,269 @@ async fn a_stuck_request_ends_at_the_deadline_and_commits_nothing() {
     .unwrap();
     assert_eq!(audited, 0);
 }
+
+/// Status, code and message only: request IDs differ by design.
+fn shape(r: &support::Reply) -> (StatusCode, Value, Value) {
+    (
+        r.status,
+        r.body["error"]["code"].clone(),
+        r.body["error"]["message"].clone(),
+    )
+}
+
+#[tokio::test]
+async fn deactivated_and_anonymized_accounts_look_unknown_when_signed_out() {
+    let Some(t) = TestDb::new().await else { return };
+    let p = &t.pool;
+    fixtures::bootstrap_admin(p).await;
+    let gone = fixtures::account(p, Role::User, "gone").await;
+    fixtures::account(p, Role::User, "paused").await;
+    let app = test_app(p);
+    let admin = login(&app, "admin", PASSWORD).await.session();
+    for (path, body) in [
+        (format!("/api/accounts/{gone}/deactivate"), None),
+        (
+            format!("/api/admin/accounts/{gone}/anonymize"),
+            Some(json!({ "username": "gone" })),
+        ),
+    ] {
+        let r = call(&app, "POST", &path, body, Some(&admin)).await;
+        assert!(r.status.is_success(), "{path}: {} {}", r.status, r.body);
+    }
+    let paused = sqlx::query_scalar::<_, Uuid>("SELECT id FROM accounts WHERE username = 'paused'")
+        .fetch_one(p)
+        .await
+        .unwrap();
+    let r = call(
+        &app,
+        "POST",
+        &format!("/api/accounts/{paused}/deactivate"),
+        None,
+        Some(&admin),
+    )
+    .await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let placeholder: String = sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+        .bind(gone)
+        .fetch_one(p)
+        .await
+        .unwrap();
+    assert!(placeholder.starts_with(tikkit_api::auth::RESERVED_USERNAME_PREFIX));
+
+    // Each from its own address, so no attempt is refused by a budget.
+    let mut peer = 10u8;
+    let mut ask = |path: &'static str, body: Value| {
+        peer += 1;
+        let app = app.clone();
+        let ip = [198, 51, 100, peer];
+        async move { support::call_from(&app, "POST", path, Some(body), None, ip).await }
+    };
+    let unknown = ask(
+        "/api/auth/login",
+        json!({"username": "never-existed", "password": PASSWORD}),
+    )
+    .await;
+    assert_eq!(unknown.code(), "invalid_credentials");
+    for username in ["gone", placeholder.as_str(), "paused"] {
+        for password in [PASSWORD, "not the password"] {
+            let r = ask(
+                "/api/auth/login",
+                json!({"username": username, "password": password}),
+            )
+            .await;
+            assert_eq!(shape(&r), shape(&unknown), "{username}");
+            assert!(r.cookie.is_none());
+        }
+    }
+    let unknown = ask("/api/auth/recovery", json!({"username": "never-existed"})).await;
+    for username in ["gone", placeholder.as_str(), "paused"] {
+        let r = ask("/api/auth/recovery", json!({"username": username})).await;
+        assert_eq!(
+            (r.status, &r.body),
+            (unknown.status, &unknown.body),
+            "{username}"
+        );
+    }
+    let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM password_resets")
+        .fetch_one(p)
+        .await
+        .unwrap();
+    assert_eq!(
+        tokens, 0,
+        "no recovery link for an inactive or anonymized account"
+    );
+}
+
+#[tokio::test]
+async fn a_screenshot_removed_by_retention_answers_like_one_that_never_existed() {
+    use tikkit_api::{
+        lifecycle::{self, By, Policy, Transition},
+        metrics::Metrics,
+        retention::{self, RetentionPolicy},
+    };
+    let Some(t) = TestDb::new().await else { return };
+    let p = &t.pool;
+    let admin_id = fixtures::bootstrap_admin(p).await;
+    let owner = fixtures::account(p, Role::User, "owner").await;
+    fixtures::account(p, Role::Operator, "op").await;
+    fixtures::account(p, Role::User, "other").await;
+    let category: Uuid =
+        sqlx::query_scalar("INSERT INTO categories (name) VALUES ('Software') RETURNING id")
+            .fetch_one(p)
+            .await
+            .unwrap();
+    let priority: Uuid =
+        sqlx::query_scalar("INSERT INTO priorities (name) VALUES ('Normal') RETURNING id")
+            .fetch_one(p)
+            .await
+            .unwrap();
+    let ticket: Uuid = sqlx::query_scalar(
+        "INSERT INTO tickets (requester_account_id, category_id, priority_id, subject, description)
+         VALUES ($1, $2, $3, 'Printer', 'Jams') RETURNING id",
+    )
+    .bind(owner)
+    .bind(category)
+    .bind(priority)
+    .fetch_one(p)
+    .await
+    .unwrap();
+    let mut tx = p.begin().await.unwrap();
+    let submit = Transition::Submit {
+        requester_skip: false,
+    };
+    let policy = Policy {
+        ai_available: false,
+        ..Policy::default()
+    };
+    lifecycle::transition_with(&mut tx, ticket, By::Account(owner), &submit, Some(policy))
+        .await
+        .unwrap();
+    let cancel = Transition::Cancel {
+        reason: "Fixed it myself".into(),
+    };
+    lifecycle::transition(&mut tx, ticket, By::Account(owner), &cancel)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let shot = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO screenshots (id, uploader_account_id, ticket_id, filename, content_type,
+                                  byte_size, width, height, attached_at)
+         VALUES ($1, $2, $3, 'shot.png', 'image/png', 3, 1, 1, now())",
+    )
+    .bind(shot)
+    .bind(owner)
+    .bind(ticket)
+    .execute(p)
+    .await
+    .unwrap();
+    let dir = support::screenshot_dir(p);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(shot.to_string()), b"png").unwrap();
+
+    let app = test_app(p);
+    let mut cookies = std::collections::BTreeMap::new();
+    for who in ["owner", "op", "other", "admin"] {
+        cookies.insert(who, login(&app, who, PASSWORD).await.session());
+    }
+    let get = |who: &'static str, id: Uuid, suffix: &'static str| {
+        let app = app.clone();
+        let cookie = cookies[who].clone();
+        async move {
+            call(
+                &app,
+                "GET",
+                &format!("/api/screenshots/{id}{suffix}"),
+                None,
+                Some(&cookie),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        get("owner", shot, "").await.status,
+        StatusCode::OK,
+        "visible before"
+    );
+
+    // Age the cancellation past one day (test databases may lift the guard).
+    let mut tx = p.begin().await.unwrap();
+    for sql in [
+        "ALTER TABLE ticket_events DISABLE TRIGGER ticket_events_append_only",
+        "UPDATE ticket_events SET created_at = created_at - interval '3 days' WHERE ticket_id = $1",
+        "ALTER TABLE ticket_events ENABLE TRIGGER ticket_events_append_only",
+    ] {
+        let q = sqlx::query(sql);
+        let q = if sql.starts_with("UPDATE") {
+            q.bind(ticket)
+        } else {
+            q
+        };
+        q.execute(&mut *tx).await.unwrap();
+    }
+    tx.commit().await.unwrap();
+    let as_of: time::OffsetDateTime = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(p)
+        .await
+        .unwrap();
+    let screenshots = RetentionPolicy {
+        screenshot_days: Some(1),
+        ..Default::default()
+    };
+    retention::start_run(p, &screenshots, Some(admin_id), as_of)
+        .await
+        .unwrap()
+        .unwrap();
+    for _ in 0..20 {
+        retention::step(p, &dir, &Metrics::default(), 100)
+            .await
+            .unwrap();
+        let pending: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM retention_runs WHERE state = 'pending'")
+                .fetch_one(p)
+                .await
+                .unwrap();
+        if pending == 0 {
+            break;
+        }
+    }
+    assert!(!dir.join(shot.to_string()).exists(), "file removed");
+
+    // Every caller, every way of reading: the same answer as for an ID that
+    // never existed, so nobody learns that something was there.
+    let never = Uuid::new_v4();
+    for who in ["owner", "op", "other", "admin"] {
+        for suffix in ["", "/preview", "/download"] {
+            let removed = get(who, shot, suffix).await;
+            let missing = get(who, never, suffix).await;
+            assert_eq!(removed.status, StatusCode::NOT_FOUND, "{who}{suffix}");
+            assert_eq!(shape(&removed), shape(&missing), "{who}{suffix}");
+        }
+        let r = call(
+            &app,
+            "DELETE",
+            &format!("/api/screenshots/{shot}"),
+            None,
+            Some(&cookies[who]),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{who}");
+    }
+    let detail = call(
+        &app,
+        "GET",
+        &format!("/api/tickets/{ticket}"),
+        None,
+        Some(&cookies["owner"]),
+    )
+    .await;
+    assert!(
+        !detail.body.to_string().contains(&shot.to_string()),
+        "{}",
+        detail.body
+    );
+    assert_eq!(
+        detail.body["removed_screenshots"], 0,
+        "it was never in the intake"
+    );
+}
