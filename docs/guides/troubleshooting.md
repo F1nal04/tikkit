@@ -100,6 +100,7 @@ arrive.
 | --- | --- | --- |
 | "The mail server could not be reached" | DNS, firewall or wrong host/port | Allow outbound DNS and TCP to the relay port from the host; check host and port. |
 | "Could not establish a verified TLS connection to the mail server" | Wrong transport security for the port, or a certificate that does not match the host | Use STARTTLS on 587 or implicit TLS on 465. The certificate is always verified; use the relay's real hostname. |
+| The same TLS message with a relay that uses a private certificate authority | The API only trusts public authorities by default | The host operator sets [`SMTP_CA_FILE`](../configuration.md) to a mounted bundle of that authority's CA certificates and restarts the API. The bundle replaces the public authorities, so remove it again before switching to a public relay. |
 | "The mail server rejected the username or password" | Wrong credentials | Enter **both** username and password again. |
 | "The mail server refused the message" | The relay refuses the sender or recipient | Use a sender address your relay allows. |
 | "The stored mail password could not be read" | `ENCRYPTION_KEY` changed or was lost | [Enter the credentials again](#stored-credentials-are-unreadable-after-a-restore-or-key-change). |

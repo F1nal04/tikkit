@@ -15,6 +15,10 @@ You need:
 - A Linux x86-64 host with Docker Engine 28 or newer and Docker Compose
   v2.33.1 or newer. Docker Desktop works for testing. Published images are
   `linux/amd64`.
+- 4 vCPU and 8 GiB RAM as a starting size for one organization. That figure
+  comes from a load run on a developer workstation with container limits, not
+  from a dedicated server; see [size the host](../deployment.md#size-the-host).
+  Plan disk separately for screenshots and backups.
 - `openssl` and `curl`. For restores and the restore drill you also need `jq`.
 - A DNS name for the portal (for example `help.<your-domain>`) pointing at the
   host's IPv4 address, with inbound TCP 80 and 443 open. Caddy, the bundled
