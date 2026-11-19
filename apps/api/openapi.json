@@ -1004,7 +1004,7 @@
         "tags": [
           "notifications"
         ],
-        "summary": "Re-queues every `failed` row. Rows keep their idempotency key, so a message\nthe relay already accepted is never sent twice.",
+        "summary": "Re-queues every `failed` row. A durable delivery receipt suppresses the\nresend. A relay acceptance without a committed receipt may be delivered again.",
         "operationId": "retry_failed",
         "responses": {
           "200": {
