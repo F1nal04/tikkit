@@ -1,0 +1,37 @@
+# Apply after the production and workflow overlays. Only the proxy is published.
+services:
+  api:
+    environment:
+      TRUSTED_PROXIES: 10.99.50.0/24
+      SMTP_CA_FILE: /workflow-trust/stub-ca.crt
+  provider:
+    networks:
+      providers:
+        ipv4_address: 192.31.196.10
+    environment:
+      WORKFLOW_PROVIDER_CONTROL: /load-control/provider
+    volumes:
+      - ${LOAD_CONTROL_DIR:?set by run.sh}:/load-control
+  smtp:
+    image: ${TIKKIT_WEB_IMAGE:?set by run.sh}
+    user: "${WORKFLOW_UID:?set by run.sh}:${WORKFLOW_GID:?set by run.sh}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: ["node", "/load/smtp.mjs"]
+    volumes:
+      - ./ops/load/smtp.mjs:/load/smtp.mjs:ro
+      - ${WORKFLOW_TLS_DIR:?set by run.sh}:/workflow-tls:ro
+      - ${LOAD_CONTROL_DIR:?set by run.sh}:/load-control
+    networks:
+      providers:
+        ipv4_address: 192.31.196.11
+        aliases: [smtp.load.test]
+
+networks:
+  app:
+    ipam:
+      config: !override [{subnet: 10.99.50.0/24}]
+  providers:
+    ipam:
+      config: !override [{subnet: 192.31.196.8/29}]
