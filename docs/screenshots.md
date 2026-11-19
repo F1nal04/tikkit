@@ -128,6 +128,15 @@ write permissions before attachment. See [conversations.md](conversations.md).
 directory that only the API reads; the reverse proxy and web app never serve
 it. In Compose it is the `screenshots-data` volume, so replacing containers or
 images keeps the files. Back it up together with PostgreSQL: take the database
-dump first, then copy the directory. Files newer than the dump are harmless
+dump first, then copy the directory, **and hold the screenshot file lock for
+the whole backup**. Without it, a file the API deletes between the dump and
+the copy (a retention run, an expired or deleted pending upload, an
+anonymization) is a row in the dump with no file in the copy, and its preview
+fails with `500` after a restore. While a database session holds
+`pg_advisory_lock(screenshot_files_lock_key())`, the API deletes no file from
+this directory; deletions are deferred to the stray-file sweep, which honours
+the lock too. The contract is described in
+[retention.md](retention.md#backups) and the procedure that uses it in
+[backup-restore.md](backup-restore.md). Files newer than the dump are harmless
 extras that the stray-file sweep removes after 24 hours; restoring an older
 directory than the dump leaves rows whose previews fail with `500`.

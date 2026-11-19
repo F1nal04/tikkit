@@ -111,7 +111,13 @@ normal. For `TikkitRetentionRunStuck`, check database readiness, then the
 `retention` log lines by the run's request ID (the `x-request-id` of the Admin
 request that started it, also on its `retention_run_started` audit event). A
 batch that fails rolls back and is retried on the next poll; the run's counts
-on the Admin page stop growing while it fails. Never edit `retention_runs` or
+on the Admin page stop growing while it fails. A run also stays pending while
+expired records are locked by other transactions: it logs `expired records
+are locked by other transactions`, backs off (up to 10 minutes), and tries
+again. Both cases increment `tikkit_worker_retries_total{worker="retention"}`.
+A long-lived transaction that holds a ticket row is the usual cause; find it
+in `pg_stat_activity`. During a backup that holds the screenshot file lock,
+runs continue and only their file deletions are deferred. Never edit `retention_runs` or
 delete screenshot files by hand: a file whose row is gone is removed by the
 hourly screenshot clean-up. After restoring a backup, start a run again
 ([retention.md](retention.md#backups)).

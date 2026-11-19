@@ -428,24 +428,41 @@ Migration `0028_data_retention.sql`. Behavior: [retention.md](retention.md).
 - `retention_settings` has exactly one row (inserted by the migration):
   `draft_days`, `screenshot_days`, `ai_content_days`, `ticket_content_days`
   (each NULL or 1 to 3,650), `audit_days` (NULL or 30 to 3,650), `automatic`
-  (default false), `updated_at`, `updated_by`. NULL means keep; every period
-  starts NULL.
+  (default false), `version` (bumped by every save; previews are bound to
+  it), `updated_at`, `updated_by`. NULL means keep; every period starts NULL.
 - `retention_runs`: one application of the policy. `requested_by` (NULL for an
   automatic run), `request_id`, `state` (`pending`, `completed`), `as_of` (the
   clock), a snapshot of the five periods, `counts` (JSON: `drafts`,
   `screenshots`, `ai_content`, `ticket_content`, `audit_events`),
-  `created_at`, `finished_at` (set exactly when `completed`). A unique partial
-  index allows one `pending` run.
+  `attempts` and `next_attempt_at` (the backoff while expired rows are held
+  by other transactions), `created_at`, `finished_at` (set exactly when
+  `completed`). A unique partial index allows one `pending` run.
+  `retention_runs_guard`: `as_of` is never in the future, a run starts
+  `pending` with empty counts, its snapshot never changes, a completed run
+  never changes, and runs are never deleted. `retention_runs_audit` writes
+  `retention_run_started` on insert and `retention_run_completed` on
+  completion.
 - `tickets.content_purged_at`, `ai_attempts.content_purged_at`: set when
   retention removed the content. They change only on the retention path.
 - `accounts.anonymized_at`, with `accounts_anonymized_inactive`: an anonymized
-  account is never active.
+  account is never active. `accounts_username_reserved` (`NOT VALID`): only an
+  anonymized account has a username starting with `anonymized-`.
+- `screenshot_files_lock_key()`: the advisory lock key a backup holds to defer
+  file deletions ([retention.md](retention.md#backups)).
 - `retention_marker()` is `—`, the text that replaces removed content.
   `ticket_final_at(tickets)` is when a ticket reached its current status (the
   latest event with that `to_status`, else `updated_at`): the retention clock.
-- `retention_delete_screenshots(ticket)`, `retention_purge_ai(ticket)`,
-  `retention_purge_ticket(ticket)` are the only ways past the immutability
-  triggers. `check_ticket_update()`, `check_intake_snapshot()`,
+- `retention_redact_payload(jsonb)` sets the free-text keys of a ticket event
+  payload (`reason`, `summary`) to the marker.
+- `retention_delete_screenshots(ticket, run, account)`,
+  `retention_purge_ai(ticket, run, account)`,
+  `retention_purge_ticket(ticket, run, account)` are the only ways past the
+  immutability triggers. Each calls `retention_ticket_due(ticket, category,
+  run, account)` first: it locks the ticket and requires a pending run whose
+  snapshot has a period for the category and for whose clock the ticket has
+  expired now, or the ticket's anonymized requester; otherwise `42501` or no
+  change. `retention_done()` adds the removal to the run's counts or writes
+  `retention_account_content_removed`. `check_ticket_update()`, `check_intake_snapshot()`,
   `check_screenshot_frozen()`, and `check_ai_attempt_change()` are replaced,
   and `ticket_messages` / `ticket_events` get their own guards
   (`check_ticket_message_change()`, `check_ticket_event_change()`) instead of
@@ -456,6 +473,14 @@ Migration `0028_data_retention.sql`. Behavior: [retention.md](retention.md).
 - `tickets_final_idx`: partial index on tickets in a final status.
 - `audit_resource_of()` gains the resource type `retention` for
   `retention_*` events.
+- `audit_events_guard()`, `audit_retention_purge()`, and
+  `audit_anonymize_account()` of migration `0026` are replaced:
+  `audit_retention_purge(cutoff, admin, max_rows)` is the batched purge (the
+  two-argument form calls it), anonymization also removes `from_expertise` /
+  `to_expertise` from events about the account, and
+  `audit_redact_ticket_text(ticket)` is a third guarded path
+  ([audit.md](audit.md#append-only-retention-and-anonymization)).
 - Additional `audit_events.event_type` values: `retention_settings_updated`,
   `retention_run_started`, `retention_run_completed`,
-  `personal_data_exported`, `account_anonymized`.
+  `personal_data_exported`, `account_anonymized`,
+  `retention_account_content_removed`, `audit_ticket_text_redacted`.

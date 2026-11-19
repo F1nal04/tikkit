@@ -49,6 +49,8 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Malformed path identifier, e.g. a bad UUID | 400 | `invalid_identifier` |
 | Unparsable query parameter | 400 | `invalid_query` |
 | JSON body over 1 MiB | 413 | `payload_too_large` |
+| Personal-data export over its byte budget ([retention.md](retention.md#personal-data-export)) | 413 | `export_too_large` |
+| Retention confirmation whose preview no longer matches the stored policy | 409 | `retention_preview_stale` |
 | Not signed in | 401 | `unauthorized` |
 | Login failed (any reason) | 401 | `invalid_credentials` |
 | State-changing request without `X-Requested-With: tikkit` | 403 | `csrf_rejected` |
