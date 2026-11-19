@@ -715,7 +715,7 @@ pub async fn test_ai(
     user: CurrentUser,
 ) -> Result<Json<AiTestResult>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
-    if !auth.settings.outbound_enabled {
+    if !auth.settings.outbound_enabled() {
         return Err(ApiError::OutboundDisabled);
     }
     let key = &auth.settings.encryption_key;

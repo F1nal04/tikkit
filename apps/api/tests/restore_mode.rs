@@ -17,7 +17,7 @@ use tikkit_api::auth::Settings;
 fn settings(ca_pem: &str, outbound_enabled: bool) -> Settings {
     Settings {
         smtp_trust_root_pem: Some(ca_pem.as_bytes().to_vec()),
-        outbound_enabled,
+        restore_mode: !outbound_enabled,
         ..Settings::default()
     }
 }
@@ -72,15 +72,25 @@ async fn restore_mode_sends_no_mail_and_refuses_connection_tests() {
     .await;
     assert_eq!(held.status, 201, "{}", held.body);
     assert_eq!(held.body["emailed"], false, "{}", held.body);
-    let recovery = call(
-        &restored,
-        "POST",
-        "/api/auth/recovery",
-        Some(json!({ "username": "admin" })),
-        None,
-    )
-    .await;
-    assert_eq!(recovery.status, 202, "{}", recovery.body);
+    // Recovery must not mint a token or use the cooldown, and must not reveal
+    // whether the username exists: the same refusal for both.
+    for username in ["admin", "nobody-here"] {
+        let recovery = call(
+            &restored,
+            "POST",
+            "/api/auth/recovery",
+            Some(json!({ "username": username })),
+            None,
+        )
+        .await;
+        assert_eq!(recovery.status, 409, "{}", recovery.body);
+        assert_eq!(recovery.body["error"]["code"], "outbound_disabled");
+    }
+    let resets: i64 = sqlx::query_scalar("SELECT count(*) FROM password_resets")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(resets, 0);
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(server.messages.lock().unwrap().len(), 1);
 
@@ -100,4 +110,108 @@ async fn restore_mode_sends_no_mail_and_refuses_connection_tests() {
     // Reading the portal is unaffected.
     let me = call(&restored, "GET", "/api/auth/me", None, Some(&cookie)).await;
     assert_eq!(me.status, 200, "{}", me.body);
+}
+
+#[tokio::test]
+async fn restore_mode_is_visible_in_readiness_and_metrics() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let normal = test_app_with(&db.pool, Settings::default());
+    let restored = test_app_with(
+        &db.pool,
+        Settings {
+            restore_mode: true,
+            ..Settings::default()
+        },
+    );
+    for (app, expected) in [(&normal, false), (&restored, true)] {
+        let r = call(app, "GET", "/api/ready", None, None).await;
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(r.body["restore_mode"], expected);
+    }
+    let state = support::test_state(&db.pool);
+    assert!(
+        support::metrics_text(&state)
+            .await
+            .contains("tikkit_restore_mode 0\n")
+    );
+    state.metrics.set_restore_mode(true);
+    assert!(
+        support::metrics_text(&state)
+            .await
+            .contains("tikkit_restore_mode 1\n")
+    );
+}
+
+#[tokio::test]
+async fn cutover_suppresses_only_old_pending_email() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let account = fixtures::bootstrap_admin(&db.pool).await;
+    let cutoff = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
+    let row = |key: &str, channel: &str, status: &str, age_minutes: i64| {
+        let (pool, key, channel, status) = (
+            db.pool.clone(),
+            key.to_owned(),
+            channel.to_owned(),
+            status.to_owned(),
+        );
+        async move {
+            sqlx::query(
+                "INSERT INTO notification_outbox (source_key, event_id, account_id, audience, channel, status, created_at)
+                 VALUES ($1, 1, $2, 'staff', $3, $4, now() - make_interval(mins => $5::int))",
+            )
+            .bind(key).bind(account).bind(channel).bind(status).bind(age_minutes as i32)
+            .execute(&pool).await.unwrap();
+        }
+    };
+    row("old-email", "email", "pending", 120).await;
+    row("old-email-sent", "email", "sent", 120).await;
+    row("new-email", "email", "pending", 5).await;
+    row("old-inbox", "in_app", "pending", 120).await;
+    let done = tikkit_api::restore::suppress_pending_email(&db.pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        done,
+        tikkit_api::restore::Suppressed {
+            email_suppressed: 1,
+            email_pending_after_cutoff: 1,
+            in_app_pending: 1
+        }
+    );
+    let state = |key: &str| {
+        let (pool, key) = (db.pool.clone(), key.to_owned());
+        async move {
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT status, last_error FROM notification_outbox WHERE source_key = $1",
+            )
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        state("old-email").await,
+        ("suppressed".into(), Some("suppressed_on_restore".into()))
+    );
+    assert_eq!(state("old-email-sent").await.0, "sent");
+    assert_eq!(state("new-email").await.0, "pending");
+    assert_eq!(state("old-inbox").await.0, "pending");
+    let audit: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_events WHERE event_type = 'notifications_suppressed_on_restore'",
+    )
+    .fetch_all(&db.pool).await.unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0]["email_suppressed"], 1);
+    assert!(audit[0]["cutoff"].is_string());
+    assert_eq!(
+        audit[0].as_object().unwrap().len(),
+        4,
+        "counts and cutoff only: {}",
+        audit[0]
+    );
 }

@@ -2137,6 +2137,16 @@
           "202": {
             "description": "Accepted; identical for unknown usernames"
           },
+          "409": {
+            "description": "`outbound_disabled`: restore mode sends no email and creates no token, for every username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "429": {
             "description": "`rate_limited`",
             "content": {
@@ -10807,11 +10817,16 @@
         "type": "object",
         "required": [
           "status",
-          "checks"
+          "checks",
+          "restore_mode"
         ],
         "properties": {
           "checks": {
             "$ref": "#/components/schemas/Checks"
+          },
+          "restore_mode": {
+            "type": "boolean",
+            "description": "`true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.\nOlder builds omit the field, which restore tooling treats as \"unsupported\"."
           },
           "status": {
             "type": "string",

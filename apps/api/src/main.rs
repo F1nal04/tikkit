@@ -9,10 +9,21 @@ use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let migrate_only = match std::env::args_os().skip(1).collect::<Vec<_>>().as_slice() {
-        [] => false,
-        [command] if command == "migrate" => true,
-        _ => anyhow::bail!("usage: tikkit-api [migrate]"),
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let (migrate_only, restore_check, suppress_before) = match args.as_slice() {
+        [] => (false, false, None),
+        [command] if command == "migrate" => (true, false, None),
+        [command] if command == "restore-check" => (false, true, None),
+        [command, flag, before] if command == "suppress-restored-email" && flag == "--before" => {
+            let before = before.to_str().unwrap_or_default();
+            let before =
+                time::OffsetDateTime::parse(before, &time::format_description::well_known::Rfc3339)
+                    .context("--before must be an RFC 3339 time such as 2026-11-18T03:15:00Z")?;
+            (false, false, Some(before))
+        }
+        _ => anyhow::bail!(
+            "usage: tikkit-api [migrate | restore-check | suppress-restored-email --before <RFC 3339 time>]"
+        ),
     };
 
     // Development convenience: load ./.env (or a parent's) without overriding real
@@ -22,6 +33,22 @@ async fn main() -> anyhow::Result<()> {
     }
     let config = Config::from_env()?;
     telemetry::init_logging(config.json_logs);
+    if restore_check {
+        // Capability probe for restore tooling: an image without this command
+        // fails the usage check above, so it is refused before it can serve.
+        anyhow::ensure!(
+            config.restore_mode,
+            "RESTORE_MODE is not on in this environment"
+        );
+        println!("restore_mode=on");
+        return Ok(());
+    }
+    if suppress_before.is_some() {
+        anyhow::ensure!(
+            config.restore_mode,
+            "suppress-restored-email only runs while RESTORE_MODE is on"
+        );
+    }
 
     let pool = db::connect(&config.database_url).await.map_err(|error| {
         let sqlstate = error.as_database_error().and_then(|db| db.code());
@@ -43,6 +70,15 @@ async fn main() -> anyhow::Result<()> {
     if migrate_only {
         pool.close().await;
         tracing::info!("Database migrations complete");
+        return Ok(());
+    }
+    if let Some(before) = suppress_before {
+        let done = tikkit_api::restore::suppress_pending_email(&pool, before).await?;
+        pool.close().await;
+        println!(
+            "email_suppressed={} email_pending_after_cutoff={} in_app_pending={}",
+            done.email_suppressed, done.email_pending_after_cutoff, done.in_app_pending
+        );
         return Ok(());
     }
 
@@ -76,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
     };
     tracing::info!(address = %listener.local_addr()?, "Tikkit API listening");
     let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
+    state.metrics.set_restore_mode(config.restore_mode);
     let settings = auth::Settings::from(&config);
     let notifier =
         workers.then(|| tokio::spawn(notifications::worker_loop(state.clone(), settings.clone())));

@@ -348,7 +348,7 @@ async fn ready_reports_ok_until_schema_is_newer_than_build() {
     };
     assert_eq!(
         ready().await,
-        r#"{"status":"ready","checks":{"database":"ok","migrations":"ok"}}"#
+        r#"{"status":"ready","checks":{"database":"ok","migrations":"ok"},"restore_mode":false}"#
     );
 
     sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (999999, 'future', true, '\\x00', 0)")

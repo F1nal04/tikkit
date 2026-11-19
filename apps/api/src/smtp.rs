@@ -320,7 +320,7 @@ pub async fn test_smtp(
     Json(body): Json<SmtpTestRequest>,
 ) -> Result<Json<SmtpTestResult>, ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
-    if !auth.settings.outbound_enabled {
+    if !auth.settings.outbound_enabled() {
         return Err(ApiError::OutboundDisabled);
     }
     let to = body.to.trim();

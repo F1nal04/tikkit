@@ -42,6 +42,7 @@ pub mod notifications;
 pub mod personal_data;
 pub mod queues;
 pub mod reports;
+pub mod restore;
 pub mod retention;
 pub mod screenshots;
 pub mod security;
@@ -226,6 +227,9 @@ struct Readiness {
     /// `ready` or `unavailable`.
     status: &'static str,
     checks: Checks,
+    /// `true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.
+    /// Older builds omit the field, which restore tooling treats as "unsupported".
+    restore_mode: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -250,20 +254,26 @@ async fn health() -> Json<Health> {
         (status = 200, description = "Ready to serve traffic", body = Readiness),
         (status = 503, description = "A required dependency is unavailable or incompatible", body = Readiness),
     ))]
-async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
+async fn ready(
+    State(state): State<AppState>,
+    Extension(auth): Extension<Arc<auth::Auth>>,
+) -> (StatusCode, Json<Readiness>) {
     let checks = probe_readiness(&state.pool).await;
+    let restore_mode = auth.settings.restore_mode;
     if checks.migrations == "ok" {
         (
             StatusCode::OK,
             Json(Readiness {
                 status: "ready",
                 checks,
+                restore_mode,
             }),
         )
     } else {
         let body = Readiness {
             status: "unavailable",
             checks,
+            restore_mode,
         };
         (StatusCode::SERVICE_UNAVAILABLE, Json(body))
     }
@@ -707,7 +717,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let expected = json!({
             "status": "unavailable",
-            "checks": { "database": "unavailable", "migrations": "unknown" }
+            "checks": { "database": "unavailable", "migrations": "unknown" },
+            "restore_mode": false
         });
         assert_eq!(body, expected);
     }

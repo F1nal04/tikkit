@@ -5,7 +5,7 @@ use std::{
     fmt::{Display, Write},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering::Relaxed},
+        atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
     },
     time::Duration,
 };
@@ -81,6 +81,7 @@ struct Inner {
     requests: Mutex<[Histogram; STATUS_CLASSES.len()]>,
     workers: [WorkerStats; Worker::ALL.len()],
     events: [AtomicU64; Event::ALL.len()],
+    restore_mode: AtomicBool,
 }
 
 /// Cheap clones share one process-local collector between HTTP and workers.
@@ -88,6 +89,11 @@ struct Inner {
 pub struct Metrics(Arc<Inner>);
 
 impl Metrics {
+    /// Process-wide restore mode flag, exported as `tikkit_restore_mode`.
+    pub fn set_restore_mode(&self, on: bool) {
+        self.0.restore_mode.store(on, Relaxed);
+    }
+
     pub(crate) fn request(&self, status: StatusCode, elapsed: Duration) {
         let Some(index) = usize::from(status.as_u16() / 100).checked_sub(1) else {
             return;
@@ -328,6 +334,11 @@ async fn scrape(State(state): State<AppState>) -> impl IntoResponse {
             "tikkit_worker_snapshot_up",
             snapshot.is_some(),
             "Whether the worker backlog snapshot was collected.",
+        ),
+        (
+            "tikkit_restore_mode",
+            state.metrics.0.restore_mode.load(Relaxed),
+            "Whether RESTORE_MODE is on: no background jobs, nothing sent outbound.",
         ),
     ] {
         metric_header(&mut output, name, "gauge", help);

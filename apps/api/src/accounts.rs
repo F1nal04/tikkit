@@ -233,7 +233,7 @@ async fn issue_invitation(
         ident_str(language)
     );
     let emailed = match email.as_deref() {
-        Some(to) if auth.settings.outbound_enabled => {
+        Some(to) if auth.settings.outbound_enabled() => {
             let (subject, text) = invitation_email(language, &url, hours);
             mail::queue(
                 state.pool.clone(),
@@ -555,6 +555,7 @@ pub struct RecoveryRequest {
 #[utoipa::path(post, path = "/api/auth/recovery", tag = "auth", request_body = RecoveryRequest,
     responses(
         (status = 202, description = "Accepted; identical for unknown usernames"),
+        (status = 409, description = "`outbound_disabled`: restore mode sends no email and creates no token, for every username", body = crate::api::ErrorEnvelope),
         (status = 429, description = "`rate_limited`", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn request_recovery(
@@ -571,6 +572,11 @@ pub async fn request_recovery(
         .take(64)
         .collect();
     auth.limit_attempt("recovery", &client, &normalized)?;
+    // Restore mode cannot send the link, so it must not mint a token or use up the
+    // cooldown either. The answer is the same for every username.
+    if !auth.settings.outbound_enabled() {
+        return Err(ApiError::OutboundDisabled);
+    }
     // By username only: several accounts may share an email.
     let found: Option<(Uuid, String, String, String)> = sqlx::query_as(
         "SELECT id, username, email, language FROM accounts
@@ -624,7 +630,7 @@ pub async fn request_recovery(
             ident_str(language)
         );
         let (subject, text) = recovery_email(language, &username, &url);
-        let queued = auth.settings.outbound_enabled
+        let queued = auth.settings.outbound_enabled()
             && mail::queue(
                 state.pool.clone(),
                 auth.settings.encryption_key,

@@ -3151,6 +3151,11 @@ export interface components {
         QueueView: "general" | "team" | "mine" | "all";
         Readiness: {
             checks: components["schemas"]["Checks"];
+            /**
+             * @description `true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.
+             *     Older builds omit the field, which restore tooling treats as "unsupported".
+             */
+            restore_mode: boolean;
             /** @description `ready` or `unavailable`. */
             status: string;
         };
@@ -5505,6 +5510,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description `outbound_disabled`: restore mode sends no email and creates no token, for every username */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
             /** @description `rate_limited` */
             429: {
