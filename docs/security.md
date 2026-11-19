@@ -164,7 +164,7 @@ Per-minute budgets (`429 rate_limited` with `Retry-After`), fixed windows:
 | Queue lists and search | account | 120 |
 | CSV exports (reports, audit) and the personal-data export | account | 6 |
 | AI and SMTP connection tests | account | 5 |
-| Retention preview and run start | account | 10 |
+| Retention preview and run start | account | 30 |
 | Account anonymization | account | 10 |
 
 Route budgets are spent before the body is read and only by signed-in
