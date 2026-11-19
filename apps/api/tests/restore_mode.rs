@@ -215,3 +215,45 @@ async fn cutover_suppresses_only_old_pending_email() {
         audit[0]
     );
 }
+
+#[tokio::test]
+async fn credentials_check_tells_a_wrong_key_from_the_right_one() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    fixtures::bootstrap_admin(&db.pool).await;
+    let app = test_app_with(&db.pool, Settings::default());
+    let cookie = login(&app, "admin", fixtures::PASSWORD).await.session();
+    let right = Settings::default().encryption_key;
+    let wrong = [7u8; 32];
+    let status = |key: [u8; 32]| {
+        let pool = db.pool.clone();
+        async move {
+            tikkit_api::restore::credentials_status(&pool, &key)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(status(right).await, ("none", "none"));
+
+    let password = ["smtp", "pw"].join("-");
+    let smtp = json!({
+        "host": "smtp.invalid", "port": 587, "security": "starttls", "sender_name": "T",
+        "sender_address": "help@example.invalid", "username": "mailer", "password": password,
+        "enabled": false,
+    });
+    let r = call(&app, "PUT", "/api/settings/smtp", Some(smtp), Some(&cookie)).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let key = ["sk", "test", "0123456789abcdefWXYZ"].join("-");
+    let r = call(
+        &app,
+        "PUT",
+        "/api/settings/ai/credentials/openai",
+        Some(json!({ "api_key": key })),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(status(right).await, ("readable", "readable"));
+    assert_eq!(status(wrong).await, ("unreadable", "unreadable"));
+}

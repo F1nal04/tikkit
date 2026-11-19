@@ -842,6 +842,25 @@ fn seal(key: &[u8; 32], provider: Provider, api_key: &str) -> Vec<u8> {
     [nonce.as_slice(), &ciphertext].concat()
 }
 
+/// How many stored provider keys exist and how many decrypt with `key`
+/// (`tikkit-api credentials-check`, docs/backup-restore.md).
+pub async fn stored_keys_readable(
+    pool: &sqlx::PgPool,
+    key: &[u8; 32],
+) -> Result<(usize, usize), sqlx::Error> {
+    let rows: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT provider, key_ciphertext FROM ai_credentials")
+            .fetch_all(pool)
+            .await?;
+    let readable = rows
+        .iter()
+        .filter(|(provider, sealed)| {
+            provider_of(provider.clone()).is_some_and(|p| open(key, p, sealed).is_some())
+        })
+        .count();
+    Ok((rows.len(), readable))
+}
+
 fn open(key: &[u8; 32], provider: Provider, sealed: &[u8]) -> Option<ApiKey> {
     if sealed.len() < 12 + 16 {
         return None;

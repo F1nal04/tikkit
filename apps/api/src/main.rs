@@ -14,6 +14,17 @@ async fn main() -> anyhow::Result<()> {
         [] => (false, false, None),
         [command] if command == "migrate" => (true, false, None),
         [command] if command == "restore-check" => (false, true, None),
+        [command] if command == "credentials-check" => {
+            let config = Config::from_env()?;
+            let pool = db::connect(&config.database_url)
+                .await
+                .context("cannot connect to PostgreSQL")?;
+            let (ai, smtp) =
+                tikkit_api::restore::credentials_status(&pool, &config.encryption_key).await?;
+            pool.close().await;
+            println!("ai_credentials={ai} smtp_credentials={smtp}");
+            return Ok(());
+        }
         [command, flag, before] if command == "suppress-restored-email" && flag == "--before" => {
             let before = before.to_str().unwrap_or_default();
             let before =
@@ -22,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
             (false, false, Some(before))
         }
         _ => anyhow::bail!(
-            "usage: tikkit-api [migrate | restore-check | suppress-restored-email --before <RFC 3339 time>]"
+            "usage: tikkit-api [migrate | restore-check | credentials-check | suppress-restored-email --before <RFC 3339 time>]"
         ),
     };
 

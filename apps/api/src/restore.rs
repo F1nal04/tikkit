@@ -11,6 +11,27 @@ use crate::auth::audit;
 /// `last_error` of rows suppressed by [`suppress_pending_email`].
 pub const SUPPRESSED_ON_RESTORE: &str = "suppressed_on_restore";
 
+/// `none`, `readable` or `unreadable` for each kind of credential encrypted with
+/// `ENCRYPTION_KEY`, for the line `tikkit-api credentials-check` prints.
+pub async fn credentials_status(
+    pool: &PgPool,
+    key: &[u8; 32],
+) -> Result<(&'static str, &'static str), sqlx::Error> {
+    let (stored, readable) = crate::ai_config::stored_keys_readable(pool, key).await?;
+    let ai = match (stored, readable) {
+        (0, _) => "none",
+        (n, r) if n == r => "readable",
+        _ => "unreadable",
+    };
+    let smtp = match crate::mail::load(pool, key).await {
+        Err(crate::mail::MailError::NotConfigured) => "none",
+        Err(crate::mail::MailError::Unreadable) => "unreadable",
+        Err(crate::mail::MailError::Store) => return Err(sqlx::Error::PoolClosed),
+        _ => "readable",
+    };
+    Ok((ai, smtp))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Suppressed {
     /// Pending email rows created at or before the cutoff, now `suppressed`.
