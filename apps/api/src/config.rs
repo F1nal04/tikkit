@@ -179,7 +179,8 @@ impl Config {
         let session_ttl = hours("SESSION_TTL_HOURS", 24 * 14, 24 * 365);
         let session_rotate = hours("SESSION_ROTATE_HOURS", 24, 24 * 365);
         // The old switch trusted the header from any peer. `false` meant what an
-        // empty TRUSTED_PROXIES means now; anything else must be migrated.
+        // empty TRUSTED_PROXIES means now; anything else must be migrated
+        // (docs/configuration.md#upgrading).
         if var("TRUST_PROXY_HEADERS").is_some_and(|v| v != "false") {
             fail(
                 "TRUST_PROXY_HEADERS was replaced by TRUSTED_PROXIES: list the reverse proxy's and SSR server's addresses or networks instead, e.g. TRUSTED_PROXIES=172.30.0.0/24",
