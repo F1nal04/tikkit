@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 . ops/load/stack.sh
 mode=${1:-profile}
-case "$mode" in profile|recovery|frontend|smoke|report-diagnostic) ;; *) echo "usage: $0 [profile|recovery|frontend|smoke|report-diagnostic]" >&2; exit 2;; esac
+case "$mode" in profile|recovery|frontend|smoke|report-diagnostic|queue-budget) ;; *) echo "usage: $0 [profile|recovery|frontend|smoke|report-diagnostic|queue-budget]" >&2; exit 2;; esac
 : "${LOAD_API_IMAGE:?set LOAD_API_IMAGE to the production API image}"
 : "${LOAD_WEB_IMAGE:?set LOAD_WEB_IMAGE to the production web image}"
 export LOAD_WORK
@@ -90,7 +90,11 @@ until mkdir /tmp/tikkit-e2e.lock 2>/dev/null; do sleep 10; done
 locked=1
 timeout 120 bun ops/load/seed.mjs "$mode"
 case "$mode" in
-  profile|smoke) timeout 760 bun ops/load/profile.mjs "$mode" ;;
+  profile|smoke)
+    timeout 760 bun ops/load/profile.mjs "$mode"
+    if [ "$mode" = smoke ]; then timeout 60 bun ops/load/queue-budget.mjs >&2; fi
+    ;;
+  queue-budget) timeout 60 bun ops/load/queue-budget.mjs ;;
   recovery) timeout 760 bun ops/load/recovery.mjs ;;
   frontend) timeout 760 bun ops/load/frontend.mjs ;;
   report-diagnostic) timeout 760 bun ops/load/report-diagnostic.mjs ;;

@@ -184,7 +184,7 @@ jobs:
           docker compose exec -T api curl -fsS -o /dev/null http://127.0.0.1:9091/metrics
           bash ops/compose/smoke.sh "https://$PUBLIC_HOST" "$RUNNER_TEMP/tikkit-ca.crt"
       - name: Check browser bundle and smoke the load workflow
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
           ops/load/bundle-budget.sh "$TIKKIT_WEB_IMAGE"
           LOAD_SMTP=1 LOAD_API_IMAGE="$TIKKIT_API_IMAGE" LOAD_WEB_IMAGE="$TIKKIT_WEB_IMAGE" ops/load/run.sh smoke

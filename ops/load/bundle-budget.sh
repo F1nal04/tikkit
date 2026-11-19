@@ -15,7 +15,7 @@ docker run --rm --network none --read-only --entrypoint node "$1" -e '
   const sizes = scripts.map(file => readFileSync(join(root, file)))
   const gzip = sizes.reduce((sum, file) => sum + gzipSync(file, { level: 9 }).length, 0)
   const raw = sizes.reduce((sum, file) => sum + file.length, 0)
-  const budget = 512 * 1024
+  const budget = 200 * 1024
   console.log(JSON.stringify({ files: scripts.length, raw_bytes: raw, gzip_bytes: gzip, budget_bytes: budget }))
   if (gzip > budget) process.exitCode = 1
 '
