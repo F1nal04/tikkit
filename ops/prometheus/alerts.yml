@@ -59,3 +59,9 @@ groups:
         annotations:
           summary: Repeated notification email failures were recorded.
           runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#notifications-and-smtp
+      - alert: TikkitRestoreModeLeftOn
+        expr: tikkit_restore_mode{job="tikkit"} == 1
+        for: 12h
+        annotations:
+          summary: RESTORE_MODE has been on for 12 hours. The API runs no jobs and sends no email or AI calls.
+          runbook: https://github.com/F1nal04/tikkit/blob/main/docs/backup-restore.md#post-restore-checklist-before-any-live-work

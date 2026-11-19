@@ -158,3 +158,19 @@ tests:
             exp_annotations:
               summary: A data retention run has been pending for more than six hours.
               runbook: https://github.com/F1nal04/tikkit/blob/main/docs/operations.md#data-retention
+  - name: restore mode left on
+    interval: 1m
+    input_series:
+      - series: 'tikkit_restore_mode{job="tikkit"}'
+        values: '1x1000'
+    alert_rule_test:
+      - eval_time: 11h
+        alertname: TikkitRestoreModeLeftOn
+        exp_alerts: []
+      - eval_time: 13h
+        alertname: TikkitRestoreModeLeftOn
+        exp_alerts:
+          - exp_labels: { job: tikkit }
+            exp_annotations:
+              summary: RESTORE_MODE has been on for 12 hours. The API runs no jobs and sends no email or AI calls.
+              runbook: https://github.com/F1nal04/tikkit/blob/main/docs/backup-restore.md#post-restore-checklist-before-any-live-work
