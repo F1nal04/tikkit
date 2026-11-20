@@ -146,7 +146,9 @@ for them, and none is delivered or listed. There is no export endpoint; any
 future one must use `staff_visible_sql`.
 
 Admins can open them with `GET /api/tickets/{id}` (staff view, every
-`staff_access` flag false) and find them through the Admin list below. They are
+`staff_access` flag false), find them through the Admin list below, and
+inspect them read-only in the Admin submission view
+([admin-submissions.md](admin-submissions.md)). They are
 never queue items, not even for an Admin.
 
 After an escalation the ticket is ordinary general-queue work. Staff who may
@@ -211,8 +213,9 @@ breaks `failed` down by attempt outcome code. Because the counts come from
 events, a repeated or denied request never changes them.
 
 In the web app: Administration → AI assistance → "AI outcomes and records"
-(`/admin/ai/records`). A record opens the read-only staff ticket page, which
-shows the suggestion and the decision.
+(`/admin/ai/records`). A record opens its read-only page in the Admin
+submission view (`/admin/submissions/{ticket_id}`), which shows the intake, the
+suggestion, the decision, and the confirmation event.
 
 ## Tests
 

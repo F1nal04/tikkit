@@ -141,6 +141,21 @@ changed input gets a new key. Uploads finish before sending. Language changes
 keep mounted input. A reply that becomes unavailable is retained, disabled,
 until the current lifecycle permits sending again.
 
+## Admin submission view (`/admin/submissions`)
+
+Every submitted ticket for Admins, with filters for category, status,
+resolution source, AI outcome, and submission dates (inclusive UTC days) kept
+in the address bar (`src/lib/submissions.ts` parses them; unknown values fall
+back to "all"). A row opens `/admin/submissions/{id}`: overview, frozen intake
+and screenshots, the AI attempt with its suggestion as plain text in its own
+`lang`, the requester's decision and its confirmation event, and every ticket
+event. Both pages only read: there are no buttons besides the filter form, no
+polling, and no action endpoint. An outcome notice says whether a suggestion
+was confirmed (`solved`, final) or is unconfirmed, pending, abandoned, failed,
+skipped, or escalated. Tickets that are help desk work link to the staff view
+(`/queue/{id}`); AI-stage and AI-solved records do not. Details:
+[admin-submissions.md](admin-submissions.md).
+
 ## Notifications
 
 The shell's top bar links to `/notifications` with the unread count (`unread`

@@ -85,7 +85,7 @@
   {/snippet}
   {#each data.records.items as record (record.id)}
     <tr data-outcome={record.outcome}>
-      <th scope="row"><a href={`/queue/${record.ticket_id}`}>#{record.reference} {record.subject}</a></th>
+      <th scope="row"><a href={`/admin/submissions/${record.ticket_id}`}>#{record.reference} {record.subject}</a></th>
       <td>{record.requester.display_name} ({record.requester.username})</td>
       <td>{r.outcomes[record.outcome]}</td>
       <td><StatusBadge status={record.status} label={t.statuses[record.status]} /></td>

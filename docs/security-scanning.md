@@ -59,3 +59,9 @@ Current exceptions:
   for the Postgres-only API (`cargo tree -e all -i libsqlite3-sys --target all`
   is empty). Remove the exception when sqlx drops it from the lockfile or
   accepts a fixed release. No tracking issue filed yet.
+- `GHSA-fc5q-39xc-vjpf` (`picomatch` <= 4.0.7, ReDoS through repeated extglobs,
+  no fixed release): locked only through `vite`, `vitest`, and `svelte-check`
+  (`tinyglobby`/`fdir`). It matches glob patterns from this repository's own
+  configuration at build and test time and is not part of the production
+  server. Remove the `--ignore` in `.github/workflows/security.yml` when
+  picomatch publishes a fix. No tracking issue filed yet.
