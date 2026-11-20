@@ -35,8 +35,8 @@ written while an enabled SMTP connection exists.
 
 Internal notes (`internal_note_added`) never enqueue anything. The actor is
 never notified of their own action. Admins are notified only about shared-queue
-intake. Authentication mail (invitation, recovery) keeps #28's direct,
-best-effort sending.
+intake. Authentication mail (invitation, recovery) is sent directly and
+best-effort, outside this outbox (see [auth.md](auth.md#email-delivery)).
 
 ## Worker
 
@@ -86,9 +86,11 @@ link, and access is checked again on arrival.
 - `GET`/`PUT /api/notification-preferences` `{email, in_app}`.
 - Admin: `GET /api/admin/notifications` (counts by status and failure codes) and
   `POST /api/admin/notifications/retry` (re-queues `failed` rows; audited as
-  `notifications_retried`; no duplicates thanks to the idempotency key).
+  `notifications_retried`; recorded keys prevent resends).
 
 ## Not here
 
-SLA/escalation notifications, reply-by-email, digests, push, read-all, and the
-auto-close worker itself (#55).
+SLA/escalation notifications, reply-by-email, digests, push and read-all do not
+exist. The confirmation-timeout auto-close worker is described in
+[lifecycle.md](lifecycle.md#auto-close-worker); it enqueues the closure
+notification through the same outbox as every other ticket event.

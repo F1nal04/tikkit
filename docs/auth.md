@@ -141,8 +141,9 @@ response, and a recovery request only logs `no email was sent` at info level.
 Logs, errors, and audit events never contain tokens, links, addresses, or SMTP
 credentials. A failed background send is recorded on the connection as a stable
 error code (`last_delivery_error`) and does not undo the invitation or recovery
-token. The same send path accepts an idempotency key so the notification outbox
-can retry without a second copy; this API does not implement that outbox.
+token. The same send path accepts an idempotency key, which the ticket notification
+outbox ([notifications.md](notifications.md)) uses to retry without a second
+copy. Invitation and recovery mail do not go through that outbox.
 
 The `/invite/...` and `/reset-password/...` page URLs do contain the token; keep
 reverse-proxy access logs off or path-redacted. Every web page is served with

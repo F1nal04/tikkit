@@ -217,7 +217,7 @@ provider output is ignored.
 `expected_updated_at` the client loaded (`TicketDetail.updated_at`):
 `start_work`, `request_information`, `propose_resolution {summary}`, `reopen`,
 or `set_priority {priority_id}`. Status actions call `lifecycle::transition`
-(so authorization precedes the source-status check, as in #16); there is no staff
+(so authorization precedes the source-status check, as for every staff write); there is no staff
 action that accepts, rejects, or closes. A newer reply, status, or priority change
 makes `expected_updated_at` stale: `409 conflict`, nothing written. Private
 notes do not move `updated_at`. Checks run in the same order as assignment:
@@ -245,7 +245,7 @@ The staff endpoint first requires a staff capability, then applies the order
 above, including for `reopen`. Requesters of any role use `/actions`. Ordinary
 staff work on finished tickets returns `403`, because `authorize_ticket`
 requires open human work before the lifecycle checks the transition's source
-status. This preserves #16 and the conversation API's authorization order. An
+status. This keeps the same authorization order as the conversation API. An
 authorized writer attempting an invalid transition between open states (or
 reopening a non-closed team ticket) gets `409`. Stale authorized writes return
 `409` and roll back both state and events.

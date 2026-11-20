@@ -19,9 +19,9 @@ Open <http://localhost:3000>, exactly that address: `PUBLIC_ORIGIN` in `.env`
 is the only origin the API accepts state-changing browser requests from, so
 <http://127.0.0.1:3000> or a LAN address answers every save with
 `403 csrf_rejected`. To use another address, set `PUBLIC_ORIGIN` to it and
-restart the API. The page checks the Rust API through Vite's
-`/api` proxy. Add `?lang=de` for German. The API listens on `127.0.0.1:3001` and exposes
-`GET /api/health`, returning `{"status":"ok"}`.
+restart the API. Vite proxies `/api` to the Rust API, which listens on
+`127.0.0.1:3001` and answers `GET /api/health` (`{"status":"ok"}`) and
+`GET /api/ready`. Add `?lang=de` for German.
 
 On a fresh database every page redirects to <http://localhost:3000/setup>:
 create the first Admin there (username, contact email, password, language) and
@@ -44,9 +44,9 @@ cp .env.example .env
 # then replace both CHANGE_ME values in .env with `openssl rand -base64 32` output
 ```
 
-All API settings, probes (`/api/health`, `/api/ready`), graceful shutdown, and a
-production Compose sketch are described in
-[docs/configuration.md](docs/configuration.md).
+All API settings, probes (`/api/health`, `/api/ready`) and graceful shutdown are
+described in [docs/configuration.md](docs/configuration.md); the production
+Compose stack is in [docs/deployment.md](docs/deployment.md).
 
 The API applies migrations from `apps/api/migrations/` on startup, so
 `bun run dev` or `cargo run -p tikkit-api` migrates a fresh database; it exits
@@ -86,7 +86,7 @@ turbo.json  Workspace tasks and caching
 ```sh
 bun run dev       # Run both applications
 bun run build     # Build the frontend and release API binary
-bun run check     # svelte-check, rustfmt, and Clippy
+bun run check     # svelte-kit sync + svelte-check, api-client drift check + tsc, rustfmt, Clippy
 bun run test      # Vitest and Rust API tests (see docs/testing.md)
 bun run test:e2e  # Playwright browser tests
 bun run start     # Run both production builds (build first)
@@ -103,9 +103,14 @@ The frontend runs with Node.js from `apps/web/build/index.js`
 (SvelteKit adapter-node). It listens on `0.0.0.0:3000` by default; set `HOST`
 and `PORT` as needed. During server-side rendering it calls the API directly
 at `API_ORIGIN` (default `http://127.0.0.1:3001`).
-Behind a reverse proxy, set `ORIGIN` to the public portal origin (for example
-`https://help.example.com`). SvelteKit needs it for its CSRF/origin checks. Use
-`PROTOCOL_HEADER`/`HOST_HEADER`/`XFF_DEPTH` only if you can't set `ORIGIN`.
+adapter-node 6 (SvelteKit 3) has no `ORIGIN` setting. Unless the build sets
+`kit.paths.origin`, the page origin is `https://` plus the request's `Host`
+header, which SvelteKit's origin check and the SSR `/api` rewrite use. So the
+reverse proxy must accept only the configured site host and pass `Host`
+unchanged. Set `PROTOCOL_HEADER=x-forwarded-proto` behind a proxy that
+overwrites that header (`HOST_HEADER` and `XFF_DEPTH` are the other adapter
+variables). The API's `PUBLIC_ORIGIN` is a separate setting, the CSRF anchor
+(see [docs/security.md](docs/security.md#csrf-and-origin-policy)).
 The backend executable is `target/release/tikkit-api`. Set `API_ADDR` to
 change its listen address, for example `API_ADDR=0.0.0.0:3001` in a container.
 
@@ -114,6 +119,14 @@ other requests to the frontend. The Vite API proxy runs only in development.
 Changing the API's development port also requires updating the proxy in
 `apps/web/vite.config.ts`.
 
-## Production deployment
+## Production deployment and guides
 
-See the [single-host Docker Compose deployment guide](docs/deployment.md).
+Install, upgrade, back up and restore with the
+[Docker Compose install guide](docs/guides/install.md); the reference is the
+[single-host deployment page](docs/deployment.md). [docs/guides](docs/guides/README.md)
+has the task-oriented guides for people who run or use Tikkit:
+[install](docs/guides/install.md), [architecture](docs/guides/architecture.md),
+[requesters](docs/guides/requester.md), [help desk](docs/guides/operator.md),
+[administrators](docs/guides/admin.md), [AI assistance](docs/guides/ai.md) and
+[troubleshooting](docs/guides/troubleshooting.md), with supported versions and what
+is not in this release.
