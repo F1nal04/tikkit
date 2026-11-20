@@ -40,7 +40,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -104,7 +103,6 @@
             "description": "Updated atomically"
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -114,7 +112,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -124,7 +121,6 @@
             }
           },
           "404": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -144,7 +140,6 @@
             }
           },
           "422": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -316,7 +311,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -491,7 +485,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -572,7 +565,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -719,7 +711,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -780,7 +771,6 @@
         "operationId": "actions",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -967,7 +957,6 @@
         "operationId": "delivery_stats",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1008,7 +997,6 @@
         "operationId": "retry_failed",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1060,7 +1048,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1150,7 +1137,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1170,7 +1156,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1180,7 +1165,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1240,7 +1224,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "text/csv": {
                 "schema": {
@@ -1260,7 +1243,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1270,7 +1252,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1301,7 +1282,6 @@
         "operationId": "get_retention",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1350,7 +1330,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1421,7 +1400,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1482,7 +1460,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1542,7 +1519,6 @@
         "operationId": "settings",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1552,7 +1528,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1562,7 +1537,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1590,7 +1564,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1600,7 +1573,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1610,7 +1582,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1620,7 +1591,6 @@
             }
           },
           "422": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1772,7 +1742,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1844,7 +1813,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1895,7 +1863,6 @@
         "operationId": "policy",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1991,7 +1958,6 @@
         "operationId": "me",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2030,7 +1996,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2223,7 +2188,6 @@
         "operationId": "active_catalog",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2254,7 +2218,6 @@
         "operationId": "full_catalog",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2305,7 +2268,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2431,7 +2393,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2523,7 +2484,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2649,7 +2609,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2738,7 +2697,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2787,7 +2745,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2909,7 +2866,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2961,7 +2917,6 @@
         ],
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2971,7 +2926,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2981,7 +2935,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2991,7 +2944,6 @@
             }
           },
           "409": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3066,7 +3018,6 @@
         "operationId": "notification_preferences",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3104,7 +3055,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3155,7 +3105,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3185,7 +3134,6 @@
         "operationId": "unread_count",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3226,9 +3174,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          },
+          "204": {},
           "401": {
             "description": "`unauthorized`",
             "content": {
@@ -3277,7 +3223,6 @@
         "operationId": "organization",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3287,7 +3232,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3318,7 +3262,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3444,7 +3387,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3598,7 +3540,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3668,7 +3609,6 @@
         "operationId": "bulk_options",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3678,7 +3618,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3709,7 +3648,6 @@
         "operationId": "queue_counts",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3781,7 +3719,6 @@
         "operationId": "list_views",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3794,7 +3731,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3833,7 +3769,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3843,7 +3778,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3894,11 +3828,8 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          },
+          "204": {},
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3908,7 +3839,6 @@
             }
           },
           "404": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3948,7 +3878,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4030,7 +3959,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4224,7 +4152,6 @@
         "operationId": "get_ai",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4273,7 +4200,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4344,7 +4270,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4403,7 +4328,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4454,7 +4378,6 @@
         "operationId": "get_limits",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4503,7 +4426,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4554,7 +4476,6 @@
         "operationId": "test_ai",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4627,7 +4548,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4678,7 +4598,6 @@
         "operationId": "get_smtp",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4727,7 +4646,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4830,7 +4748,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4901,7 +4818,6 @@
         "operationId": "setup_status",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5001,7 +4917,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5011,7 +4926,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5021,7 +4935,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5049,7 +4962,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5059,7 +4971,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5069,7 +4980,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5079,7 +4989,6 @@
             }
           },
           "422": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5120,7 +5029,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5130,7 +5038,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5140,7 +5047,6 @@
             }
           },
           "403": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5150,7 +5056,6 @@
             }
           },
           "404": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5160,7 +5065,6 @@
             }
           },
           "409": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5170,7 +5074,6 @@
             }
           },
           "422": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5212,7 +5115,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5251,7 +5153,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5303,7 +5204,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5425,7 +5325,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5634,7 +5533,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5754,7 +5652,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5764,7 +5661,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5816,7 +5712,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5879,7 +5774,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5889,7 +5783,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5909,7 +5802,6 @@
             }
           },
           "404": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5929,7 +5821,6 @@
             }
           },
           "422": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5961,7 +5852,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6023,7 +5913,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6033,7 +5922,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6053,7 +5941,6 @@
             }
           },
           "404": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6124,7 +6011,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6134,7 +6020,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6206,7 +6091,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6298,7 +6182,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6380,7 +6263,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6390,7 +6272,6 @@
             }
           },
           "401": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6410,7 +6291,6 @@
             }
           },
           "404": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6430,7 +6310,6 @@
             }
           },
           "422": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7162,10 +7041,10 @@
           "credential": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/AiCredentialInfo"
               },
               {
-                "$ref": "#/components/schemas/AiCredentialInfo"
+                "type": "null"
               }
             ]
           },
@@ -7322,10 +7201,10 @@
           "provider": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/AiProvider"
               },
               {
-                "$ref": "#/components/schemas/AiProvider"
+                "type": "null"
               }
             ]
           },
@@ -7366,10 +7245,10 @@
           "provider": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/AiProvider"
               },
               {
-                "$ref": "#/components/schemas/AiProvider"
+                "type": "null"
               }
             ]
           }
@@ -7908,11 +7787,11 @@
           "role": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Role",
                 "description": "The account's role at the time. `null` for services and for events\nolder than this field."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -8003,11 +7882,11 @@
           "subject": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AuditAccount",
                 "description": "The account the event is about, if any."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -8203,11 +8082,11 @@
           "error": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ErrorCode",
                 "description": "`null` when applied. Otherwise what the single-ticket endpoint would answer:\n`not_found` (not visible), `forbidden` (visible, not allowed), `conflict`\n(changed since listed, or nothing to change), `validation_failed` (not an\neligible target for this ticket), or `internal`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -8511,22 +8390,22 @@
           "language": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Language",
                 "description": "Language of the email and preselected account language. Default `en`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "role": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Role",
                 "description": "Role of the account created from this invitation. Default `user`."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -8719,10 +8598,10 @@
           "details": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/ErrorDetails"
               },
               {
-                "$ref": "#/components/schemas/ErrorDetails"
+                "type": "null"
               }
             ]
           },
@@ -8800,11 +8679,11 @@
           "status": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TicketStatus",
                 "description": "On a `conflict` about an AI decision: the ticket's committed status."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -9797,11 +9676,11 @@
                 "subject": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/AuditAccount",
                       "description": "The account the event is about, if any."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -10205,11 +10084,11 @@
                 "ai_outcome": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/AiRecordOutcome",
                       "description": "What became of the AI attempt; `null` when there never was one."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -10230,10 +10109,10 @@
                 "closure_reason": {
                   "oneOf": [
                     {
-                      "type": "null"
+                      "$ref": "#/components/schemas/ClosureReason"
                     },
                     {
-                      "$ref": "#/components/schemas/ClosureReason"
+                      "type": "null"
                     }
                   ]
                 },
@@ -10263,22 +10142,22 @@
                 "resolution_source": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/ResolutionSource",
                       "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
                 "route": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/SubmissionRoute",
                       "description": "`null` for records predating the submission event."
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -10692,20 +10571,20 @@
           "sort": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/QueueSort"
               },
               {
-                "$ref": "#/components/schemas/QueueSort"
+                "type": "null"
               }
             ]
           },
           "status": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/TicketStatus"
               },
               {
-                "$ref": "#/components/schemas/TicketStatus"
+                "type": "null"
               }
             ]
           },
@@ -10725,10 +10604,10 @@
           "view": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/QueueView"
               },
               {
-                "$ref": "#/components/schemas/QueueView"
+                "type": "null"
               }
             ]
           }
@@ -11690,10 +11569,10 @@
           "connection": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/SmtpConnection"
               },
               {
-                "$ref": "#/components/schemas/SmtpConnection"
+                "type": "null"
               }
             ]
           }
@@ -12009,10 +11888,10 @@
           "decision": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/AiDecision"
               },
               {
-                "$ref": "#/components/schemas/AiDecision"
+                "type": "null"
               }
             ]
           },
@@ -12056,11 +11935,11 @@
           "suggestion": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiSuggestion",
                 "description": "The one stored suggestion, untrusted model text: render as plain text."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -12083,10 +11962,10 @@
           "ai": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/SubmissionAi"
               },
               {
-                "$ref": "#/components/schemas/SubmissionAi"
+                "type": "null"
               }
             ]
           },
@@ -12118,11 +11997,11 @@
           "intake_snapshot": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SubmittedIntake",
                 "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12152,11 +12031,11 @@
           "actor": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/EventActor",
                 "description": "`null` for background jobs."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12170,11 +12049,11 @@
           "from_status": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TicketStatus",
                 "description": "Set on status transitions only."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12188,10 +12067,10 @@
           "to_status": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/TicketStatus"
               },
               {
-                "$ref": "#/components/schemas/TicketStatus"
+                "type": "null"
               }
             ]
           }
@@ -12266,11 +12145,11 @@
           "ai_outcome": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiRecordOutcome",
                 "description": "What became of the AI attempt; `null` when there never was one."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12291,10 +12170,10 @@
           "closure_reason": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/ClosureReason"
               },
               {
-                "$ref": "#/components/schemas/ClosureReason"
+                "type": "null"
               }
             ]
           },
@@ -12324,22 +12203,22 @@
           "resolution_source": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ResolutionSource",
                 "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "route": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SubmissionRoute",
                 "description": "`null` for records predating the submission event."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12513,11 +12392,11 @@
           "decision": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiDecision",
                 "description": "The requester's decision on the suggestion; `null` while undecided (and\nforever if the ticket was cancelled instead, or never got a suggestion)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12535,11 +12414,11 @@
           "reason": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiHandoffReason",
                 "description": "Set when `state` is `handed_off`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12549,11 +12428,11 @@
           "suggestion": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AiSuggestion",
                 "description": "Set once `state` was `suggestion_ready`. There is never a second one."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -12616,11 +12495,11 @@
           "ai": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TicketAi",
                 "description": "The ticket's single AI attempt with its stored suggestion and the\nrequester's decision; `null` for tickets that never went through AI.\nStaff see it on the tickets they may see (escalated tickets; Admins also\nAI-stage and AI-solved records)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12644,11 +12523,11 @@
           "closure_reason": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ClosureReason",
                 "description": "Set on `closed` and `ai_solved` tickets."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12682,11 +12561,11 @@
           "intake_snapshot": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SubmittedIntake",
                 "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12722,33 +12601,33 @@
           "requester": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TicketRequester",
                 "description": "Staff view only; `null` in the requester view."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "resolution_source": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ResolutionSource",
                 "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "staff_access": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/StaffAccess",
                 "description": "What the caller may do as staff; `null` in the requester view."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -13031,11 +12910,11 @@
           "language": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Language",
                 "description": "Interface and email language; omitted keeps the current one."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -13100,10 +12979,10 @@
           "assignee_role": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/Role"
               },
               {
-                "$ref": "#/components/schemas/Role"
+                "type": "null"
               }
             ]
           },
