@@ -1964,7 +1964,7 @@ export interface components {
          */
         AiProvider: "openai" | "gemini" | "anthropic";
         AiProviderState: {
-            credential: null | components["schemas"]["AiCredentialInfo"];
+            credential: components["schemas"]["AiCredentialInfo"] | null;
             /** @description The models that can be selected for this provider. Nothing else is accepted. */
             models: components["schemas"]["AiModelInfo"][];
             provider: components["schemas"]["AiProvider"];
@@ -2020,7 +2020,7 @@ export interface components {
             connection: components["schemas"]["AiConnection"];
             enabled: boolean;
             model: string | null;
-            provider: null | components["schemas"]["AiProvider"];
+            provider: components["schemas"]["AiProvider"] | null;
             /** @description Every supported provider, in a fixed order. */
             providers: components["schemas"]["AiProviderState"][];
             /**
@@ -2036,7 +2036,7 @@ export interface components {
             enabled: boolean;
             /** @description One of the selected provider's `models` that accepts image input. */
             model?: string | null;
-            provider?: null | components["schemas"]["AiProvider"];
+            provider?: components["schemas"]["AiProvider"] | null;
         };
         /**
          * @description Why AI can or cannot run with the stored configuration.
@@ -2234,7 +2234,7 @@ export interface components {
              * @description `null` when a service acted.
              */
             account_id: string | null;
-            role: null | components["schemas"]["Role"];
+            role: components["schemas"]["Role"] | null;
             /** @description Set exactly when no account acted: `anonymous` or the background service. */
             service: string | null;
             /**
@@ -2262,7 +2262,7 @@ export interface components {
             request_id: string | null;
             resource_id: string | null;
             resource_type: string | null;
-            subject: null | components["schemas"]["AuditAccount"];
+            subject: components["schemas"]["AuditAccount"] | null;
             /** Format: uuid */
             ticket_id: string | null;
             /**
@@ -2318,7 +2318,7 @@ export interface components {
             priority_id: string;
         };
         BulkItemResult: {
-            error: null | components["schemas"]["ErrorCode"];
+            error: components["schemas"]["ErrorCode"] | null;
             /** Format: uuid */
             id: string;
         };
@@ -2422,8 +2422,8 @@ export interface components {
              * @description Lifetime in hours, 1-720. Default 168 (7 days).
              */
             expires_in_hours?: number | null;
-            language?: null | components["schemas"]["Language"];
-            role?: null | components["schemas"]["Role"];
+            language?: components["schemas"]["Language"] | null;
+            role?: components["schemas"]["Role"] | null;
         };
         CreateSavedView: {
             filters: components["schemas"]["QueueFilters"];
@@ -2489,7 +2489,7 @@ export interface components {
         };
         ErrorBody: {
             code: components["schemas"]["ErrorCode"];
-            details?: null | components["schemas"]["ErrorDetails"];
+            details?: components["schemas"]["ErrorDetails"] | null;
             /** @description Safe English fallback text; translate by `code` instead of showing this. */
             message: string;
         };
@@ -2503,7 +2503,7 @@ export interface components {
             fields: {
                 [key: string]: string[];
             };
-            status?: null | components["schemas"]["TicketStatus"];
+            status?: components["schemas"]["TicketStatus"] | null;
         };
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
@@ -2817,7 +2817,7 @@ export interface components {
                 request_id: string | null;
                 resource_id: string | null;
                 resource_type: string | null;
-                subject: null | components["schemas"]["AuditAccount"];
+                subject: components["schemas"]["AuditAccount"] | null;
                 /** Format: uuid */
                 ticket_id: string | null;
                 /**
@@ -2938,13 +2938,13 @@ export interface components {
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_SubmissionSummary: {
             items: {
-                ai_outcome: null | components["schemas"]["AiRecordOutcome"];
+                ai_outcome: components["schemas"]["AiRecordOutcome"] | null;
                 assignee_display_name: string | null;
                 /** Format: uuid */
                 category_id: string;
                 /** @description The category name frozen at submission. */
                 category_name: string;
-                closure_reason: null | components["schemas"]["ClosureReason"];
+                closure_reason: components["schemas"]["ClosureReason"] | null;
                 /**
                  * Format: date-time
                  * @description Submission time.
@@ -2958,8 +2958,8 @@ export interface components {
                 reference: number;
                 requester: components["schemas"]["TicketRequester"];
                 resolution: components["schemas"]["SubmissionResolution"];
-                resolution_source: null | components["schemas"]["ResolutionSource"];
-                route: null | components["schemas"]["SubmissionRoute"];
+                resolution_source: components["schemas"]["ResolutionSource"] | null;
+                route: components["schemas"]["SubmissionRoute"] | null;
                 status: components["schemas"]["TicketStatus"];
                 subject: string;
                 /** @description `null`: the shared general queue, or never human work. */
@@ -3103,12 +3103,12 @@ export interface components {
             /** Format: uuid */
             priority_id?: string | null;
             q?: string | null;
-            sort?: null | components["schemas"]["QueueSort"];
-            status?: null | components["schemas"]["TicketStatus"];
+            sort?: components["schemas"]["QueueSort"] | null;
+            status?: components["schemas"]["TicketStatus"] | null;
             /** Format: uuid */
             team_id?: string | null;
             unassigned?: boolean | null;
-            view?: null | components["schemas"]["QueueView"];
+            view?: components["schemas"]["QueueView"] | null;
         };
         /**
          * @description Fixed orders; ties break on `(created_at, id)`.
@@ -3490,7 +3490,7 @@ export interface components {
          */
         SmtpSecurity: "starttls" | "implicit_tls";
         SmtpSettings: {
-            connection: null | components["schemas"]["SmtpConnection"];
+            connection: components["schemas"]["SmtpConnection"] | null;
         };
         SmtpSettingsWrite: {
             enabled: boolean;
@@ -3607,7 +3607,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             decided_at: string | null;
-            decision: null | components["schemas"]["AiDecision"];
+            decision: components["schemas"]["AiDecision"] | null;
             /**
              * Format: int64
              * @description The decision event in `events` (for `solved`: the confirmation event).
@@ -3622,11 +3622,11 @@ export interface components {
             outcome_code: string | null;
             provider: string;
             state: components["schemas"]["AiAttemptState"];
-            suggestion: null | components["schemas"]["AiSuggestion"];
+            suggestion: components["schemas"]["AiSuggestion"] | null;
         };
         /** @description One submission in full, read-only. */
         SubmissionDetail: {
-            ai: null | components["schemas"]["SubmissionAi"];
+            ai: components["schemas"]["SubmissionAi"] | null;
             /** Format: date-time */
             confirmation_deadline: string | null;
             /**
@@ -3637,7 +3637,7 @@ export interface components {
             description: string;
             /** @description Every event of the ticket, oldest first. */
             events: components["schemas"]["SubmissionEvent"][];
-            intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            intake_snapshot: components["schemas"]["SubmittedIntake"] | null;
             /**
              * Format: int64
              * @description Intake screenshots the retention policy has removed.
@@ -3650,15 +3650,15 @@ export interface components {
          *     and message events (which carry the message ID only, never its text).
          */
         SubmissionEvent: {
-            actor: null | components["schemas"]["EventActor"];
+            actor: components["schemas"]["EventActor"] | null;
             /** Format: date-time */
             created_at: string;
             event_type: string;
-            from_status: null | components["schemas"]["TicketStatus"];
+            from_status: components["schemas"]["TicketStatus"] | null;
             /** Format: int64 */
             id: number;
             payload: Record<string, never>;
-            to_status: null | components["schemas"]["TicketStatus"];
+            to_status: components["schemas"]["TicketStatus"] | null;
         };
         /**
          * @description Immutable submission receipt. A replay returns the original submitted status;
@@ -3685,13 +3685,13 @@ export interface components {
         SubmissionRoute: "ai" | "ai_disabled" | "category_exempt" | "requester_skip";
         /** @description One submission in the Admin list. No ticket text beyond the subject. */
         SubmissionSummary: {
-            ai_outcome: null | components["schemas"]["AiRecordOutcome"];
+            ai_outcome: components["schemas"]["AiRecordOutcome"] | null;
             assignee_display_name: string | null;
             /** Format: uuid */
             category_id: string;
             /** @description The category name frozen at submission. */
             category_name: string;
-            closure_reason: null | components["schemas"]["ClosureReason"];
+            closure_reason: components["schemas"]["ClosureReason"] | null;
             /**
              * Format: date-time
              * @description Submission time.
@@ -3705,8 +3705,8 @@ export interface components {
             reference: number;
             requester: components["schemas"]["TicketRequester"];
             resolution: components["schemas"]["SubmissionResolution"];
-            resolution_source: null | components["schemas"]["ResolutionSource"];
-            route: null | components["schemas"]["SubmissionRoute"];
+            resolution_source: components["schemas"]["ResolutionSource"] | null;
+            route: components["schemas"]["SubmissionRoute"] | null;
             status: components["schemas"]["TicketStatus"];
             subject: string;
             /** @description `null`: the shared general queue, or never human work. */
@@ -3775,7 +3775,7 @@ export interface components {
              * @description When the decision was committed: the confirmation time of `solved`.
              */
             decided_at: string | null;
-            decision: null | components["schemas"]["AiDecision"];
+            decision: components["schemas"]["AiDecision"] | null;
             /** Format: date-time */
             finished_at: string | null;
             /**
@@ -3783,9 +3783,9 @@ export interface components {
              *     at submission. It never changes afterwards.
              */
             language: components["schemas"]["Language"];
-            reason: null | components["schemas"]["AiHandoffReason"];
+            reason: components["schemas"]["AiHandoffReason"] | null;
             state: components["schemas"]["AiAttemptState"];
-            suggestion: null | components["schemas"]["AiSuggestion"];
+            suggestion: components["schemas"]["AiSuggestion"] | null;
         };
         /**
          * @description Public handling details shown to a ticket's requester. `team_name: null`
@@ -3797,14 +3797,14 @@ export interface components {
         };
         /** @description One ticket as the caller may see it. */
         TicketDetail: {
-            ai: null | components["schemas"]["TicketAi"];
+            ai: components["schemas"]["TicketAi"] | null;
             assignment: components["schemas"]["TicketAssignmentView"];
             /** @description Dispatch and assignment history, oldest first; staff view only (empty for the requester). */
             assignment_changes: components["schemas"]["AssignmentChange"][];
             /** Format: uuid */
             category_id: string;
             category_name: string;
-            closure_reason: null | components["schemas"]["ClosureReason"];
+            closure_reason: components["schemas"]["ClosureReason"] | null;
             /**
              * Format: date-time
              * @description Auto-close time of the pending proposal; set only while `awaiting_confirmation`.
@@ -3821,7 +3821,7 @@ export interface components {
             description: string;
             /** Format: uuid */
             id: string;
-            intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            intake_snapshot: components["schemas"]["SubmittedIntake"] | null;
             /** @description Staff-only effective-priority history, oldest first; empty in requester responses. */
             priority_changes: components["schemas"]["PriorityChange"][];
             /** Format: uuid */
@@ -3843,9 +3843,9 @@ export interface components {
              * @description Intake screenshots the retention policy has removed.
              */
             removed_screenshots: number;
-            requester: null | components["schemas"]["TicketRequester"];
-            resolution_source: null | components["schemas"]["ResolutionSource"];
-            staff_access: null | components["schemas"]["StaffAccess"];
+            requester: components["schemas"]["TicketRequester"] | null;
+            resolution_source: components["schemas"]["ResolutionSource"] | null;
+            staff_access: components["schemas"]["StaffAccess"] | null;
             status: components["schemas"]["TicketStatus"];
             subject: string;
             /** @description Status transitions, oldest first. */
@@ -3951,7 +3951,7 @@ export interface components {
         UpdateProfileRequest: {
             /** @description Contact address; omitted keeps the current one. */
             email?: string | null;
-            language?: null | components["schemas"]["Language"];
+            language?: components["schemas"]["Language"] | null;
         };
         UpdateTeamRequest: {
             /** @description Archiving clears leadership, memberships and assignments, retaining all history. */
@@ -3969,7 +3969,7 @@ export interface components {
             /** Format: uuid */
             assignee_id: string | null;
             assignee_name: string | null;
-            assignee_role: null | components["schemas"]["Role"];
+            assignee_role: components["schemas"]["Role"] | null;
             /** Format: int64 */
             awaiting_confirmation: number;
             /** Format: int64 */
