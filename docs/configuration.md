@@ -45,9 +45,8 @@ Background sends try transient failures at most 3 times; the Admin test sends on
 ## Upgrading
 
 **`TRUST_PROXY_HEADERS` was replaced by `TRUSTED_PROXIES` (#44).** The old
-switch trusted `X-Forwarded-For` from any peer. An API started with
-`TRUST_PROXY_HEADERS=true` now refuses to start and names the replacement;
-`TRUST_PROXY_HEADERS=false` is still accepted and means "no proxy trusted".
+switch trusted `X-Forwarded-For` from any peer. An API refuses to start if the old switch is enabled. A disabled
+legacy switch means no proxy is trusted.
 Migrate by removing `TRUST_PROXY_HEADERS` and setting `TRUSTED_PROXIES` to
 the network of the reverse proxy and the web server, e.g.
 `TRUSTED_PROXIES=172.30.0.0/24` with a fixed Compose subnet (see
@@ -74,8 +73,8 @@ pages then send HSTS for https requests (without it they never do).
   its applied migrations match this build; otherwise `503` with
   `{"status":"unavailable","checks":{"database":"ok|unavailable","migrations":"ok|pending|incompatible|unknown"}}`.
 - On SIGTERM or Ctrl+C the API stops accepting connections, drains in-flight
-  requests for up to `SHUTDOWN_TIMEOUT_SECS`, closes the database pool (at most
-  5 more seconds), and exits.
+  requests for up to `SHUTDOWN_TIMEOUT_SECS`, waits up to 5 seconds for
+  workers and up to 5 more seconds for the database pool to close, then exits.
 
 ## Operational access
 
@@ -104,19 +103,8 @@ alert rules and diagnostic commands.
 
 ## Production
 
-`docker-compose.prod.example.yml` sketches the deployment: only the reverse
-proxy publishes ports; the API and PostgreSQL sit on an internal network. It
-refuses to start unless the required secrets are supplied, e.g. in a `.env`
-next to it (never commit it):
-
-```sh
-POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
-SESSION_SECRET=$(openssl rand -base64 32)
-ENCRYPTION_KEY=$(openssl rand -base64 32)
-PUBLIC_HOST=help.example.com
-```
-
-Packaged images and full production documentation are tracked separately.
+See the [single-host deployment guide](deployment.md) and
+[production environment example](../.env.production.example).
 
 ## Organization settings
 

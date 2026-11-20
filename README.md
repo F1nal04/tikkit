@@ -113,3 +113,7 @@ Configure your deployment's reverse proxy to send `/api/*` to Rust and
 other requests to the frontend. The Vite API proxy runs only in development.
 Changing the API's development port also requires updating the proxy in
 `apps/web/vite.config.ts`.
+
+## Production deployment
+
+See the [single-host Docker Compose deployment guide](docs/deployment.md).

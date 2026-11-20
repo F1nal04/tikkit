@@ -13,6 +13,7 @@
     },
     "apps/web": {
       "name": "@tikkit/web",
+      "version": "0.1.0",
       "dependencies": {
         "@tikkit/api-client": "workspace:*",
       },
