@@ -9,7 +9,8 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose,
 };
 use rustls::{
     ServerConfig,
@@ -80,13 +81,14 @@ pub fn identity() -> Identity {
     ca_params.distinguished_name = name;
     let ca_key = KeyPair::generate().unwrap();
     let ca = ca_params.self_signed(&ca_key).unwrap();
+    let issuer = Issuer::new(ca_params, ca_key);
 
     let mut params = CertificateParams::new(vec!["127.0.0.1".into()]).unwrap();
     let mut name = DistinguishedName::new();
     name.push(DnType::CommonName, "127.0.0.1");
     params.distinguished_name = name;
     let key = KeyPair::generate().unwrap();
-    let cert = params.signed_by(&key, &ca, &ca_key).unwrap();
+    let cert = params.signed_by(&key, &issuer).unwrap();
 
     let server = ServerConfig::builder()
         .with_no_client_auth()
