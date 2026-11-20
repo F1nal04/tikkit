@@ -297,9 +297,9 @@ async fn send(
         }
         // No content in events: consumers must reload the message AND recheck
         // current visibility at delivery, including team changes and self-submission.
-        sqlx::query("INSERT INTO ticket_events (ticket_id,actor_account_id,event_type,payload) VALUES ($1,$2,$3,$4)")
+        sqlx::query("INSERT INTO ticket_events (ticket_id,actor_account_id,event_type,payload,request_id) VALUES ($1,$2,$3,$4,$5)")
             .bind(ticket).bind(actor.id).bind(if private { "internal_note_added" } else { "public_reply_added" })
-            .bind(json!({"message_id":id})).execute(&mut *tx).await?;
+            .bind(json!({"message_id":id})).bind(crate::telemetry::request_id()).execute(&mut *tx).await?;
         if !private {
             sqlx::query("UPDATE tickets SET updated_at=clock_timestamp() WHERE id=$1")
                 .bind(ticket)

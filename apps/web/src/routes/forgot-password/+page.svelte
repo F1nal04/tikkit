@@ -1,7 +1,9 @@
 <script lang="ts">
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import { api } from '#lib/api.ts'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import { errorText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -22,6 +24,7 @@
       sent = true
     } catch (e) {
       error = e
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -37,8 +40,8 @@
 {:else}
   <p>{t.recoveryIntro}</p>
   <form onsubmit={submit} novalidate>
+    {#if error}<ErrorSummary title={errorText(t, error)} />{/if}
     <Field label={t.username} name="username" autocomplete="username" required bind:value={username} />
-    {#if error}<Alert>{errorText(t, error)}</Alert>{/if}
     <button type="submit" disabled={busy}>{t.recoverySubmit}</button>
   </form>
   <p><a href="/login">{t.backToSignIn}</a></p>

@@ -105,7 +105,11 @@ ticket cannot get a second attempt. A decision never calls the provider.
 
 For its requester an `ai_solved` ticket is read-only history: listed in
 `GET /api/tickets`, readable with the suggestion in `GET /api/tickets/{id}`.
-No role can change it:
+No role can change it. The only thing that ever touches the record afterwards
+is the Admin retention policy, which removes its stored content (text,
+screenshots, AI input and suggestion) once the configured period has passed,
+exactly as for operator-handled tickets, and leaves the status, the decision
+event, and every statistic as they are ([retention.md](retention.md)):
 
 | Request on an `ai_solved` ticket | Requester | Admin | Operator, Specialist, Team Lead | Another User |
 | --- | --- | --- | --- | --- |
@@ -121,8 +125,14 @@ The reopening setting does not apply: it covers operator-resolved tickets only.
 Jobs cannot change it either: no transition starts from `ai_solved`, the
 attempt worker and its sweep only touch `processing` attempts, the auto-close
 worker only `awaiting_confirmation`, and a late provider result finds its
-attempt finished. A denied request writes no event, so statistics, queue
-counts, and notifications do not move.
+attempt finished. A denied request writes no ticket event, so statistics, queue
+counts, and notifications do not move. Denied `actions`, `staff-actions`,
+`assignment`, and bulk requests by a caller who can see the record (its
+requester or an Admin) are recorded in the audit log as
+`ai_solved_change_denied` with the account, the attempted action, and the
+response code, a bounded number of times per account, ticket, and action
+([audit.md](audit.md#denied-attempts)). Callers who get `404` leave no row.
+The audit log is not a ticket event and feeds no statistic.
 
 The database enforces the same (migrations `0008`, `0022`, `0023`): an
 `ai_solved` ticket row cannot change in any column, the attempt cannot change
@@ -146,7 +156,9 @@ for them, and none is delivered or listed. There is no export endpoint; any
 future one must use `staff_visible_sql`.
 
 Admins can open them with `GET /api/tickets/{id}` (staff view, every
-`staff_access` flag false) and find them through the Admin list below. They are
+`staff_access` flag false), find them through the Admin list below, and
+inspect them read-only in the Admin submission view
+([admin-submissions.md](admin-submissions.md)). They are
 never queue items, not even for an Admin.
 
 After an escalation the ticket is ordinary general-queue work. Staff who may
@@ -211,8 +223,9 @@ breaks `failed` down by attempt outcome code. Because the counts come from
 events, a repeated or denied request never changes them.
 
 In the web app: Administration → AI assistance → "AI outcomes and records"
-(`/admin/ai/records`). A record opens the read-only staff ticket page, which
-shows the suggestion and the decision.
+(`/admin/ai/records`). A record opens its read-only page in the Admin
+submission view (`/admin/submissions/{ticket_id}`), which shows the intake, the
+suggestion, the decision, and the confirmation event.
 
 ## Tests
 

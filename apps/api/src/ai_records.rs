@@ -38,7 +38,7 @@ pub enum AiRecordOutcome {
 }
 
 /// `ai_attempts a`, `tickets t`, and the decision event `d` to one outcome.
-const OUTCOME_SQL: &str = "CASE
+pub(crate) const OUTCOME_SQL: &str = "CASE
     WHEN d.event_type = 'ai_solved' THEN 'solved'
     WHEN d.event_type = 'ai_not_solved' THEN 'not_solved'
     WHEN a.state = 'processing' THEN 'processing'

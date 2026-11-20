@@ -42,19 +42,19 @@ test('shows one generic message for failed logins', async () => {
     'de',
     json(401, { error: { code: 'invalid_credentials', message: 'x' }, request_id: 'r' }),
   )
-  const alert = await screen.findByRole('alert')
-  expect(alert.textContent).toBe('Benutzername oder Passwort ist falsch.')
+  await waitFor(() => expect(document.getElementById('form-errors')).toBeTruthy())
+  expect(document.getElementById('form-errors')?.textContent?.trim()).toBe('Benutzername oder Passwort ist falsch.')
   expect(goto).not.toHaveBeenCalled()
   expect((screen.getByLabelText('Passwort') as HTMLInputElement).value).toBe('')
 })
 
 test('explains rate limiting', async () => {
   await signIn('en', json(429, { error: { code: 'rate_limited', message: 'x' }, request_id: 'r' }))
-  expect((await screen.findByRole('alert')).textContent).toContain('Too many attempts')
+  await waitFor(() => expect(document.getElementById('form-errors')?.textContent).toContain('Too many requests'))
 })
 
 test('keeps the entered password when a temporary outage prevents sign-in', async () => {
   await signIn('en', json(503, { error: { code: 'unavailable', message: 'x' }, request_id: 'r' }))
-  await screen.findByRole('alert')
+  await waitFor(() => expect(document.getElementById('form-errors')).toBeTruthy())
   expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('correct horse battery')
 })

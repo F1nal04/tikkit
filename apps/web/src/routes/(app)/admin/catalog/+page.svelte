@@ -2,8 +2,9 @@
   import { invalidateAll } from '$app/navigation'
   import { ApiError, type Schemas } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
-  import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import { fieldBody } from './form.ts'
   import type { PageProps } from './$types'
@@ -31,6 +32,7 @@
         ? codes.map((code) => (code === 'taken' ? t.catalog.taken : fieldText(t, code))).join(' ')
         : errorText(t, e)
       problem = { at, text }
+      await focusFormErrors()
       return false
     }
   }
@@ -74,7 +76,7 @@
 <svelte:head><title>{t.catalog.title}</title></svelte:head>
 
 {#snippet problemAt(at: string)}
-  {#if problem?.at === at}<Alert>{problem.text}</Alert>{/if}
+  {#if problem?.at === at}<ErrorSummary title={problem.text} />{/if}
 {/snippet}
 
 {#snippet controls(kind: Kind, items: { id: string; archived: boolean }[], index: number, name: string)}
@@ -158,13 +160,13 @@
     true,
   )}
 >
+  {@render problemAt('category-new')}
   <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
   <label class="check">
     <input type="checkbox" name="skip_ai" aria-describedby="skip-ai-hint" />
     {t.catalog.skipAi}
   </label>
   <p class="hint" id="skip-ai-hint">{t.catalog.skipAiHint}</p>
-  {@render problemAt('category-new')}
   <button type="submit">{t.catalog.add}</button>
 </form>
 
@@ -193,8 +195,8 @@
 <form
   onsubmit={submit('priority-new', (f) => api().request('post', '/api/priorities', { body: { name: named(f) } }), true)}
 >
-  <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
   {@render problemAt('priority-new')}
+  <label>{t.catalog.name} <input name="name" required maxlength="100" /></label>
   <button type="submit">{t.catalog.add}</button>
 </form>
 
@@ -230,6 +232,7 @@
     true,
   )}
 >
+  {@render problemAt('field-new')}
   <Field
     name="kind"
     label={t.catalog.kind}
@@ -247,7 +250,6 @@
     choices: [],
     archived: false,
   })}
-  {@render problemAt('field-new')}
   <button type="submit">{t.catalog.addField}</button>
 </form>
 

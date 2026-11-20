@@ -1,0 +1,54 @@
+{
+  "api_restart_mid_load": {
+    "passed": true,
+    "ms": 5919,
+    "committed": 1,
+    "clean_failures": 7
+  },
+  "postgres_restart": {
+    "passed": true,
+    "ms": 693
+  },
+  "sigkill_ai_in_flight": {
+    "passed": true,
+    "ms": 153382,
+    "usage_lease_released_after_ms": 153359
+  },
+  "provider_slowness_and_outage": {
+    "passed": true,
+    "ms": 25064,
+    "peak_provider_calls": 2,
+    "circuit_open_refusals": 8,
+    "direct_submit_ms": 17
+  },
+  "sigkill_unacknowledged_smtp": {
+    "passed": true,
+    "ms": 3996
+  },
+  "sigkill_after_smtp_receipt": {
+    "passed": true,
+    "ms": 10131
+  },
+  "mail_outage_retry": {
+    "passed": true,
+    "ms": 32394,
+    "accepted_after_ms": 32393
+  },
+  "overdue_proposals_two_workers": {
+    "passed": true,
+    "ms": 15132,
+    "replicas": 2,
+    "timed_out": 8,
+    "requester_confirmed": 4
+  },
+  "retention_catches_up_after_restart": {
+    "passed": true,
+    "ms": 3012,
+    "processing_lag_seconds": 5.683442
+  },
+  "reconciliation": {
+    "accepted_mail": 122,
+    "duplicate_mail": 0,
+    "duplicate_outbox": 0
+  }
+}

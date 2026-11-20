@@ -102,8 +102,12 @@ pub fn identity() -> Identity {
 }
 
 pub async fn listen(mode: Listen, fault: Fault) -> FakeSmtp {
+    listen_on(0, mode, fault).await
+}
+
+pub async fn listen_on(port: u16, mode: Listen, fault: Fault) -> FakeSmtp {
     let identity = identity();
-    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();

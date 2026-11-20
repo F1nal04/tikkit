@@ -234,6 +234,26 @@ async fn audit_item(
     Ok(audit(db, event, Some(user.account_id()), None, metadata).await?)
 }
 
+/// `catalog_item_updated` with the item before and after the change, so a
+/// policy flag such as a category's "Skip AI automatically" shows both values.
+async fn audit_update(
+    db: &mut PgConnection,
+    user: &CurrentUser,
+    kind: &str,
+    before: impl Serialize,
+    item: impl Serialize,
+) -> Result<(), ApiError> {
+    let metadata = json!({ "kind": kind, "before": before, "item": item });
+    Ok(audit(
+        db,
+        "catalog_item_updated",
+        Some(user.account_id()),
+        None,
+        metadata,
+    )
+    .await?)
+}
+
 // ----------------------------------------------------------------- categories
 
 #[derive(Deserialize, ToSchema)]
@@ -318,6 +338,13 @@ pub async fn update_category(
         .map(|n| text(&mut errors, "name", &n, NAME_MAX, true));
     check(errors)?;
     let mut tx = state.pool.begin().await?;
+    let before: Option<Category> = sqlx::query_as(
+        "SELECT id, name, skip_ai, archived_at IS NOT NULL AS archived
+         FROM categories WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let category: Category = sqlx::query_as(&format!(
         "UPDATE categories SET name = COALESCE($3, name), skip_ai = COALESCE($4, skip_ai), {ARCHIVE}
          WHERE id = $1 RETURNING id, name, skip_ai, archived_at IS NOT NULL AS archived"
@@ -332,18 +359,16 @@ pub async fn update_category(
     .ok_or(ApiError::NotFound)?;
     // An exempt category bypasses AI: stop its attempts still in flight and
     // hand those tickets to operators. Their results are never accepted.
-    if category.skip_ai {
-        ai_attempts::invalidate(&mut tx, Some(id), ai_attempts::CATEGORY_EXEMPT).await?;
-    }
-    audit_item(
-        &mut tx,
-        &user,
-        "catalog_item_updated",
-        "category",
-        &category,
-    )
-    .await?;
+    let handed_off = if category.skip_ai {
+        ai_attempts::invalidate(&mut tx, Some(id), ai_attempts::CATEGORY_EXEMPT).await?
+    } else {
+        0
+    };
+    audit_update(&mut tx, &user, "category", &before, &category).await?;
     tx.commit().await?;
+    state
+        .metrics
+        .event(crate::metrics::Event::AiHandoff, handed_off);
     Ok(Json(category))
 }
 
@@ -488,6 +513,13 @@ pub async fn update_priority(
         .map(|n| text(&mut errors, "name", &n, NAME_MAX, true));
     check(errors)?;
     let mut tx = state.pool.begin().await?;
+    let before: Option<Priority> = sqlx::query_as(
+        "SELECT id, name, archived_at IS NOT NULL AS archived
+         FROM priorities WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let priority: Priority = sqlx::query_as(&format!(
         "UPDATE priorities SET name = COALESCE($3, name), {ARCHIVE}
          WHERE id = $1 RETURNING id, name, archived_at IS NOT NULL AS archived"
@@ -499,14 +531,7 @@ pub async fn update_priority(
     .await
     .map_err(|e| unique_violation(e, "name"))?
     .ok_or(ApiError::NotFound)?;
-    audit_item(
-        &mut tx,
-        &user,
-        "catalog_item_updated",
-        "priority",
-        &priority,
-    )
-    .await?;
+    audit_update(&mut tx, &user, "priority", &before, &priority).await?;
     tx.commit().await?;
     Ok(Json(priority))
 }
@@ -823,6 +848,7 @@ pub async fn update_intake_field(
         .as_deref()
         .map(|c| check_choices(&mut errors, kind, c));
     check(errors)?;
+    let before = load_field(&mut tx, id).await?;
 
     sqlx::query(&format!(
         "UPDATE intake_fields SET label = COALESCE($3, label), guidance = COALESCE($4, guidance),
@@ -847,14 +873,7 @@ pub async fn update_intake_field(
     check_answerable(&mut tx, &mut errors, id).await?;
     check(errors)?;
     let field = load_field(&mut tx, id).await?;
-    audit_item(
-        &mut tx,
-        &user,
-        "catalog_item_updated",
-        "intake_field",
-        &field,
-    )
-    .await?;
+    audit_update(&mut tx, &user, "intake_field", &before, &field).await?;
     tx.commit().await?;
     Ok(Json(field))
 }

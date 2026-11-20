@@ -6,7 +6,9 @@
 //! succeed or fail independently and each reports a stable error code; a failed
 //! item writes nothing.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use time::OffsetDateTime;
@@ -17,7 +19,7 @@ use crate::{
     AppState,
     api::{ApiError, ErrorCode, FieldErrors, Json, Role},
     assignment::{self, AssignmentAction},
-    auth::CurrentUser,
+    auth::{Auth, CurrentUser},
     authz::{self, Actor, Permission},
     tickets::{self, NamedId, StaffAction},
 };
@@ -85,6 +87,7 @@ pub struct BulkResponse {
         (status = 422, description = "`tickets` is empty (`required`), over 50 (`too_many`), or repeats a ticket (`duplicate`)", body = crate::api::ErrorEnvelope)))]
 pub async fn bulk_change(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Json(body): Json<BulkRequest>,
 ) -> Result<Json<BulkResponse>, ApiError> {
@@ -107,7 +110,7 @@ pub async fn bulk_change(
     }
     let mut results = Vec::with_capacity(body.tickets.len());
     for t in body.tickets {
-        let result = apply(&state, &user, body.change, t).await;
+        let result = apply(&state, &auth, &user, body.change, t).await;
         results.push(BulkItemResult {
             id: t.id,
             error: result.err().map(|e| e.code()),
@@ -118,6 +121,7 @@ pub async fn bulk_change(
 
 async fn apply(
     state: &AppState,
+    auth: &Auth,
     user: &CurrentUser,
     change: BulkChange,
     t: BulkTicket,
@@ -127,8 +131,8 @@ async fn apply(
     use StaffAction as S;
     let (pool, me, id, expected_updated_at) =
         (&state.pool, user.account_id(), t.id, t.expected_updated_at);
-    let assign = |action| assignment::apply(pool, me, id, action);
-    let staff = |action| tickets::apply_staff_action(pool, me, id, action);
+    let assign = |action| assignment::apply(pool, auth, me, id, action);
+    let staff = |action| tickets::apply_staff_action(pool, auth, me, id, action);
     match change {
         B::Dispatch { team_id } => assign(A::Dispatch {
             expected_updated_at,

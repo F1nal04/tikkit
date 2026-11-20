@@ -1,0 +1,191 @@
+{
+  "clock_seconds": 127.69,
+  "users": 30,
+  "seconds": 120,
+  "accounts": 300,
+  "seeded_tickets": 30000,
+  "configured_provider_ms": 250,
+  "smtp_enabled": true,
+  "groups": {
+    "sign_in": {
+      "count": 630,
+      "p50": 14.5,
+      "p95": 20.2,
+      "p99": 24.4,
+      "max": 38.1,
+      "errors": {}
+    },
+    "queue_staff_detail": {
+      "count": 3959,
+      "p50": 2.2,
+      "p95": 46.4,
+      "p99": 51.3,
+      "max": 59.4,
+      "errors": {}
+    },
+    "submit_upload": {
+      "count": 1320,
+      "p50": 5.5,
+      "p95": 7.8,
+      "p99": 10.3,
+      "max": 27.9,
+      "errors": {}
+    },
+    "requester_reads": {
+      "count": 1620,
+      "p50": 1.6,
+      "p95": 2.7,
+      "p99": 4.7,
+      "max": 10.4,
+      "errors": {}
+    },
+    "staff_writes": {
+      "count": 1450,
+      "p50": 2.5,
+      "p95": 5.5,
+      "p99": 8,
+      "max": 13.7,
+      "errors": {}
+    },
+    "admin": {
+      "count": 60,
+      "p50": 21.6,
+      "p95": 1620.3,
+      "p99": 1644.7,
+      "max": 1644.7,
+      "errors": {}
+    }
+  },
+  "checks": {
+    "submit_races": 601,
+    "claim_races": 125,
+    "confirmation_races": 125,
+    "ai_decision_races": 101,
+    "operator_passes": 78
+  },
+  "expected": {
+    "submitted": 601,
+    "ai": 101,
+    "ai_solved": 51,
+    "confirmed": 125,
+    "public_replies": 125,
+    "notes": 125,
+    "attachments": 121,
+    "claims": 125
+  },
+  "resources": {
+    "samples": 39,
+    "db": {
+      "client_backends": 9,
+      "max_connections": 100,
+      "api_pool_cap": 10,
+      "sampling_note": "Early sampler included PostgreSQL parallel workers in account-specific connection counts. Those two fields are omitted here."
+    },
+    "workers": {
+      "ai_attempts": {
+        "pending_jobs": 2,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      },
+      "notifications": {
+        "pending_jobs": 1640,
+        "due_jobs": 1640,
+        "oldest_due_seconds": 2.03128
+      },
+      "auto_close": {
+        "pending_jobs": 0,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      },
+      "retention": {
+        "pending_jobs": 0,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      }
+    },
+    "containers": {
+      "api": {
+        "cpu_percent": 42.35,
+        "memory_bytes": 62107156,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "postgres": {
+        "cpu_percent": 219.62,
+        "memory_bytes": 656513434,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "provider": {
+        "cpu_percent": 0.42,
+        "memory_bytes": 24830280,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "proxy": {
+        "cpu_percent": 4.4,
+        "memory_bytes": 27955036,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "smtp": {
+        "cpu_percent": 4,
+        "memory_bytes": 33680261,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "web": {
+        "cpu_percent": 8.21,
+        "memory_bytes": 45287997,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      }
+    },
+    "sampling_interval_ms": {
+      "count": 38,
+      "p50": 3241.1,
+      "p95": 3251.2,
+      "p99": 3268,
+      "max": 3268
+    }
+  },
+  "reconciliation": {
+    "submitted": 601,
+    "submit_keys": 601,
+    "submit_events": 601,
+    "ai_solved": 51,
+    "ai_not_solved": 50,
+    "reply_events": 125,
+    "note_events": 125,
+    "ai": 101,
+    "confirmed": 125,
+    "public_replies": 125,
+    "notes": 125,
+    "attachments": 121,
+    "claims": 125,
+    "duplicate_notifications": 0,
+    "emails_sent": 1565,
+    "outbox_pending": 0,
+    "ai_duration_ms": {
+      "p50": 1675.103,
+      "p95": 1944.256,
+      "p99": 1976.464,
+      "max": 2001.246
+    }
+  },
+  "smtp_accepted": 1566,
+  "provider_duration_ms": {
+    "count": 101,
+    "p50": 251,
+    "p95": 255,
+    "p99": 256,
+    "max": 256
+  },
+  "result": "pass"
+}

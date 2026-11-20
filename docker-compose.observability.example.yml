@@ -1,0 +1,29 @@
+# Optional overlay for docker-compose.prod.example.yml.
+services:
+  api:
+    environment:
+      METRICS_PORT: "9091"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+    network_mode: "service:api"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=127.0.0.1:9090
+    configs:
+      - source: prometheus-scrape
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus-alerts
+        target: /etc/prometheus/tikkit-alerts.yml
+    volumes:
+      - prometheus-data:/prometheus
+
+configs:
+  prometheus-scrape:
+    file: ./ops/prometheus/prometheus.yml
+  prometheus-alerts:
+    file: ./ops/prometheus/alerts.yml
+
+volumes:
+  prometheus-data:

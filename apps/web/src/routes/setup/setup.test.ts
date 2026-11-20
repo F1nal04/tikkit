@@ -52,7 +52,7 @@ test('shows field errors linked to their inputs', async () => {
       request_id: 'r',
     }),
   )
-  await screen.findByRole('alert')
+  await waitFor(() => expect(document.getElementById('form-errors')).toBeTruthy())
   const input = screen.getByLabelText(/^Password/)
   expect(input.getAttribute('aria-invalid')).toBe('true')
   expect(input.getAttribute('aria-describedby')).toBe('password-hint password-error')
@@ -65,6 +65,6 @@ test('reports that setup is already complete', async () => {
   await submit(
     json(409, { error: { code: 'setup_already_completed', message: 'x' }, request_id: 'r' }),
   )
-  expect((await screen.findByRole('alert')).textContent).toContain('already been completed')
+  await waitFor(() => expect(document.getElementById('form-errors')?.textContent).toContain('already been completed'))
   expect(goto).not.toHaveBeenCalled()
 })

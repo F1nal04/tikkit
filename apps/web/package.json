@@ -1,6 +1,7 @@
 {
   "name": "@tikkit/web",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "imports": {
     "#lib/*": "./src/lib/*"
@@ -11,12 +12,14 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "start": "node build/index.js",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:full": "bun run build && playwright test --config=playwright.full.config.ts"
   },
   "dependencies": {
     "@tikkit/api-client": "workspace:*"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.64.1",
     "@sveltejs/adapter-node": "^6.0.0",
     "@sveltejs/kit": "^3.1.0",

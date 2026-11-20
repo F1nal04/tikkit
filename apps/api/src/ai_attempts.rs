@@ -18,10 +18,10 @@
 //! Logs carry ids and stable codes only, never ticket text or image data.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Cursor,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -48,11 +48,13 @@ use crate::{
     ai_guard::{AiGuard, Guarded, Refusal},
     ai_privacy,
     api::{ApiError, Language},
-    auth::{audit, ident, ident_str},
+    auth::{ident, ident_str},
     lifecycle::{self, By, Transition},
+    metrics::{Event as Metric, Metrics, Worker as WorkerMetric},
     notifications::{is_stopping, poll_loop},
     screenshots,
     submission::SubmittedIntake,
+    telemetry,
 };
 
 /// How long after submission a provider call may still be started for an
@@ -70,6 +72,21 @@ pub const MAX_CLAIMS: i32 = 3;
 /// Added to the guard's wait and call timeout before the sweep ends an attempt
 /// that a live worker still holds past its deadline.
 const SWEEP_MARGIN: Duration = Duration::from_secs(60);
+
+/// Earliest instant the sweep may take the ticket. Both polling and the
+/// scrape use this expression with `t` = tickets, `a` = ai_attempts,
+/// $1 = claim limit, and $2 = call timeout plus sweep margin, in seconds.
+pub(crate) const SWEEP_DUE_AT: &str = "CASE
+    WHEN a.state IS DISTINCT FROM 'processing' THEN t.created_at
+    ELSE LEAST(
+        CASE WHEN a.claims >= $1 THEN COALESCE(a.claimed_until, a.created_at)
+             ELSE GREATEST(a.deadline_at, a.claimed_until) END,
+        a.deadline_at + make_interval(secs => $2 + (SELECT concurrency_wait_seconds FROM ai_limits))
+    ) END";
+
+pub(crate) fn sweep_grace_seconds(call_timeout: Duration) -> f64 {
+    (call_timeout + SWEEP_MARGIN).as_secs_f64()
+}
 
 // --- Stable outcome codes ---------------------------------------------------------
 
@@ -293,11 +310,9 @@ async fn hand_off(
     usage_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
     // Locks the ticket row, then checks its status under that lock.
-    match lifecycle::transition(tx, ticket_id, By::System, &Transition::AiFailed).await {
-        Ok(_) => {
-            close(tx, ticket_id, "handed_off", outcome, usage_id).await?;
-            Ok(true)
-        }
+    // Ends the attempt with `outcome` under the same lock, before the event.
+    match lifecycle::ai_failed(tx, ticket_id, outcome, usage_id).await {
+        Ok(_) => Ok(true),
         Err(ApiError::Conflict) => Ok(false),
         Err(error) => Err(error),
     }
@@ -407,6 +422,8 @@ pub struct TicketAi {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(value_type = Option<String>, format = DateTime, required = true)]
     pub decided_at: Option<OffsetDateTime>,
+    /// Retention removed the stored suggestion; `suggestion` is then `null`.
+    pub content_removed: bool,
 }
 
 /// The public reason for a stored outcome code. Requesters do not learn budget,
@@ -436,6 +453,7 @@ type ViewRow = (
     Option<OffsetDateTime>,
     Option<String>,
     Option<OffsetDateTime>,
+    bool,
 );
 
 /// The ticket's attempt, or `None` if the ticket never went through AI. The
@@ -443,7 +461,7 @@ type ViewRow = (
 pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<TicketAi>, ApiError> {
     let row: Option<ViewRow> = sqlx::query_as(
         "SELECT a.state, a.outcome, a.language, a.explanation, a.steps, a.created_at,
-                a.finished_at, d.event_type, d.created_at
+                a.finished_at, d.event_type, d.created_at, a.content_purged_at IS NOT NULL
          FROM ai_attempts a
          LEFT JOIN ticket_events d ON d.ticket_id = a.ticket_id
               AND d.event_type IN ('ai_solved', 'ai_not_solved')
@@ -462,6 +480,7 @@ pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<Ticke
         finished_at,
         decision,
         decided_at,
+        content_removed,
     )) = row
     else {
         return Ok(None);
@@ -474,18 +493,19 @@ pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<Ticke
     Ok(Some(TicketAi {
         state,
         language: ident(language)?,
-        suggestion: explanation
-            .zip(steps)
-            .map(|(explanation, steps)| AiSuggestion {
+        suggestion: explanation.zip(steps).filter(|_| !content_removed).map(
+            |(explanation, steps)| AiSuggestion {
                 explanation,
                 steps: steps.0,
-            }),
+            },
+        ),
         reason: (state == AiAttemptState::HandedOff)
             .then(|| public_reason(outcome.as_deref().unwrap_or_default())),
         created_at,
         finished_at,
         decision,
         decided_at,
+        content_removed,
     }))
 }
 
@@ -523,6 +543,8 @@ pub struct Worker {
     encryption_key: [u8; 32],
     options: WorkerOptions,
     shutdown: Cancel,
+    metrics: Metrics,
+    failed_handoffs: Arc<Mutex<HashSet<Uuid>>>,
 }
 
 impl Worker {
@@ -539,6 +561,49 @@ impl Worker {
             encryption_key,
             options: WorkerOptions::default(),
             shutdown: Cancel::new(),
+            metrics: state.metrics.clone(),
+            failed_handoffs: Arc::default(),
+        }
+    }
+
+    fn handoff_committed(&self, generation_refused: bool) {
+        self.metrics.event(Metric::AiHandoff, 1);
+        if generation_refused {
+            self.metrics.event(Metric::GenerationRefused, 1);
+        }
+    }
+
+    fn handoff_failed(&self, ticket_id: Uuid) {
+        if self.failed_handoffs.lock().unwrap().insert(ticket_id) {
+            self.metrics.event(Metric::HandoffFailed, 1);
+            tracing::error!(%ticket_id, error_code = "ai_handoff_failed", "AI handoff did not commit");
+        }
+    }
+
+    async fn prune_handoff_failures(&self) {
+        // Admin policy and requester changes can also end a stuck attempt.
+        let checked: Vec<_> = self
+            .failed_handoffs
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        if checked.is_empty() {
+            return;
+        }
+        let resolved = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM unnest($1::uuid[]) AS recorded(id)
+             WHERE NOT EXISTS (SELECT 1 FROM tickets t WHERE t.id = recorded.id AND t.status = 'ai_processing')",
+        )
+        .bind(&checked)
+        .fetch_all(&self.pool)
+        .await;
+        if let Ok(resolved) = resolved {
+            let mut failed = self.failed_handoffs.lock().unwrap();
+            for id in resolved {
+                failed.remove(&id);
+            }
         }
     }
 
@@ -566,6 +631,7 @@ struct Job {
     model: String,
     credential_set_at: OffsetDateTime,
     claims: i32,
+    request_id: Option<Uuid>,
 }
 
 /// What processing an attempt produced, before it is committed.
@@ -574,13 +640,27 @@ enum Outcome {
     Failed {
         code: &'static str,
         usage_id: Option<Uuid>,
+        generation_refused: bool,
     },
+}
+
+impl Outcome {
+    fn generation_refused(&self) -> bool {
+        matches!(
+            self,
+            Self::Failed {
+                generation_refused: true,
+                ..
+            }
+        )
+    }
 }
 
 fn failed(code: &'static str) -> Outcome {
     Outcome::Failed {
         code,
         usage_id: None,
+        generation_refused: false,
     }
 }
 
@@ -592,10 +672,11 @@ fn failed(code: &'static str) -> Outcome {
 pub async fn worker_loop(worker: Worker) {
     let slots = Arc::new(Semaphore::new(WORKER_CONCURRENCY));
     let running = Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
-    let run = poll_loop("ai_attempts", || {
+    let run = poll_loop(WorkerMetric::AiAttempts.label(), || {
         let (worker, slots, running) = (worker.clone(), slots.clone(), running.clone());
         async move {
             let Ok(permit) = slots.try_acquire_owned() else {
+                worker.metrics.step(WorkerMetric::AiAttempts, true);
                 return Ok(false);
             };
             let Some(job) = claim(&worker).await? else {
@@ -613,7 +694,7 @@ pub async fn worker_loop(worker: Worker) {
         }
     });
     let skipped = Arc::new(tokio::sync::Mutex::new(Vec::<Uuid>::new()));
-    let sweep = poll_loop("ai_attempt_sweep", || {
+    let sweep = poll_loop(WorkerMetric::AiSweep.label(), || {
         let (worker, skipped) = (worker.clone(), skipped.clone());
         async move {
             let mut skipped = skipped.lock().await;
@@ -650,6 +731,20 @@ pub async fn process_one(worker: &Worker) -> Result<bool, ApiError> {
 /// refused there. An attempt past its deadline or claimed [`MAX_CLAIMS`] times
 /// is never claimed again.
 async fn claim(worker: &Worker) -> Result<Option<Job>, ApiError> {
+    let result = claim_due(worker).await;
+    worker
+        .metrics
+        .step(WorkerMetric::AiAttempts, result.is_ok());
+    if result
+        .as_ref()
+        .is_ok_and(|job| job.as_ref().is_some_and(|j| j.claims > 1))
+    {
+        worker.metrics.retry(WorkerMetric::AiAttempts);
+    }
+    result
+}
+
+async fn claim_due(worker: &Worker) -> Result<Option<Job>, ApiError> {
     let mut tx = worker.pool.begin().await?;
     // One claim at a time in the whole deployment, so concurrent claimers
     // cannot each count the same free slot.
@@ -669,7 +764,9 @@ async fn claim(worker: &Worker) -> Result<Option<Job>, ApiError> {
                    < (SELECT max_concurrency FROM ai_limits)
              ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
          RETURNING a.id, a.ticket_id, t.requester_account_id, a.language, a.input, a.provider,
-                   a.model, a.credential_set_at, a.claims",
+                   a.model, a.credential_set_at, a.claims,
+                   (SELECT request_id FROM ticket_events
+                    WHERE ticket_id = a.ticket_id AND event_type = 'submit' ORDER BY id LIMIT 1) AS request_id",
     )
     .bind(worker.options.lease.as_secs_f64())
     .bind(MAX_CLAIMS)
@@ -710,13 +807,29 @@ async fn release(worker: &Worker, job: &Job) -> Result<(), ApiError> {
 }
 
 async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
+    telemetry::job(
+        WorkerMetric::AiAttempts.label(),
+        job.request_id,
+        async move {
+            let result = run_claimed(worker, &job).await;
+            if result.is_err() {
+                worker.metrics.failure(WorkerMetric::AiAttempts);
+                tracing::error!(attempt_id = %job.id, "AI attempt processing failed");
+            }
+            result
+        },
+    )
+    .await
+}
+
+async fn run_claimed(worker: &Worker, job: &Job) -> Result<(), ApiError> {
     let cancel = Cancel::new();
     let mut stopped = worker.shutdown.is_cancelled();
     if stopped {
         cancel.cancel();
     }
     let outcome = {
-        let work = attempt(worker, &job, &cancel);
+        let work = attempt(worker, job, &cancel);
         tokio::pin!(work);
         let start = tokio::time::Instant::now() + worker.options.heartbeat;
         let mut beat = tokio::time::interval_at(start, worker.options.heartbeat);
@@ -728,7 +841,7 @@ async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
                     cancel.cancel();
                 }
                 _ = beat.tick() => {
-                    if !cancel.is_cancelled() && !renew(worker, &job).await {
+                    if !cancel.is_cancelled() && !renew(worker, job).await {
                         cancel.cancel();
                     }
                 }
@@ -744,15 +857,18 @@ async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
             attempt_id = %job.id,
             "AI attempt released at shutdown"
         );
-        return release(worker, &job).await;
+        return release(worker, job).await;
     }
     let mut tries = 0;
     let error = loop {
         tries += 1;
-        match finish(worker, &job, &outcome).await {
+        match finish(worker, job, &outcome).await {
             Ok(()) => return Ok(()),
             Err(error) if tries >= COMMIT_TRIES => break error,
-            Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+            Err(_) => {
+                worker.metrics.retry(WorkerMetric::AiAttempts);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
         }
     };
     // The result cannot be stored. Calling the provider again would not change
@@ -768,15 +884,24 @@ async fn run_attempt(worker: &Worker, job: Job) -> Result<(), ApiError> {
     };
     let handed_off = async {
         let mut tx = worker.pool.begin().await?;
-        if lock_claimed(&mut tx, &job).await? {
-            hand_off(&mut tx, job.ticket_id, COMMIT_FAILED, usage_id).await?;
-        }
+        let queued = lock_claimed(&mut tx, job).await?
+            && hand_off(&mut tx, job.ticket_id, COMMIT_FAILED, usage_id).await?;
         tx.commit().await?;
-        Ok::<(), ApiError>(())
+        Ok::<_, ApiError>(queued)
     };
-    // If even that fails the attempt is left to its lease; [`MAX_CLAIMS`]
-    // bounds how often it can be run again.
-    handed_off.await.map_err(|_| error)
+    // Leave the attempt to its lease if even the fallback fails.
+    match handed_off.await {
+        Ok(queued) => {
+            if queued {
+                worker.handoff_committed(outcome.generation_refused());
+            }
+            Ok(())
+        }
+        Err(_) => {
+            worker.handoff_failed(job.ticket_id);
+            Err(error)
+        }
+    }
 }
 
 /// Locks the ticket, then the attempt, and says whether the attempt is still
@@ -899,6 +1024,7 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
                 Some(usage_id) => Outcome::Failed {
                     code: Refusal::ConcurrencySaturated.code(),
                     usage_id: Some(usage_id),
+                    generation_refused: true,
                 },
                 None => failed(TIMEOUT),
             };
@@ -908,10 +1034,14 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
             .suggest(job.requester_account_id, &active, &request, cancel)
             .await
         {
-            Ok(guarded) => return Outcome::Suggested(Box::new(guarded)),
+            Ok(guarded) => {
+                worker.metrics.event(Metric::GenerationSucceeded, 1);
+                return Outcome::Suggested(Box::new(guarded));
+            }
             // No provider slot within the guard's wait: the attempt keeps its
             // place and asks again, rather than giving up with time left.
             Err(refused) if refused.refusal == Refusal::ConcurrencySaturated => {
+                worker.metrics.retry(WorkerMetric::AiAttempts);
                 saturated = refused.usage_id.or(saturated);
                 tokio::select! {
                     () = tokio::time::sleep(worker.options.saturated_retry) => {}
@@ -919,9 +1049,14 @@ async fn attempt(worker: &Worker, job: &Job, cancel: &Cancel) -> Outcome {
                 }
             }
             Err(refused) => {
+                let provider_called = refused.refusal.provider_called();
+                if provider_called && refused.refusal != Refusal::Cancelled {
+                    worker.metrics.event(Metric::GenerationFailed, 1);
+                }
                 return Outcome::Failed {
                     code: refused.refusal.code(),
                     usage_id: refused.usage_id,
+                    generation_refused: !provider_called && refused.refusal != Refusal::Cancelled,
                 };
             }
         }
@@ -1001,7 +1136,7 @@ async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), Api
         // A suggestion that arrived under a changed policy is not stored.
         (Err(code), Outcome::Suggested(guarded)) => (code, Some(guarded.usage_id)),
         (Err(code), Outcome::Failed { usage_id, .. }) => (code, *usage_id),
-        (Ok(_), Outcome::Failed { code, usage_id }) => (*code, *usage_id),
+        (Ok(_), Outcome::Failed { code, usage_id, .. }) => (*code, *usage_id),
         (Ok(_), Outcome::Suggested(guarded)) => {
             lifecycle::transition(
                 &mut tx,
@@ -1030,14 +1165,12 @@ async fn finish(worker: &Worker, job: &Job, outcome: &Outcome) -> Result<(), Api
             return Ok(());
         }
     };
-    hand_off(&mut tx, job.ticket_id, code, usage_id).await?;
+    let queued = hand_off(&mut tx, job.ticket_id, code, usage_id).await?;
     tx.commit().await?;
-    tracing::info!(
-        worker = "ai_attempts",
-        attempt_id = %job.id,
-        outcome = code,
-        "AI attempt handed off to operators"
-    );
+    if queued {
+        worker.handoff_committed(outcome.generation_refused());
+        tracing::info!(attempt_id = %job.id, outcome = code, "AI attempt handed off to operators");
+    }
     Ok(())
 }
 
@@ -1061,69 +1194,71 @@ pub async fn sweep_one(worker: &Worker) -> Result<bool, ApiError> {
 /// then cleared for the next cycle. All state is in the database, so this also
 /// recovers attempts whose worker died.
 pub async fn sweep_due(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, ApiError> {
+    let result = sweep_job(worker, skipped).await;
+    worker.metrics.step(WorkerMetric::AiSweep, result.is_ok());
+    result
+}
+
+async fn sweep_job(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, ApiError> {
     let mut tx = worker.pool.begin().await?;
-    let due: Option<(Uuid, String)> = sqlx::query_as(
+    let query = format!(
         "SELECT t.id,
                 CASE WHEN a.state IS DISTINCT FROM 'processing' THEN 'orphaned'
-                     WHEN a.deadline_at <= clock_timestamp() THEN 'timeout'
-                     ELSE 'claims_exhausted' END
+                     WHEN a.deadline_at <= statement_timestamp() THEN 'timeout'
+                     ELSE 'claims_exhausted' END,
+                (SELECT request_id FROM ticket_events
+                 WHERE ticket_id = t.id AND event_type = 'submit' ORDER BY id LIMIT 1)
          FROM tickets t LEFT JOIN ai_attempts a ON a.ticket_id = t.id
-         WHERE t.status = 'ai_processing' AND NOT (t.id = ANY($1))
-           AND (a.state IS DISTINCT FROM 'processing'
-                OR ((a.claimed_until IS NULL OR a.claimed_until <= clock_timestamp())
-                    AND (a.deadline_at <= clock_timestamp() OR a.claims >= $2))
-                OR a.deadline_at + make_interval(secs => $3
-                       + (SELECT concurrency_wait_seconds FROM ai_limits)) <= clock_timestamp())
+         WHERE t.status = 'ai_processing' AND NOT (t.id = ANY($3))
+           AND ({SWEEP_DUE_AT}) <= statement_timestamp()
          ORDER BY t.created_at, t.id LIMIT 1
-         FOR UPDATE OF t SKIP LOCKED",
-    )
-    .bind(&skipped[..])
-    .bind(MAX_CLAIMS)
-    .bind((worker.guard.call_timeout() + SWEEP_MARGIN).as_secs_f64())
-    .fetch_optional(&mut *tx)
-    .await?;
-    let Some((ticket_id, outcome)) = due else {
+         FOR UPDATE OF t SKIP LOCKED"
+    );
+    let due: Option<(Uuid, String, Option<Uuid>)> = sqlx::query_as(&query)
+        .bind(MAX_CLAIMS)
+        .bind(sweep_grace_seconds(worker.guard.call_timeout()))
+        .bind(&skipped[..])
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((ticket_id, outcome, request_id)) = due else {
+        drop(tx);
+        worker.prune_handoff_failures().await;
         skipped.clear();
         return Ok(false);
     };
-    let handed_off = async {
-        let queued = hand_off(&mut tx, ticket_id, &outcome, None).await?;
-        if queued && outcome == ORPHANED {
-            // There is no attempt row to carry the outcome.
-            audit(
-                &mut *tx,
-                "ai_attempt_orphaned",
-                None,
-                None,
-                serde_json::json!({ "ticket_id": ticket_id, "outcome": ORPHANED }),
-            )
-            .await?;
+    telemetry::job(WorkerMetric::AiSweep.label(), request_id, async move {
+        let handed_off = async {
+            let queued = hand_off(&mut tx, ticket_id, &outcome, None).await?;
+            if queued && outcome == ORPHANED {
+                // There is no attempt row to carry the outcome.
+                crate::audit::system(
+                    &mut *tx,
+                    "ai_attempts",
+                    "ai_attempt_orphaned",
+                    serde_json::json!({ "ticket_id": ticket_id, "outcome": ORPHANED }),
+                )
+                .await?;
+            }
+            tx.commit().await?;
+            Ok::<bool, ApiError>(queued)
         }
-        tx.commit().await?;
-        Ok::<bool, ApiError>(queued)
-    };
-    match handed_off.await {
-        Ok(queued) => {
-            if queued {
-                tracing::warn!(
-                    worker = "ai_attempt_sweep",
-                    %ticket_id,
-                    outcome,
-                    "AI attempt handed off to operators"
-                );
+        .await;
+        match handed_off {
+            Ok(true) => {
+                worker.handoff_committed(false);
+                tracing::warn!(%ticket_id, outcome, "AI attempt handed off to operators");
+            }
+            Ok(false) => {}
+            Err(_) => {
+                // Keep retrying without blocking later jobs or alerting repeatedly.
+                worker.handoff_failed(ticket_id);
+                worker.metrics.failure(WorkerMetric::AiSweep);
+                worker.metrics.retry(WorkerMetric::AiSweep);
+                skipped.push(ticket_id);
             }
         }
-        Err(_) => {
-            // The transaction is gone (and its lock with it). Leave this
-            // ticket out until the cycle has handled the others.
-            tracing::error!(
-                worker = "ai_attempt_sweep",
-                %ticket_id,
-                "AI attempt handoff failed; skipping ticket for this cycle"
-            );
-            skipped.push(ticket_id);
-        }
-    }
+    })
+    .await;
     Ok(true)
 }
 

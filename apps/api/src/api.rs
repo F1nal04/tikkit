@@ -41,6 +41,8 @@ pub enum ApiError {
     CsrfRejected,
     /// Too many attempts; retry after this many seconds.
     RateLimited(u64),
+    /// The request did not finish within the API's request deadline.
+    RequestTimeout,
     SetupAlreadyCompleted,
     /// Invitation token unknown, expired, revoked, or already used.
     InvitationInvalid,
@@ -60,6 +62,15 @@ pub enum ApiError {
     /// the ticket's committed status, so the losing caller knows the outcome.
     ConflictWith(TicketStatus),
     PayloadTooLarge,
+    /// A retention confirmation whose preview no longer matches the stored
+    /// policy (another Admin changed it, or the preview is too old).
+    RetentionPreviewStale,
+    /// A personal-data export over its byte budget.
+    ExportTooLarge,
+    /// Restore mode: this copy sends nothing to mail relays or AI providers.
+    OutboundDisabled,
+    /// Restore mode: destructive jobs (retention runs, anonymization) are refused.
+    RestoreModeBlocked,
     /// No outbound SMTP connection has been saved.
     SmtpNotConfigured,
     /// The relay rejected the username or password.
@@ -104,6 +115,7 @@ pub enum ErrorCode {
     InvalidCredentials,
     CsrfRejected,
     RateLimited,
+    RequestTimeout,
     SetupAlreadyCompleted,
     InvitationInvalid,
     ResetTokenInvalid,
@@ -114,6 +126,10 @@ pub enum ErrorCode {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    RetentionPreviewStale,
+    ExportTooLarge,
+    OutboundDisabled,
+    RestoreModeBlocked,
     SmtpNotConfigured,
     SmtpAuthFailed,
     SmtpTlsFailed,
@@ -212,7 +228,12 @@ impl ApiError {
             CsrfRejected => (
                 StatusCode::FORBIDDEN,
                 ErrorCode::CsrfRejected,
-                "Missing the X-Requested-With: tikkit header.",
+                "Open the portal at its configured address (PUBLIC_ORIGIN); cross-site requests and requests without X-Requested-With: tikkit are refused.",
+            ),
+            RequestTimeout => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::RequestTimeout,
+                "The request took too long; try again later.",
             ),
             RateLimited(_) => (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -269,6 +290,16 @@ impl ApiError {
                 ErrorCode::PayloadTooLarge,
                 "The request body is too large.",
             ),
+            RetentionPreviewStale => (
+                StatusCode::CONFLICT,
+                ErrorCode::RetentionPreviewStale,
+                "The retention policy changed since this preview; preview again.",
+            ),
+            ExportTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::ExportTooLarge,
+                "This account's data is too large to export in one file.",
+            ),
             SmtpNotConfigured => (
                 StatusCode::CONFLICT,
                 ErrorCode::SmtpNotConfigured,
@@ -298,6 +329,16 @@ impl ApiError {
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::SmtpCredentialUnreadable,
                 "The stored mail password could not be read. Enter it again.",
+            ),
+            OutboundDisabled => (
+                StatusCode::CONFLICT,
+                ErrorCode::OutboundDisabled,
+                "This restored copy is in restore mode and sends nothing to mail servers or AI providers.",
+            ),
+            RestoreModeBlocked => (
+                StatusCode::CONFLICT,
+                ErrorCode::RestoreModeBlocked,
+                "This copy is in restore mode and is under verification: retention runs and anonymization are refused until it leaves restore mode.",
             ),
             AiNotConfigured => (
                 StatusCode::CONFLICT,
@@ -418,7 +459,11 @@ impl From<sqlx::Error> for ApiError {
         if matches!(code.as_deref(), Some("40001" | "40P01")) {
             return Self::Conflict;
         }
-        tracing::error!(%error, "database error");
+        tracing::error!(
+            error_kind = crate::db::error_kind(&error),
+            sqlstate = code.as_deref(),
+            "database error"
+        );
         Self::Internal
     }
 }

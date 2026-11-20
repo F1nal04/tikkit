@@ -1,0 +1,67 @@
+{
+  "browser": "156.0.8078.4",
+  "contexts": 7,
+  "throttling": "none",
+  "viewport": "1440x900",
+  "percentiles": {
+    "ttfb_ms": {
+      "count": 7,
+      "p50": 34.7,
+      "p95": 171.8,
+      "p99": 171.8,
+      "max": 171.8
+    },
+    "fcp_ms": {
+      "count": 7,
+      "p50": 88,
+      "p95": 296,
+      "p99": 296,
+      "max": 296
+    },
+    "lcp_ms": {
+      "count": 7,
+      "p50": 88,
+      "p95": 296,
+      "p99": 296,
+      "max": 296
+    },
+    "js_transfer_bytes": {
+      "count": 7,
+      "p50": 85074,
+      "p95": 85074,
+      "p99": 85074,
+      "max": 85074
+    },
+    "js_encoded_bytes": {
+      "count": 7,
+      "p50": 76974,
+      "p95": 76974,
+      "p99": 76974,
+      "max": 76974
+    },
+    "click_to_paint_ms": {
+      "count": 7,
+      "p50": 30.1,
+      "p95": 30.5,
+      "p99": 30.5,
+      "max": 30.5
+    },
+    "interaction_timing_ms": {
+      "count": 0
+    },
+    "queue_to_detail_ms": {
+      "count": 7,
+      "p50": 35.1,
+      "p95": 47.8,
+      "p99": 47.8,
+      "max": 47.8
+    },
+    "detail_to_queue_ms": {
+      "count": 7,
+      "p50": 47,
+      "p95": 49.1,
+      "p99": 49.1,
+      "max": 49.1
+    }
+  }
+}

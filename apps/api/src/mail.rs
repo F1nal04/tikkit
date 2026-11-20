@@ -47,6 +47,18 @@ pub struct DeliverOptions {
     pub max_attempts: u32,
     /// The Admin test action may try a connection that is saved but disabled.
     pub allow_disabled: bool,
+    /// How the saved host is resolved for the destination check before connecting.
+    pub resolve: Resolve,
+}
+
+/// Name resolution for the send-time destination check.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum Resolve {
+    /// The system resolver (production).
+    #[default]
+    System,
+    /// Test seam: the saved host resolves to exactly these addresses.
+    Fixed(&'static [std::net::IpAddr]),
 }
 
 impl Default for DeliverOptions {
@@ -55,6 +67,7 @@ impl Default for DeliverOptions {
             timeout: SMTP_TIMEOUT,
             max_attempts: SMTP_ATTEMPTS,
             allow_disabled: false,
+            resolve: Resolve::System,
         }
     }
 }
@@ -216,33 +229,37 @@ pub(crate) async fn queue(
 ) -> bool {
     match load(&pool, &encryption_key).await {
         Ok(ready) if ready.enabled => {
-            tokio::spawn(async move {
-                match deliver(
-                    &pool,
-                    &encryption_key,
-                    trust_root_pem.as_deref(),
-                    &message,
-                    DeliverOptions::default(),
-                )
-                .await
-                {
-                    Ok(Delivered::Sent) => {
-                        let _ = clear_delivery_error(&pool).await;
+            tokio::spawn(crate::telemetry::job(
+                "account_mail",
+                crate::telemetry::request_id(),
+                async move {
+                    match deliver(
+                        &pool,
+                        &encryption_key,
+                        trust_root_pem.as_deref(),
+                        &message,
+                        DeliverOptions::default(),
+                    )
+                    .await
+                    {
+                        Ok(Delivered::Sent) => {
+                            let _ = clear_delivery_error(&pool).await;
+                        }
+                        Ok(Delivered::Duplicate) => {}
+                        Err(
+                            failure @ (MailError::Auth
+                            | MailError::Tls
+                            | MailError::Network
+                            | MailError::Delivery
+                            | MailError::Unreadable),
+                        ) => {
+                            tracing::warn!(error = failure.code(), "email delivery failed");
+                            let _ = note_delivery_error(&pool, failure.code()).await;
+                        }
+                        Err(_) => tracing::warn!("email delivery did not complete"),
                     }
-                    Ok(Delivered::Duplicate) => {}
-                    Err(
-                        failure @ (MailError::Auth
-                        | MailError::Tls
-                        | MailError::Network
-                        | MailError::Delivery
-                        | MailError::Unreadable),
-                    ) => {
-                        tracing::warn!(error = failure.code(), "email delivery failed");
-                        let _ = note_delivery_error(&pool, failure.code()).await;
-                    }
-                    Err(_) => tracing::warn!("email delivery did not complete"),
-                }
-            });
+                },
+            ));
             true
         }
         Ok(_) | Err(MailError::NotConfigured | MailError::Disabled) => false,
@@ -260,8 +277,7 @@ pub(crate) async fn queue(
 /// Sends one message through the saved connection.
 ///
 /// `trust_root_pem`, when set, is the only trust anchor and certificates are
-/// still verified against it. Production passes `None`, which uses the default
-/// WebPKI roots. Verification is never disabled.
+/// still verified against it. Passing `None` uses the default WebPKI roots.
 ///
 /// A transient failure is retried at most [`SMTP_ATTEMPTS`] times. Each attempt
 /// is bounded by `options.timeout` (DNS, connect, and commands). Auth and TLS
@@ -291,7 +307,7 @@ pub async fn deliver(
         }
         let sent = tokio::time::timeout(
             options.timeout,
-            send_once(&ready, trust_root_pem, message, options.timeout),
+            send_once(&ready, trust_root_pem, message, options),
         )
         .await;
         match sent {
@@ -318,14 +334,37 @@ async fn send_once(
     ready: &ReadySmtp,
     trust_root_pem: Option<&[u8]>,
     message: &OutboundMessage,
-    timeout: Duration,
+    options: DeliverOptions,
 ) -> Result<(), Attempt> {
+    let timeout = options.timeout;
     let email = build_message(ready, message)?;
+    // A saved host name may resolve somewhere a relay never is (link-local
+    // metadata services and the like). Checked again here because DNS changes;
+    // certificate verification remains the second layer against rebinding.
+    if !destination_allowed(&ready.host, ready.port, options.resolve).await {
+        return Err(Attempt::Fatal(MailError::Network));
+    }
     let transport = build_transport(ready, trust_root_pem, timeout)?;
     match transport.send(email).await {
         Ok(_) => Ok(()),
         Err(error) => Err(classify(&error)),
     }
+}
+
+/// False when any address the host resolves to is refused by
+/// [`crate::smtp::forbidden_destination`]. A failed lookup is left to the
+/// connection attempt, which reports it as a network error.
+async fn destination_allowed(host: &str, port: u16, resolve: Resolve) -> bool {
+    let addresses: Vec<std::net::IpAddr> = match resolve {
+        Resolve::Fixed(addresses) => addresses.to_vec(),
+        Resolve::System => match tokio::net::lookup_host((host, port)).await {
+            Ok(found) => found.map(|a| a.ip()).collect(),
+            Err(_) => return true,
+        },
+    };
+    !addresses
+        .into_iter()
+        .any(crate::smtp::forbidden_destination)
 }
 
 fn build_message(ready: &ReadySmtp, message: &OutboundMessage) -> Result<Message, Attempt> {
@@ -347,6 +386,19 @@ fn build_message(ready: &ReadySmtp, message: &OutboundMessage) -> Result<Message
         .map_err(|_| Attempt::Fatal(MailError::Delivery))
 }
 
+pub(crate) fn smtp_tls(
+    host: &str,
+    trust_root_pem: Option<&[u8]>,
+) -> Result<TlsParameters, lettre::transport::smtp::Error> {
+    match trust_root_pem {
+        Some(pem) => TlsParameters::builder(host.to_owned())
+            .certificate_store(CertificateStore::None)
+            .add_root_certificate(Certificate::from_pem(pem)?)
+            .build(),
+        None => TlsParameters::new_rustls(host.to_owned()),
+    }
+}
+
 /// `builder_dangerous` is the only lettre entry point that accepts an explicit
 /// port. TLS is always `Required` (STARTTLS) or `Wrapper` (implicit TLS).
 fn build_transport(
@@ -354,18 +406,8 @@ fn build_transport(
     trust_root_pem: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, Attempt> {
-    let tls_parameters = match trust_root_pem {
-        Some(pem) => {
-            let cert = Certificate::from_pem(pem).map_err(|_| Attempt::Fatal(MailError::Tls))?;
-            TlsParameters::builder(ready.host.clone())
-                .certificate_store(CertificateStore::None)
-                .add_root_certificate(cert)
-                .build()
-                .map_err(|_| Attempt::Fatal(MailError::Tls))?
-        }
-        None => TlsParameters::new_rustls(ready.host.clone())
-            .map_err(|_| Attempt::Fatal(MailError::Tls))?,
-    };
+    let tls_parameters =
+        smtp_tls(&ready.host, trust_root_pem).map_err(|_| Attempt::Fatal(MailError::Tls))?;
     let tls = match ready.security {
         SmtpSecurity::StartTls => Tls::Required(tls_parameters),
         SmtpSecurity::ImplicitTls => Tls::Wrapper(tls_parameters),

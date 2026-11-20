@@ -177,7 +177,7 @@ test('skip switched off after the page loaded: the form and the waiting state ex
   await page.getByRole('checkbox', { name: /Skip the AI suggestion/ }).check()
   await configure(page, { requester_skip_allowed: false })
   await submit(page)
-  await expect(page.getByRole('alert').filter({ hasText: 'Skipping the AI suggestion is not allowed by your organization.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('Skipping the AI suggestion is not allowed by your organization.')
   expect(await tickets(page)).toEqual([])
   // The policy was reloaded: the control is gone, the input is kept.
   await expect(page.getByRole('checkbox')).toHaveCount(0)

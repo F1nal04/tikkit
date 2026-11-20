@@ -2,7 +2,9 @@
   import { ApiError, type components } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import Table from '#lib/components/Table.svelte'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
@@ -26,6 +28,8 @@
   let busy = $state(false)
   let notice = $state<string | null>(null)
   let error = $state<unknown>(null)
+  let errorOn = $state('')
+  let errorProvider = $state('')
   let fields = $state<Record<string, string[]>>({})
 
   // The connection test and its last result describe the saved selection, not the selectors.
@@ -67,17 +71,20 @@
   const problem = (code: string | null | undefined) =>
     code && code in t.errors ? t.errors[code as keyof typeof t.errors] : null
 
-  async function run(action: () => Promise<string | null>) {
+  async function run(action: () => Promise<string | null>, on = 'settings', provider = '') {
     if (busy) return
     busy = true
     error = null
     notice = null
     fields = {}
+    errorOn = on
+    errorProvider = provider
     try {
       notice = await action()
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -102,7 +109,7 @@
       keys[provider] = ''
       enabled = ai.enabled
       return t.ai.keySaved
-    })
+    }, 'key', provider)
   }
 
   const removeKey = (provider: Provider) =>
@@ -110,7 +117,7 @@
       ai = await request('delete', '/api/settings/ai/credentials/{provider}', { path: { provider } })
       enabled = ai.enabled
       return t.ai.keyRemoved
-    })
+    }, 'key', provider)
 
   const test = () =>
     run(async () => {
@@ -121,13 +128,13 @@
         // The stored result is the source of truth, also after a failure.
         ai = await request('get', '/api/settings/ai').catch(() => ai)
       }
-    })
+    }, 'test')
 
   const loadUsage = () =>
     run(async () => {
       usage = await request('get', '/api/settings/ai/usage', { query: { days: Number(days) } })
       return null
-    })
+    }, 'usage')
 
   function saveLimits(event: SubmitEvent) {
     event.preventDefault()
@@ -149,7 +156,7 @@
       limits = asText(await request('put', '/api/settings/ai/limits', { body: body as Limits }))
       usage = await request('get', '/api/settings/ai/usage', { query: { days: Number(days) } }).catch(() => usage)
       return t.saved
-    })
+    }, 'limits')
   }
 </script>
 
@@ -157,11 +164,16 @@
 
 <h1>{t.ai.title}</h1>
 <p>{t.ai.intro}</p>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
 {#if notice}<Alert kind="success">{notice}</Alert>{/if}
 <Alert kind="info">{t.ai.status[ai.status]}</Alert>
 
 <form onsubmit={save} novalidate aria-busy={busy}>
+  {#if error && errorOn === 'settings'}
+    <ErrorSummary
+      title={errorText(t, error)}
+      items={fieldItems(fields, { provider: t.ai.provider, model: t.ai.model, enabled: t.ai.enabled }, (code) => fieldText(t, code))}
+    />
+  {/if}
   <Field
     name="provider"
     label={t.ai.provider}
@@ -191,6 +203,12 @@
 <p>{t.ai.keysIntro}</p>
 {#each ai.providers as { provider, credential } (provider)}
   <form onsubmit={(event) => saveKey(event, provider)} novalidate aria-busy={busy} data-provider={provider}>
+    {#if error && errorOn === 'key' && errorProvider === provider}
+      <ErrorSummary
+        title={errorText(t, error)}
+        items={fieldItems(fields, { api_key: t.ai.apiKey }, (code) => fieldText(t, code), { api_key: `api_key_${provider}` })}
+      />
+    {/if}
     <h3>{t.ai.providers[provider]}</h3>
     <p>
       {#if credential}
@@ -226,6 +244,7 @@
   {#if ai.connection.tested_at}({date.format(new Date(ai.connection.tested_at))} UTC){/if}
 </p>
 {#if unsaved}<p>{t.ai.testUnsaved}</p>{/if}
+{#if error && errorOn === 'test'}<ErrorSummary title={errorText(t, error)} />{/if}
 <div class="actions"><button type="button" onclick={test} disabled={busy || unsaved}>{t.ai.test}</button></div>
 
 <h2>{t.ai.skip}</h2>
@@ -258,6 +277,7 @@
   bind:value={days}
   options={(['7', '30', '90'] as const).map((value) => ({ value, label: t.ai.usage.days[value] }))}
 />
+{#if error && errorOn === 'usage'}<ErrorSummary title={errorText(t, error)} />{/if}
 <div class="actions"><button type="button" onclick={loadUsage} disabled={busy}>{t.ai.usage.refresh}</button></div>
 {#snippet usageRow(label: string, counts: components['schemas']['AiUsageCounts'], circuit: string)}
   <tr>
@@ -316,6 +336,9 @@
 <h2>{t.ai.limits.title}</h2>
 <p>{t.ai.limits.intro}</p>
 <form onsubmit={saveLimits} novalidate aria-busy={busy} data-form="limits">
+  {#if error && errorOn === 'limits'}
+    <ErrorSummary title={Object.keys(fields).length ? t.errors.validation_failed : errorText(t, error)} items={fieldItems(fields, Object.fromEntries([...limitFields].map((field) => [field, t.ai.limits[field]])), (code) => fieldText(t, code))} />
+  {/if}
   <Field
     name="window_hours"
     label={t.ai.limits.window_hours}

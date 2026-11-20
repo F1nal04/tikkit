@@ -3,16 +3,14 @@ use std::{path::Path, sync::Arc, time::Duration};
 use axum::{
     Extension, Router,
     extract::{DefaultBodyLimit, State},
-    http::{Request, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     routing::{get, patch, post, put},
 };
 use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::{
-    catch_panic::CatchPanicLayer,
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    trace::{DefaultOnResponse, TraceLayer},
+    catch_panic::CatchPanicLayer, request_id::PropagateRequestIdLayer, trace::TraceLayer,
 };
 use utoipa::{OpenApi, ToSchema};
 
@@ -26,22 +24,32 @@ pub mod ai_records;
 pub mod ai_usage;
 pub mod api;
 pub mod assignment;
+pub mod audit;
 pub mod auth;
 pub mod authz;
 pub mod autoclose;
 pub mod bulk;
 pub mod catalog;
 pub mod config;
+pub mod csv;
 pub mod db;
 pub mod lifecycle;
 pub mod mail;
 pub mod management;
 pub mod messages;
+pub mod metrics;
 pub mod notifications;
+pub mod personal_data;
 pub mod queues;
+pub mod reports;
+pub mod restore;
+pub mod retention;
 pub mod screenshots;
+pub mod security;
 pub mod smtp;
 pub mod submission;
+pub mod submissions;
+pub mod telemetry;
 pub mod tickets;
 pub mod views;
 
@@ -50,6 +58,7 @@ use api::{ApiError, Json};
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    pub metrics: metrics::Metrics,
     /// Private screenshot volume (`SCREENSHOT_DIR`); never served directly.
     pub screenshot_dir: Arc<Path>,
     /// Outbound client for AI provider calls (one per process).
@@ -64,6 +73,7 @@ impl AppState {
     pub fn new(pool: PgPool, screenshot_dir: Arc<Path>) -> Self {
         Self {
             pool,
+            metrics: metrics::Metrics::default(),
             screenshot_dir,
             ai_client: ai::AiClient::new(),
             ai_endpoint: ai::Endpoint::Official,
@@ -79,7 +89,8 @@ impl AppState {
         description = "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; \
                        lists use `limit`/`cursor` and return a Page. Authentication is the \
                        HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send \
-                       `X-Requested-With: tikkit` or is rejected with 403 `csrf_rejected` (docs/auth.md)."
+                       `X-Requested-With: tikkit` and, from a browser, come from the portal's own \
+                       origin, or is rejected with 403 `csrf_rejected` (docs/security.md)."
     ),
     paths(
         health,
@@ -125,6 +136,20 @@ impl AppState {
         ai_usage::usage,
         ai_records::records,
         ai_records::outcomes,
+        reports::get_report,
+        reports::export_report,
+        submissions::list_submissions,
+        submissions::submission_detail,
+        audit::search,
+        audit::actions,
+        audit::export,
+        retention::get_retention,
+        retention::put_retention,
+        retention::preview_retention,
+        retention::start_retention_run,
+        personal_data::personal_data_summary,
+        personal_data::export_personal_data,
+        personal_data::anonymize_account,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -181,6 +206,9 @@ impl AppState {
         api::TicketAssignmentView,
         queues::QueueView,
         queues::QueueSort,
+        submissions::ResolutionSourceFilter,
+        submissions::AiOutcomeFilter,
+        submissions::AiDisposition,
     ))
 )]
 pub struct ApiDoc;
@@ -199,6 +227,9 @@ struct Readiness {
     /// `ready` or `unavailable`.
     status: &'static str,
     checks: Checks,
+    /// `true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.
+    /// Older builds omit the field, which restore tooling treats as "unsupported".
+    restore_mode: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -223,12 +254,37 @@ async fn health() -> Json<Health> {
         (status = 200, description = "Ready to serve traffic", body = Readiness),
         (status = 503, description = "A required dependency is unavailable or incompatible", body = Readiness),
     ))]
-async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
+async fn ready(
+    State(state): State<AppState>,
+    Extension(auth): Extension<Arc<auth::Auth>>,
+) -> (StatusCode, Json<Readiness>) {
+    let checks = probe_readiness(&state.pool).await;
+    let restore_mode = auth.settings.restore_mode;
+    if checks.migrations == "ok" {
+        (
+            StatusCode::OK,
+            Json(Readiness {
+                status: "ready",
+                checks,
+                restore_mode,
+            }),
+        )
+    } else {
+        let body = Readiness {
+            status: "unavailable",
+            checks,
+            restore_mode,
+        };
+        (StatusCode::SERVICE_UNAVAILABLE, Json(body))
+    }
+}
+
+async fn probe_readiness(pool: &PgPool) -> Checks {
     let probe = async {
-        sqlx::query("SELECT 1").execute(&state.pool).await?;
-        db::migration_status(&state.pool).await
+        sqlx::query("SELECT 1").execute(pool).await?;
+        db::migration_status(pool).await
     };
-    let checks = match tokio::time::timeout(Duration::from_secs(3), probe).await {
+    match tokio::time::timeout(Duration::from_secs(3), probe).await {
         Ok(Ok(migrations)) => Checks {
             database: "ok",
             migrations,
@@ -237,21 +293,6 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
             database: "unavailable",
             migrations: "unknown",
         },
-    };
-    if checks.migrations == "ok" {
-        (
-            StatusCode::OK,
-            Json(Readiness {
-                status: "ready",
-                checks,
-            }),
-        )
-    } else {
-        let body = Readiness {
-            status: "unavailable",
-            checks,
-        };
-        (StatusCode::SERVICE_UNAVAILABLE, Json(body))
     }
 }
 
@@ -268,6 +309,12 @@ pub fn app(state: AppState) -> Router {
 }
 
 pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
+    use axum::handler::Handler;
+    use security::Throttle;
+    let throttle = |t: Throttle| axum::middleware::from_fn_with_state(t, security::throttle);
+    let metrics = state.metrics.clone();
+    let hsts = settings.hsts;
+    let request_timeout = settings.request_timeout;
     let routes = Router::new()
         .route("/api/health", get(health))
         .route("/api/ready", get(ready))
@@ -287,7 +334,13 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             get(accounts::list_invitations).post(accounts::create_invitation),
         )
         .route("/api/invitations/lookup", post(accounts::lookup_invitation))
-        .route("/api/invitations/accept", post(accounts::accept_invitation))
+        .route(
+            "/api/invitations/accept",
+            post(accounts::accept_invitation).layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                audit::invitation_tampering,
+            )),
+        )
         .route(
             "/api/invitations/{id}/revoke",
             post(accounts::revoke_invitation),
@@ -328,7 +381,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
                 .put(smtp::put_smtp)
                 .delete(smtp::delete_smtp),
         )
-        .route("/api/settings/smtp/test", post(smtp::test_smtp))
+        .route(
+            "/api/settings/smtp/test",
+            post(smtp::test_smtp).route_layer(throttle(Throttle::ConnectionTest)),
+        )
         .route(
             "/api/settings/ai",
             get(ai_config::get_ai).put(ai_config::put_ai),
@@ -337,7 +393,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/settings/ai/credentials/{provider}",
             put(ai_config::put_credential).delete(ai_config::delete_credential),
         )
-        .route("/api/settings/ai/test", post(ai_config::test_ai))
+        .route(
+            "/api/settings/ai/test",
+            post(ai_config::test_ai).route_layer(throttle(Throttle::ConnectionTest)),
+        )
         .route(
             "/api/settings/ai/limits",
             get(ai_usage::get_limits).put(ai_usage::put_limits),
@@ -345,6 +404,46 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/settings/ai/usage", get(ai_usage::usage))
         .route("/api/admin/ai/records", get(ai_records::records))
         .route("/api/admin/ai/outcomes", get(ai_records::outcomes))
+        .route("/api/admin/reports", get(reports::get_report))
+        .route(
+            "/api/admin/reports/export",
+            post(reports::export_report).route_layer(throttle(Throttle::Export)),
+        )
+        .route("/api/admin/submissions", get(submissions::list_submissions))
+        .route(
+            "/api/admin/submissions/{id}",
+            get(submissions::submission_detail),
+        )
+        .route("/api/admin/audit", get(audit::search))
+        .route("/api/admin/audit/actions", get(audit::actions))
+        .route(
+            "/api/admin/audit/export",
+            post(audit::export).route_layer(throttle(Throttle::Export)),
+        )
+        .route(
+            "/api/admin/retention",
+            get(retention::get_retention).put(retention::put_retention),
+        )
+        .route(
+            "/api/admin/retention/preview",
+            post(retention::preview_retention).layer(throttle(Throttle::Retention)),
+        )
+        .route(
+            "/api/admin/retention/runs",
+            post(retention::start_retention_run).layer(throttle(Throttle::Retention)),
+        )
+        .route(
+            "/api/admin/personal-data",
+            get(personal_data::personal_data_summary),
+        )
+        .route(
+            "/api/admin/accounts/{id}/personal-data/export",
+            post(personal_data::export_personal_data).layer(throttle(Throttle::Export)),
+        )
+        .route(
+            "/api/admin/accounts/{id}/anonymize",
+            post(personal_data::anonymize_account).layer(throttle(Throttle::Anonymize)),
+        )
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))
@@ -365,21 +464,23 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/tickets",
-            get(tickets::list_own_tickets).post(submission::submit_ticket),
+            get(tickets::list_own_tickets)
+                .post(submission::submit_ticket.layer(throttle(Throttle::Submission))),
         )
         .route(
             "/api/ticket-drafts",
-            get(submission::list_drafts).post(submission::create_draft),
+            get(submission::list_drafts)
+                .post(submission::create_draft.layer(throttle(Throttle::Draft))),
         )
         .route(
             "/api/ticket-drafts/{id}",
             get(submission::get_draft)
-                .patch(submission::update_draft)
+                .patch(submission::update_draft.layer(throttle(Throttle::Draft)))
                 .delete(submission::delete_draft),
         )
         .route(
             "/api/ticket-drafts/{id}/submit",
-            post(submission::submit_draft),
+            post(submission::submit_draft).route_layer(throttle(Throttle::Submission)),
         )
         .route("/api/tickets/{id}", get(tickets::ticket_detail))
         .route("/api/tickets/{id}/actions", post(tickets::requester_action))
@@ -402,15 +503,21 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         )
         .route(
             "/api/tickets/{id}/replies",
-            post(messages::reply).layer(axum::middleware::map_response(api::private_response)),
+            post(messages::reply)
+                .layer(axum::middleware::map_response(api::private_response))
+                .route_layer(throttle(Throttle::Message)),
         )
         .route(
             "/api/tickets/{id}/notes",
-            post(messages::note).layer(axum::middleware::map_response(api::private_response)),
+            post(messages::note)
+                .layer(axum::middleware::map_response(api::private_response))
+                .route_layer(throttle(Throttle::Message)),
         )
         .route(
             "/api/screenshots",
-            post(screenshots::upload).layer(DefaultBodyLimit::max(screenshots::MAX_BYTES)),
+            post(screenshots::upload)
+                .layer(DefaultBodyLimit::max(screenshots::MAX_BYTES))
+                .route_layer(throttle(Throttle::Upload)),
         )
         .route(
             "/api/screenshots/{id}",
@@ -447,7 +554,10 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/admin/notifications/retry",
             post(notifications::retry_failed),
         )
-        .route("/api/queue", get(queues::list_queue))
+        .route(
+            "/api/queue",
+            get(queues::list_queue).route_layer(throttle(Throttle::Search)),
+        )
         .route("/api/queue/counts", get(queues::queue_counts))
         .route("/api/queue/bulk-options", get(bulk::bulk_options))
         .route("/api/tickets/bulk", post(bulk::bulk_change))
@@ -466,14 +576,25 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .layer(axum::middleware::from_fn(auth::csrf))
         .layer(Extension(Arc::new(auth::Auth::new(settings))))
         .with_state(state);
-    with_conventions(routes)
+    with_conventions(routes, metrics, request_timeout).layer(axum::middleware::from_fn_with_state(
+        hsts,
+        security::headers,
+    ))
 }
 
 /// Request IDs, tracing, panic safety, body limit, and the error envelope.
 /// Layers run outermost-last: the request ID is set before anything else.
-pub fn with_conventions(router: Router) -> Router {
+pub fn with_conventions(
+    router: Router,
+    metrics: metrics::Metrics,
+    request_timeout: Duration,
+) -> Router {
     router
         .layer(DefaultBodyLimit::max(api::MAX_JSON_BODY))
+        .layer(axum::middleware::from_fn_with_state(
+            request_timeout,
+            security::deadline,
+        ))
         .layer(CatchPanicLayer::custom(|_| {
             tracing::error!("request handler panicked");
             ApiError::Internal.into_response()
@@ -481,15 +602,15 @@ pub fn with_conventions(router: Router) -> Router {
         .layer(axum::middleware::from_fn(api::error_envelope))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(
-            // Logs the path only: query strings may carry tokens.
             TraceLayer::new_for_http()
-                .make_span_with(|request: &Request<_>| {
-                    let id = request.headers().get("x-request-id").and_then(|v| v.to_str().ok());
-                    tracing::info_span!("request", method = %request.method(), path = request.uri().path(), request_id = id)
-                })
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+                .make_span_with(telemetry::request_span)
+                .on_response(telemetry::request_completed)
+                .on_failure(()),
         )
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(axum::middleware::from_fn_with_state(
+            metrics,
+            telemetry::http_request,
+        ))
 }
 
 #[cfg(test)]
@@ -549,7 +670,7 @@ mod tests {
                     get(|| async { panic!("boom") as &'static str }),
                 )
                 .merge(super::app(lazy_state()));
-        super::with_conventions(routes)
+        super::with_conventions(routes, Default::default(), super::security::REQUEST_TIMEOUT)
     }
 
     async fn send(request: Request<Body>) -> (Response, Value) {
@@ -596,7 +717,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let expected = json!({
             "status": "unavailable",
-            "checks": { "database": "unavailable", "migrations": "unknown" }
+            "checks": { "database": "unavailable", "migrations": "unknown" },
+            "restore_mode": false
         });
         assert_eq!(body, expected);
     }
@@ -607,10 +729,17 @@ mod tests {
         let generated = response.headers()["x-request-id"].to_str().unwrap();
         assert!(Uuid::parse_str(generated).is_ok());
 
-        let request = Request::get("/api/nope").header("x-request-id", "abc-123");
+        let id = Uuid::new_v4().to_string();
+        let request = Request::get("/api/nope").header("x-request-id", &id);
         let (response, body) = send(request.body(Body::empty()).unwrap()).await;
-        assert_eq!(response.headers()["x-request-id"], "abc-123");
-        assert_eq!(body["request_id"], "abc-123");
+        assert_eq!(response.headers()["x-request-id"], id);
+        assert_eq!(body["request_id"], id);
+
+        let request = Request::get("/api/nope").header("x-request-id", "private-content");
+        let (response, body) = send(request.body(Body::empty()).unwrap()).await;
+        let generated = response.headers()["x-request-id"].to_str().unwrap();
+        assert!(Uuid::parse_str(generated).is_ok());
+        assert_eq!(body["request_id"], generated);
     }
 
     #[tokio::test]

@@ -34,9 +34,14 @@ machine values. A unit test fails if this table and the code disagree.
 - Requester actions (replies on own ticket, confirm/reject a resolution,
   cancellation, reopening, the AI decisions solved / not solved / skip) depend
   on ticket ownership and Admin policy, not on this table.
-- `view_all_submissions` gates the Admin list of AI attempts and AI-solved
-  records, `view_reports` the AI outcome statistics
-  ([ai-decisions.md](ai-decisions.md#admin-records-and-statistics)).
+- `view_all_submissions` gates the Admin submission view (every submitted
+  ticket, [admin-submissions.md](admin-submissions.md)) and the Admin list of
+  AI attempts and AI-solved records, `view_reports` the AI outcome statistics
+  ([ai-decisions.md](ai-decisions.md#admin-records-and-statistics)) and the
+  audit log search and export ([audit.md](audit.md#admin-api)).
+  Retention settings, preview, and runs need `manage_settings`; personal-data
+  summary, export, and anonymization need `manage_accounts`
+  ([retention.md](retention.md#admin-api)). Both are Admin only.
 - Ticket permissions are capabilities; each ticket is further checked by the
   ticket policy below.
 

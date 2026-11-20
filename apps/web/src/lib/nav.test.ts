@@ -16,7 +16,7 @@ test('navigation follows the role', () => {
   expect(hrefs('operator')).toEqual(['/', '/tickets/new', '/queue'])
   // Team management only for Team Lead; global administration only for Admin.
   expect(hrefs('team_lead')).toEqual(['/', '/tickets/new', '/queue', '/team'])
-  expect(hrefs('admin')).toEqual(['/', '/tickets/new', '/queue', '/admin', '/admin/accounts', '/admin/teams', '/admin/settings', '/admin/email', '/admin/ai', '/admin/catalog'])
+  expect(hrefs('admin')).toEqual(['/', '/tickets/new', '/queue', '/admin', '/admin/submissions', '/admin/reports', '/admin/audit', '/admin/retention', '/admin/accounts', '/admin/teams', '/admin/settings', '/admin/email', '/admin/ai', '/admin/catalog'])
 })
 
 test('route guards deny by prefix, including pages that have no nav entry yet', () => {
@@ -26,6 +26,8 @@ test('route guards deny by prefix, including pages that have no nav entry yet', 
   expect(canAccess('operator', '/team')).toBe(false)
   expect(canAccess('admin', '/team')).toBe(false)
   expect(canAccess('admin', '/admin/teams/42')).toBe(true)
+  expect(canAccess('admin', '/admin/submissions/42')).toBe(true)
+  for (const role of ['user', 'operator', 'specialist', 'team_lead'] as const) expect(canAccess(role, '/admin/submissions/42')).toBe(false)
   expect(canAccess('team_lead', '/team/members')).toBe(true)
   expect(canAccess('user', '/profile')).toBe(true)
   // A prefix match needs a path boundary.
@@ -41,6 +43,7 @@ test('the active entry is the most specific one', () => {
   expect(activeHref('/admin/accounts')).toBe('/admin/accounts')
   expect(activeHref('/admin')).toBe('/admin')
   expect(activeHref('/admin/settings')).toBe('/admin/settings')
+  expect(activeHref('/admin/submissions/42')).toBe('/admin/submissions')
   expect(activeHref('/tickets/new')).toBe('/tickets/new')
   expect(activeHref('/profile')).toBeUndefined()
   expect(activeHref('/%61dmin/accounts')).toBe('/admin/accounts')

@@ -233,7 +233,7 @@ async fn issue_invitation(
         ident_str(language)
     );
     let emailed = match email.as_deref() {
-        Some(to) => {
+        Some(to) if auth.settings.outbound_enabled() => {
             let (subject, text) = invitation_email(language, &url, hours);
             mail::queue(
                 state.pool.clone(),
@@ -248,7 +248,7 @@ async fn issue_invitation(
             )
             .await
         }
-        None => false,
+        _ => false,
     };
     let created = CreatedInvitation {
         invitation,
@@ -489,13 +489,31 @@ pub async fn accept_invitation(
 
     let mut tx = state.pool.begin().await?;
     // The row lock makes a concurrent acceptance wait, then re-check and miss.
-    let (invitation_id, role): (Uuid, String) = sqlx::query_as(&format!(
+    let pending: Option<(Uuid, String)> = sqlx::query_as(&format!(
         "SELECT id, role::text FROM invitations WHERE token_hash = $1 AND {PENDING} FOR UPDATE"
     ))
     .bind(token_hash(&body.token))
     .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(ApiError::InvitationInvalid)?;
+    .await?;
+    let Some((invitation_id, role)) = pending else {
+        drop(tx);
+        // A replayed, revoked, expired, or made-up link. The token is not stored;
+        // a known invitation is named by its ID.
+        let known: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, CASE WHEN accepted_at IS NOT NULL THEN 'already_accepted'
+                             WHEN revoked_at IS NOT NULL THEN 'revoked' ELSE 'expired' END
+             FROM invitations WHERE token_hash = $1",
+        )
+        .bind(token_hash(&body.token))
+        .fetch_optional(&state.pool)
+        .await?;
+        let metadata = match known {
+            Some((id, reason)) => json!({ "invitation_id": id, "reason": reason, "ip": client.ip }),
+            None => json!({ "reason": "unknown_token", "ip": client.ip }),
+        };
+        audit(&state.pool, "invitation_rejected", None, None, metadata).await?;
+        return Err(ApiError::InvitationInvalid);
+    };
     let account_id: Uuid = sqlx::query_scalar(
         "INSERT INTO accounts (username, display_name, email, password_hash, role, language)
          VALUES ($1, $1, $2, $3, $4, $5) RETURNING id",
@@ -537,6 +555,7 @@ pub struct RecoveryRequest {
 #[utoipa::path(post, path = "/api/auth/recovery", tag = "auth", request_body = RecoveryRequest,
     responses(
         (status = 202, description = "Accepted; identical for unknown usernames"),
+        (status = 409, description = "`outbound_disabled`: restore mode sends no email and creates no token, for every username", body = crate::api::ErrorEnvelope),
         (status = 429, description = "`rate_limited`", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn request_recovery(
@@ -553,6 +572,11 @@ pub async fn request_recovery(
         .take(64)
         .collect();
     auth.limit_attempt("recovery", &client, &normalized)?;
+    // Restore mode cannot send the link, so it must not mint a token or use up the
+    // cooldown either. The answer is the same for every username.
+    if !auth.settings.outbound_enabled() {
+        return Err(ApiError::OutboundDisabled);
+    }
     // By username only: several accounts may share an email.
     let found: Option<(Uuid, String, String, String)> = sqlx::query_as(
         "SELECT id, username, email, language FROM accounts
@@ -572,7 +596,15 @@ pub async fn request_recovery(
     .bind(found.as_ref().map_or(Uuid::nil(), |f| f.0))
     .fetch_one(&mut *tx)
     .await?;
-    let found = found.filter(|_| !cooling);
+    let mut found = found.filter(|_| !cooling);
+    // Deactivated since the lookup: as if the username were unknown.
+    if let Some((id, ..)) = &found
+        && crate::auth::lock_active_account(&mut tx, *id)
+            .await
+            .is_err()
+    {
+        found = None;
+    }
     let recovery_hash = token_hash(&token);
     if let Some((id, ..)) = &found {
         sqlx::query(&format!(
@@ -598,18 +630,19 @@ pub async fn request_recovery(
             ident_str(language)
         );
         let (subject, text) = recovery_email(language, &username, &url);
-        let queued = mail::queue(
-            state.pool.clone(),
-            auth.settings.encryption_key,
-            auth.settings.smtp_trust_root_pem.clone(),
-            OutboundMessage {
-                to: email,
-                subject: subject.to_owned(),
-                body: text,
-                idempotency_key: Some(format!("recovery:{}", hex_bytes(&recovery_hash))),
-            },
-        )
-        .await;
+        let queued = auth.settings.outbound_enabled()
+            && mail::queue(
+                state.pool.clone(),
+                auth.settings.encryption_key,
+                auth.settings.smtp_trust_root_pem.clone(),
+                OutboundMessage {
+                    to: email,
+                    subject: subject.to_owned(),
+                    body: text,
+                    idempotency_key: Some(format!("recovery:{}", hex_bytes(&recovery_hash))),
+                },
+            )
+            .await;
         if !queued {
             // Never log the token, link, address, or SMTP credentials.
             tracing::info!("password recovery requested, but no email was sent");
@@ -687,6 +720,9 @@ pub async fn reset_password(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::ResetTokenInvalid)?;
+    crate::auth::lock_active_account(&mut tx, account_id)
+        .await
+        .map_err(|_| ApiError::ResetTokenInvalid)?;
     // Rejected here, the transaction rolls back and the token stays usable.
     check_password(&body.new_password, &username.trim().to_lowercase())
         .map_err(|code| field_error("new_password", code))?;
@@ -745,6 +781,9 @@ pub async fn update_profile(
         .filter_map(|(name, set)| set.then_some(name))
         .collect();
     let mut tx = state.pool.begin().await?;
+    // The session was checked before this transaction; the account may have
+    // been deactivated and anonymized since.
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     sqlx::query(
         "UPDATE accounts SET email = coalesce($2, email), language = coalesce($3, language)
          WHERE id = $1",
@@ -784,6 +823,8 @@ pub struct AccountSummary {
     pub role: Role,
     pub language: Language,
     pub is_active: bool,
+    /// The account's identity was removed; it cannot be reactivated.
+    pub anonymized: bool,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
@@ -815,11 +856,13 @@ pub async fn list_accounts(
         Option<String>,
         Option<Uuid>,
         bool,
+        bool,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, username, display_name, email, role::text, language, is_active, created_at, expertise,
          (SELECT team_id FROM team_memberships WHERE account_id=accounts.id),
-         EXISTS (SELECT 1 FROM teams WHERE lead_account_id=accounts.id AND archived_at IS NULL)
+         EXISTS (SELECT 1 FROM teams WHERE lead_account_id=accounts.id AND archived_at IS NULL),
+         anonymized_at IS NOT NULL
          FROM accounts WHERE ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $1",
     )
@@ -843,6 +886,7 @@ pub async fn list_accounts(
                 expertise: r.8,
                 team_id: r.9,
                 is_team_lead: r.10,
+                anonymized: r.11,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -882,6 +926,7 @@ pub async fn deactivate_account(
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden` (not an Admin)", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`conflict`: the account was anonymized", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn reactivate_account(
     State(state): State<AppState>,
@@ -901,6 +946,16 @@ async fn set_active(
     let mut tx = crate::management::transaction(state, user).await?;
     // The last-admin and team-lead rules are database constraints that `?` maps
     // to `last_active_admin` / `active_team_lead`. Do not pre-lock Admin rows here.
+    // An anonymized account stays deactivated for good (docs/retention.md).
+    let anonymized: bool = sqlx::query_scalar(
+        "SELECT COALESCE((SELECT anonymized_at IS NOT NULL FROM accounts WHERE id = $1), false)",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if active && anonymized {
+        return Err(ApiError::Conflict);
+    }
     let changed =
         sqlx::query("UPDATE accounts SET is_active = $2 WHERE id = $1 AND is_active <> $2")
             .bind(id)

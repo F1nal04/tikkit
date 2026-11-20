@@ -1,0 +1,30 @@
+# Overlay for restoring a backup into an ISOLATED Compose project (docs/backup-restore.md).
+# Always use a different project name than production, so the restore gets fresh volumes:
+#   docker compose --env-file .env.restore -p tikkit-restore \
+#     -f docker-compose.prod.example.yml -f docker-compose.restore.example.yml ...
+services:
+  api:
+    environment:
+      # No background jobs, no mail, no AI provider calls (see docs/configuration.md).
+      RESTORE_MODE: "true"
+      # The API trusts forwarded client addresses only from this project's own fixed
+      # subnet (docs/security.md), which must differ from production's so both can run
+      # on one host. Override it with RESTORE_APP_SUBNET if the default is taken.
+      TRUSTED_PROXIES: ${RESTORE_APP_SUBNET:-10.99.48.0/24}
+    # Without the egress network the API cannot reach any mail relay or AI provider at
+    # all, even if RESTORE_MODE were removed by mistake.
+    networks: !override
+      app: {}
+      db: {}
+
+  proxy:
+    # Only on loopback, whatever PROXY_BIND says.
+    ports: !override
+      - "127.0.0.1:${HTTP_PORT:-80}:80"
+      - "127.0.0.1:${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+
+networks:
+  app:
+    ipam:
+      config: !override
+        - subnet: ${RESTORE_APP_SUBNET:-10.99.48.0/24}

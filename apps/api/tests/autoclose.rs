@@ -656,14 +656,37 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
     .await
     .unwrap();
 
+    let state = support::test_state(w.pool());
     let mut skipped = Vec::new();
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
+    let metrics = support::metrics_text(&state).await;
+    assert!(metrics.contains("tikkit_worker_pending_jobs{worker=\"auto_close\"} 2\n"));
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"auto_close\"} 2\n"));
+    assert!(metrics.contains("tikkit_worker_failures_total{worker=\"auto_close\"} 1\n"));
+    assert!(metrics.contains("tikkit_worker_retries_total{worker=\"auto_close\"} 1\n"));
+    let lag: f64 = metrics
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("tikkit_worker_oldest_due_seconds{worker=\"auto_close\"} ")
+        })
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(lag > 7200.0);
     assert_eq!(skipped, vec![older]);
     assert_eq!(w.row(older).await.0, "awaiting_confirmation");
     assert_eq!(w.events(older, "confirmation_timeout").await, 0);
     assert_eq!(w.outbox(older, "confirmation_timeout").await, 0);
 
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         w.row(newer).await.2.as_deref(),
         Some("confirmation_timeout")
@@ -672,26 +695,58 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
     assert_eq!(w.row(older).await.0, "awaiting_confirmation");
 
     // Cycle exhausted: the skip list is cleared and the worker would sleep.
-    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        !close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert!(skipped.is_empty());
     // The next cycle tries the failed ticket once, then idles again. It does not spin.
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(skipped, vec![older]);
-    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        !close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(w.events(older, "confirmation_timeout").await, 0);
 
     sqlx::query("DROP TRIGGER fail_autoclose ON tickets")
         .execute(w.pool())
         .await
         .unwrap();
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         w.row(older).await.2.as_deref(),
         Some("confirmation_timeout")
     );
     assert_eq!(w.events(older, "confirmation_timeout").await, 1);
     assert_eq!(w.events(newer, "confirmation_timeout").await, 1);
-    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        !close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
+    let metrics = support::metrics_text(&state).await;
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"auto_close\"} 0\n"));
+    assert!(
+        metrics.contains(
+            "tikkit_ticket_operations_total{operation=\"confirmation_timeout_closed\"} 2\n"
+        )
+    );
+    assert!(
+        metrics.contains(
+            "tikkit_ticket_operations_total{operation=\"human_requester_confirmed\"} 0\n"
+        )
+    );
 }
 
 /// The worker spawned in `main.rs`: it drains overdue proposals through the shared
@@ -701,7 +756,9 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
 async fn the_spawned_worker_closes_overdue_proposals_and_stops_on_shutdown() {
     let Some(w) = world().await else { return };
     let id = w.overdue().await;
-    let worker = tokio::spawn(tikkit_api::autoclose::worker_loop(w.pool().clone()));
+    let worker = tokio::spawn(tikkit_api::autoclose::worker_loop(support::test_state(
+        w.pool(),
+    )));
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while w.events(id, "confirmation_timeout").await == 0 {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -715,4 +772,123 @@ async fn the_spawned_worker_closes_overdue_proposals_and_stops_on_shutdown() {
         .expect("the worker returns after stop_workers")
         .unwrap();
     assert_eq!(w.events(id, "confirmation_timeout").await, 1);
+}
+
+#[tokio::test]
+async fn requester_cancel_and_confirmation_in_both_commit_orders() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let owner = login(&app, "requester", PASSWORD).await.session();
+
+    for cancel_first in [true, false] {
+        let id = w.seed("awaiting_confirmation", "1 hour").await;
+        let path = format!("/api/tickets/{id}/actions");
+        let cancel = call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "action": "cancel", "reason": "No further support needed" })),
+            Some(&owner),
+        );
+        let accept = call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "action": "accept_resolution", "proposal_version": 1 })),
+            Some(&owner),
+        );
+        let gate = support::lock_ticket(w.pool(), id).await;
+        let (cancel, accept) = if cancel_first {
+            support::queued_requests(w.pool(), gate, cancel, accept).await
+        } else {
+            let (accept, cancel) = support::queued_requests(w.pool(), gate, accept, cancel).await;
+            (cancel, accept)
+        };
+        assert_eq!(
+            (cancel.status.as_u16(), accept.status.as_u16()),
+            if cancel_first { (200, 409) } else { (409, 200) }
+        );
+        let (status, _, reason, team, assignee) = w.row(id).await;
+        assert_eq!(status, if cancel_first { "cancelled" } else { "closed" });
+        assert_eq!(
+            reason.as_deref(),
+            (!cancel_first).then_some("requester_confirmed")
+        );
+        assert_eq!((team, assignee), (Some(w.team), Some(w.op)));
+        assert_eq!(w.events(id, "cancel").await, i64::from(cancel_first));
+        assert_eq!(w.outbox(id, "cancel").await, 2 * i64::from(cancel_first));
+        assert_eq!(
+            w.events(id, "accept_resolution").await,
+            i64::from(!cancel_first)
+        );
+        assert_eq!(
+            w.outbox(id, "accept_resolution").await,
+            i64::from(!cancel_first)
+        );
+        assert_eq!(w.events(id, "confirmation_timeout").await, 0);
+    }
+}
+
+#[tokio::test]
+async fn requester_cancel_and_timeout_in_both_commit_orders() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let owner = login(&app, "requester", PASSWORD).await.session();
+
+    for cancel_first in [true, false] {
+        let id = w.overdue().await;
+        let path = format!("/api/tickets/{id}/actions");
+        let cancel = call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "action": "cancel", "reason": "No further support needed" })),
+            Some(&owner),
+        );
+        // Both transitions insert into the outbox after taking the ticket lock.
+        // This gate keeps that lock held when the competing operation arrives.
+        let mut gate = w.pool().begin().await.unwrap();
+        sqlx::query("LOCK TABLE notification_outbox IN SHARE MODE")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        let (cancelled, closed) = if cancel_first {
+            tokio::join!(cancel, async {
+                support::wait_for_lock_waiters(w.pool(), 1).await;
+                let skipped = close_one(w.pool()).await;
+                gate.commit().await.unwrap();
+                skipped
+            })
+        } else {
+            let (closed, cancelled) =
+                support::queued_requests(w.pool(), gate, close_one(w.pool()), cancel).await;
+            (cancelled, closed)
+        };
+
+        assert_eq!(closed.unwrap(), !cancel_first);
+        assert_eq!(
+            cancelled.status.as_u16(),
+            if cancel_first { 200 } else { 409 },
+            "{}",
+            cancelled.body
+        );
+        let (status, _, reason, team, assignee) = w.row(id).await;
+        assert_eq!(status, if cancel_first { "cancelled" } else { "closed" });
+        assert_eq!(
+            reason.as_deref(),
+            (!cancel_first).then_some("confirmation_timeout")
+        );
+        assert_eq!((team, assignee), (Some(w.team), Some(w.op)));
+        assert_eq!(w.events(id, "cancel").await, i64::from(cancel_first));
+        assert_eq!(w.outbox(id, "cancel").await, 2 * i64::from(cancel_first));
+        assert_eq!(
+            w.events(id, "confirmation_timeout").await,
+            i64::from(!cancel_first)
+        );
+        assert_eq!(
+            w.outbox(id, "confirmation_timeout").await,
+            i64::from(!cancel_first)
+        );
+        assert!(!close_one(w.pool()).await.unwrap());
+    }
 }
