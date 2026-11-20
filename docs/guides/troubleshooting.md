@@ -62,7 +62,7 @@ Reference: [configuration upgrades](../configuration.md#upgrading),
 ## Readiness reports `migrations: incompatible` after a rollback
 
 **Symptom.** `/api/ready` answers HTTP 503 with
-`{"status":"unavailable","checks":{"database":"ok","migrations":"incompatible"}}`,
+`{"status":"unavailable","checks":{"database":"ok","migrations":"incompatible"},"restore_mode":false}`,
 and the API does not start or stays unready after you went back to older images.
 (`pending` means migrations still have to be applied; `unknown` means the history
 could not be read.)
