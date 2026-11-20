@@ -7,7 +7,12 @@ export default defineConfig({
   plugins: [sveltekit({ adapter: adapter() }), svelteTesting()],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:3001',
+      '/api': {
+        target: 'http://127.0.0.1:3001',
+        configure(proxy) {
+          proxy.on('proxyReq', (request) => request.removeHeader('x-request-id'))
+        },
+      },
     },
   },
   test: { environment: 'jsdom', include: ['src/**/*.test.ts'] },

@@ -434,7 +434,7 @@ pub async fn upload(
         i32::try_from(bytes.len()).map_err(|_| field("file", "dimensions_too_large"))?;
     let (written, _permit) = blocking(move || (write_file(&dir, id, &bytes), permit)).await?;
     if let Err(error) = written {
-        tracing::error!(%error, "screenshot storage write failed");
+        tracing::error!(kind = ?error.kind(), "screenshot storage write failed");
         return Err(ApiError::Internal);
     }
     let screenshot: Screenshot = sqlx::query_as(&format!(
@@ -569,7 +569,7 @@ async fn serve(
     let bytes = blocking(move || std::fs::read(path))
         .await?
         .map_err(|error| {
-            tracing::error!(%error, %id, "screenshot file unreadable");
+            tracing::error!(kind = ?error.kind(), screenshot_id = %id, "screenshot file unreadable");
             ApiError::Internal
         })?;
     let name = &screenshot.filename;

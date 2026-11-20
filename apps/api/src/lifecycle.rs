@@ -567,8 +567,8 @@ async fn run(
     .execute(&mut *conn)
     .await?;
     sqlx::query(
-        "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at, request_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(ticket_id)
     .bind(actor.map(|a| a.id))
@@ -577,6 +577,7 @@ async fn run(
     .bind(ident_str(out.to))
     .bind(&out.payload)
     .bind(now)
+    .bind(crate::telemetry::request_id())
     .execute(&mut *conn)
     .await?;
     // A requester who cancels or skips while AI is processing ends the attempt

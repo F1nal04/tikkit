@@ -145,6 +145,7 @@ pub fn test_app_with_provider(pool: &PgPool, provider: &url::Url) -> Router {
 pub fn test_state(pool: &PgPool) -> AppState {
     AppState {
         pool: pool.clone(),
+        metrics: Default::default(),
         screenshot_dir: screenshot_dir(pool).into(),
         ai_client: AiClient::new(),
         ai_endpoint: Endpoint::Override {
@@ -363,5 +364,59 @@ pub mod fixtures {
         .execute(db)
         .await
         .map(drop)
+    }
+}
+
+/// Scrape the same private router used by the API binary.
+pub async fn metrics_text(state: &AppState) -> String {
+    let response = tikkit_api::metrics::router(state.clone())
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Default)]
+pub struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Logs {
+    /// One capture per integration test binary. Install process-wide so the
+    /// tracing callsite cache remains enabled when other tests run in parallel.
+    pub fn capture() -> Self {
+        let logs = Self::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .json()
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+        logs
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }

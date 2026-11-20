@@ -21,7 +21,7 @@ use support::{
     fixtures::{self, PASSWORD, Role},
     login,
     provider_mock::{Mock, Reply, serve},
-    test_app, test_state,
+    test_state,
 };
 use tikkit_api::{
     ai::{AiClient, CallOptions, Endpoint, MAX_IMAGE_BYTES},
@@ -42,6 +42,7 @@ const KEY: [u8; 32] = [0; 32];
 
 struct World {
     db: TestDb,
+    state: tikkit_api::AppState,
     app: Router,
     mock: Mock,
     admin: String,
@@ -63,7 +64,8 @@ async fn world(replies: Vec<Reply>) -> Option<World> {
     fixtures::bootstrap_admin(&db.pool).await;
     let requester_id = fixtures::account(&db.pool, Role::User, "pat.jones").await;
     fixtures::account(&db.pool, Role::Operator, "operator").await;
-    let app = test_app(&db.pool);
+    let state = test_state(&db.pool);
+    let app = tikkit_api::app(state.clone());
     let admin = login(&app, "admin", PASSWORD).await.session();
     let requester = login(&app, "pat.jones", PASSWORD).await.session();
     let operator = login(&app, "operator", PASSWORD).await.session();
@@ -80,6 +82,7 @@ async fn world(replies: Vec<Reply>) -> Option<World> {
     let mock = serve(replies).await;
     let w = World {
         db,
+        state,
         app,
         mock,
         admin,
@@ -136,7 +139,7 @@ impl World {
             allow_private_network: true,
         };
         let guard = AiGuard::new(self.pool().clone(), client, endpoint);
-        Worker::with(&test_state(self.pool()), guard, KEY).options(WorkerOptions {
+        Worker::with(&self.state, guard, KEY).options(WorkerOptions {
             lease: Duration::from_millis(600),
             heartbeat,
             saturated_retry: Duration::from_millis(100),
@@ -1203,6 +1206,9 @@ async fn a_call_started_before_the_deadline_is_not_cut_short() {
     w.wait_for_calls(1).await;
     w.overdue(ticket).await;
     assert!(!ai_attempts::sweep_one(&w.worker()).await.unwrap());
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(metrics.contains(r#"tikkit_worker_pending_jobs{worker="ai_attempts"} 1"#));
+    assert!(metrics.contains(r#"tikkit_worker_due_jobs{worker="ai_attempts"} 0"#));
     assert!(running.await.unwrap().unwrap());
     assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
     assert_eq!(w.events(ticket, "ai_suggestion_ready").await, 1);
@@ -1448,12 +1454,38 @@ async fn shutdown_cancels_the_call_and_leaves_the_attempt_for_the_next_start() {
 /// uses the polling loops.
 #[tokio::test]
 async fn the_worker_loop_stops_within_the_shutdown_window() {
-    let Some(w) = world(vec![success().after(Duration::from_secs(20)), success()]).await else {
+    let mut replies = vec![success().after(Duration::from_secs(20)); 4];
+    replies.push(success());
+    let Some(w) = world(replies).await else {
         return;
     };
-    let ticket = w.submit("ai_processing").await;
+    w.sql("UPDATE ai_limits SET max_concurrency = 4").await;
+    let mut tickets = Vec::new();
+    for _ in 0..4 {
+        tickets.push(w.submit("ai_processing").await);
+    }
     let looping = tokio::spawn(ai_attempts::worker_loop(w.worker()));
-    w.wait_for_calls(1).await;
+    w.wait_for_calls(4).await;
+    let heartbeat = || async {
+        support::metrics_text(&w.state)
+            .await
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(
+                    r#"tikkit_worker_last_success_timestamp_seconds{worker="ai_attempts"} "#,
+                )
+            })
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+    };
+    let before = heartbeat().await;
+    let busy_poll = tokio::time::timeout(Duration::from_secs(5), async {
+        while heartbeat().await <= before {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
     let stopping = std::time::Instant::now();
     tikkit_api::notifications::stop_workers();
     // `main.rs` waits five seconds for its workers.
@@ -1462,17 +1494,26 @@ async fn the_worker_loop_stops_within_the_shutdown_window() {
         .expect("the worker loop ends in time")
         .unwrap();
     assert!(stopping.elapsed() < Duration::from_secs(5));
-    assert_eq!(w.status(ticket).await, "ai_processing");
-    assert_eq!(w.claims(ticket).await, (1, false));
+    assert!(
+        busy_poll.is_ok(),
+        "the poll heartbeat moves with all slots busy"
+    );
+    assert_eq!(w.mock.count(), 4);
+    for &ticket in &tickets {
+        assert_eq!(w.status(ticket).await, "ai_processing");
+        assert_eq!(w.claims(ticket).await, (1, false));
+    }
     let reserved: i64 =
         sqlx::query_scalar("SELECT count(*) FROM ai_usage WHERE status = 'reserved'")
             .fetch_one(w.pool())
             .await
             .unwrap();
     assert_eq!(reserved, 0, "no provider slot stays taken after shutdown");
-    // After the restart the attempt is finished as usual.
-    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
-    assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+    // After the restart the attempts finish as usual.
+    while ai_attempts::process_one(&w.worker()).await.unwrap() {}
+    for ticket in tickets {
+        assert_eq!(w.status(ticket).await, "awaiting_ai_decision");
+    }
 }
 
 // --- Provider concurrency -------------------------------------------------------------------
@@ -1554,6 +1595,10 @@ async fn a_saturated_attempt_retries_and_hands_off_only_at_its_deadline() {
     assert!(started.elapsed() >= Duration::from_millis(1500));
     w.assert_handed_off(ticket, "concurrency_saturated").await;
     assert_eq!(w.ai(ticket).await["reason"], "ai_failed");
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(metrics.lines().any(
+        |line| line == r#"tikkit_ticket_operations_total{operation="ai_generation_refused"} 1"#
+    ));
     assert_eq!(w.mock.count(), 1, "no provider call for the second ticket");
 }
 
@@ -1688,6 +1733,15 @@ async fn the_requester_decides_on_the_one_stored_suggestion() {
     let worker = w.worker();
     while ai_attempts::process_one(&worker).await.unwrap() {}
     assert_eq!(w.mock.count(), 2);
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(
+        metrics
+            .contains("tikkit_ticket_operations_total{operation=\"ai_generation_succeeded\"} 2\n")
+    );
+    assert!(
+        metrics
+            .contains("tikkit_ticket_operations_total{operation=\"ai_requester_confirmed\"} 0\n")
+    );
 
     assert_eq!(
         decide(solved, "ai_solved").await.body["status"],
@@ -1715,6 +1769,15 @@ async fn the_requester_decides_on_the_one_stored_suggestion() {
     assert_eq!(w.ai(solved).await["decision"], "solved");
     assert_eq!(w.events(solved, "ai_solved").await, 1);
 
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(
+        metrics
+            .contains("tikkit_ticket_operations_total{operation=\"ai_requester_confirmed\"} 1\n")
+    );
+    assert!(
+        metrics.contains("tikkit_ticket_operations_total{operation=\"queue_intake_after_ai\"} 1\n")
+    );
+
     assert_eq!(w.queued(escalated).await, 1);
     assert_eq!(w.events(escalated, "ai_not_solved").await, 1);
     assert!(w.in_queue(escalated).await);
@@ -1733,4 +1796,147 @@ async fn the_requester_decides_on_the_one_stored_suggestion() {
             Some(("suggestion_ready".into(), None, true))
         );
     }
+}
+
+#[tokio::test]
+async fn a_transient_handoff_write_failure_only_counts_the_committed_handoff() {
+    let Some(w) = world(vec![Reply::json(500, json!({}))]).await else {
+        return;
+    };
+    let ticket = w.submit("ai_processing").await;
+    // Sequence advances are visible even when the first write rolls back.
+    w.sql("CREATE SEQUENCE fail_handoff_once").await;
+    w.sql(
+        "CREATE FUNCTION fail_first_handoff() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF nextval('fail_handoff_once') = 1 THEN RAISE EXCEPTION 'temporary write failure'; END IF;
+           RETURN NEW;
+         END $$",
+    ).await;
+    w.sql(
+        "CREATE TRIGGER fail_first_handoff BEFORE INSERT ON ticket_events FOR EACH ROW
+         WHEN (NEW.event_type = 'ai_failed') EXECUTE FUNCTION fail_first_handoff()",
+    )
+    .await;
+    assert!(ai_attempts::process_one(&w.worker()).await.unwrap());
+    w.assert_handed_off(ticket, "upstream_unavailable").await;
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(
+        metrics.lines().any(
+            |line| line == r#"tikkit_ticket_operations_total{operation="ai_handoff_failed"} 0"#
+        )
+    );
+    assert!(
+        metrics.contains(r#"tikkit_ticket_operations_total{operation="queue_intake_after_ai"} 1"#)
+    );
+    assert!(metrics.contains(r#"tikkit_worker_retries_total{worker="ai_attempts"} 1"#));
+}
+
+#[tokio::test]
+async fn provider_and_handoff_failures_are_distinct_and_correlated_without_private_content() {
+    let private = ["provider", "response", "secret"].join("-");
+    let Some(w) = world(vec![Reply::json(
+        500,
+        json!({"error": {"message": private}}),
+    )])
+    .await
+    else {
+        return;
+    };
+    let logs = support::Logs::capture();
+    let ticket = w.submit("ai_processing").await;
+    let request_id: Uuid = sqlx::query_scalar(
+        "SELECT request_id FROM ticket_events WHERE ticket_id = $1 AND event_type = 'submit'",
+    )
+    .bind(ticket)
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+
+    // A database write rejects the handoff, even though the provider failed.
+    w.sql(
+        "CREATE FUNCTION fail_handoff() RETURNS trigger LANGUAGE plpgsql AS $$
+           BEGIN RAISE EXCEPTION 'private-detail-from-database'; END $$",
+    )
+    .await;
+    w.sql(
+        "CREATE TRIGGER fail_handoff BEFORE INSERT ON ticket_events FOR EACH ROW
+           WHEN (NEW.event_type = 'ai_failed') EXECUTE FUNCTION fail_handoff()",
+    )
+    .await;
+    let worker = w.worker();
+    assert!(ai_attempts::process_one(&worker).await.is_err());
+    w.deadline_in(ticket, -300.0).await;
+    w.sql("UPDATE ai_attempts SET claimed_until = NULL WHERE state = 'processing'")
+        .await;
+    assert!(ai_attempts::sweep_one(&worker).await.unwrap());
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(
+        metrics.contains("tikkit_ticket_operations_total{operation=\"ai_generation_failed\"} 1\n")
+    );
+    assert!(
+        metrics.contains("tikkit_ticket_operations_total{operation=\"queue_intake_after_ai\"} 0\n")
+    );
+    assert!(
+        metrics
+            .contains("tikkit_ticket_operations_total{operation=\"ai_requester_confirmed\"} 0\n")
+    );
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"ai_attempts\"} 1\n"));
+    assert!(metrics.contains("tikkit_worker_retries_total{worker=\"ai_attempt_sweep\"} 1\n"));
+    assert!(
+        metrics.lines().any(
+            |line| line == r#"tikkit_ticket_operations_total{operation="ai_handoff_failed"} 1"#
+        )
+    );
+    // Further drain cycles retry the same stuck ticket without emitting a
+    // second alert increment.
+    assert!(ai_attempts::sweep_one(&worker).await.unwrap());
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(
+        metrics.lines().any(
+            |line| line == r#"tikkit_ticket_operations_total{operation="ai_handoff_failed"} 1"#
+        )
+    );
+    assert!(metrics.contains(r#"tikkit_worker_retries_total{worker="ai_attempt_sweep"} 2"#));
+    assert!(!metrics.contains(&request_id.to_string()));
+    assert!(!metrics.contains(&ticket.to_string()));
+    assert!(!metrics.contains("Software"));
+
+    w.sql("DROP TRIGGER fail_handoff ON ticket_events").await;
+    assert!(ai_attempts::sweep_one(&worker).await.unwrap());
+    w.assert_handed_off(ticket, "timeout").await;
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(
+        metrics.contains("tikkit_ticket_operations_total{operation=\"queue_intake_after_ai\"} 1\n")
+    );
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"ai_attempts\"} 0\n"));
+    let output = logs.text();
+    for value in [
+        private.as_str(),
+        SECRET,
+        "Word crashes",
+        "It closes on startup.",
+        "private-detail-from-database",
+    ] {
+        assert!(!output.contains(value), "{output}");
+        assert!(!metrics.contains(value));
+    }
+    for worker in ["ai_attempts", "ai_attempt_sweep"] {
+        assert!(
+            output.lines().any(|line| {
+                let event: Value = serde_json::from_str(line).unwrap();
+                event["span"]["worker"] == worker
+                    && event["span"]["request_id"] == request_id.to_string()
+            }),
+            "{output}"
+        );
+    }
+    assert!(
+        output.lines().any(|line| {
+            let event: Value = serde_json::from_str(line).unwrap();
+            event["span"]["route"] == "/api/tickets"
+                && event["span"]["request_id"] == request_id.to_string()
+        }),
+        "{output}"
+    );
 }

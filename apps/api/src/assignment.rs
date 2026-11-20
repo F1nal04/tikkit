@@ -258,8 +258,8 @@ pub(crate) async fn apply(
              UPDATE tickets SET team_id = $2, assignee_account_id = $3, updated_at = clock_timestamp()
              WHERE id = $1 RETURNING updated_at
          ), event AS (
-             INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, created_at)
-             SELECT $1, $4, 'assignment_changed', $5, updated_at FROM changed
+             INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, created_at, request_id)
+             SELECT $1, $4, 'assignment_changed', $5, updated_at, $6 FROM changed
          )
          SELECT (SELECT name FROM teams WHERE id = $2), (SELECT display_name FROM accounts WHERE id = $3)",
     )
@@ -272,6 +272,7 @@ pub(crate) async fn apply(
         "previous_team_id": team_id, "team_id": next_team,
         "previous_assignee_account_id": assignee, "assignee_account_id": next_assignee,
     }))
+    .bind(crate::telemetry::request_id())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

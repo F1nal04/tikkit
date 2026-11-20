@@ -1005,7 +1005,7 @@ async fn jobs_late_callbacks_and_direct_writes_cannot_reopen_an_ai_solved_record
     );
     tx.commit().await.unwrap();
     assert!(!autoclose::close_one(w.pool()).await.unwrap());
-    while notifications::process_one(w.pool(), &Settings::default())
+    while notifications::process_one(w.pool(), &Settings::default(), &Default::default())
         .await
         .unwrap()
     {}
@@ -1318,7 +1318,7 @@ async fn ai_stage_and_ai_solved_records_are_absent_from_every_operator_path() {
             // Notifications: nothing was queued for staff, nothing is listed.
             assert_eq!(w.staff_outbox(id).await, 0, "{status}");
         }
-        while notifications::process_one(w.pool(), &Settings::default())
+        while notifications::process_one(w.pool(), &Settings::default(), &Default::default())
             .await
             .unwrap()
         {}

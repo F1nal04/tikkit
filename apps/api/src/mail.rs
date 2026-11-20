@@ -216,33 +216,37 @@ pub(crate) async fn queue(
 ) -> bool {
     match load(&pool, &encryption_key).await {
         Ok(ready) if ready.enabled => {
-            tokio::spawn(async move {
-                match deliver(
-                    &pool,
-                    &encryption_key,
-                    trust_root_pem.as_deref(),
-                    &message,
-                    DeliverOptions::default(),
-                )
-                .await
-                {
-                    Ok(Delivered::Sent) => {
-                        let _ = clear_delivery_error(&pool).await;
+            tokio::spawn(crate::telemetry::job(
+                "account_mail",
+                crate::telemetry::request_id(),
+                async move {
+                    match deliver(
+                        &pool,
+                        &encryption_key,
+                        trust_root_pem.as_deref(),
+                        &message,
+                        DeliverOptions::default(),
+                    )
+                    .await
+                    {
+                        Ok(Delivered::Sent) => {
+                            let _ = clear_delivery_error(&pool).await;
+                        }
+                        Ok(Delivered::Duplicate) => {}
+                        Err(
+                            failure @ (MailError::Auth
+                            | MailError::Tls
+                            | MailError::Network
+                            | MailError::Delivery
+                            | MailError::Unreadable),
+                        ) => {
+                            tracing::warn!(error = failure.code(), "email delivery failed");
+                            let _ = note_delivery_error(&pool, failure.code()).await;
+                        }
+                        Err(_) => tracing::warn!("email delivery did not complete"),
                     }
-                    Ok(Delivered::Duplicate) => {}
-                    Err(
-                        failure @ (MailError::Auth
-                        | MailError::Tls
-                        | MailError::Network
-                        | MailError::Delivery
-                        | MailError::Unreadable),
-                    ) => {
-                        tracing::warn!(error = failure.code(), "email delivery failed");
-                        let _ = note_delivery_error(&pool, failure.code()).await;
-                    }
-                    Err(_) => tracing::warn!("email delivery did not complete"),
-                }
-            });
+                },
+            ));
             true
         }
         Ok(_) | Err(MailError::NotConfigured | MailError::Disabled) => false,

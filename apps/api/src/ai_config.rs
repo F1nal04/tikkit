@@ -532,10 +532,11 @@ pub async fn put_ai(
     if let (true, Some(provider)) = (retested, body.provider) {
         ai_guard::reset_circuit(&mut tx, provider).await?;
     }
+    let mut handed_off = 0;
     if retested || old.enabled != body.enabled {
         // Attempts created under the old configuration must not finish under
         // the new one: stop them and hand their tickets to operators now.
-        let handed_off = if !body.enabled {
+        handed_off = if !body.enabled {
             ai_attempts::invalidate(&mut tx, None, ai_attempts::AI_DISABLED).await?
         } else {
             ai_attempts::invalidate(&mut tx, None, ai_attempts::CONFIGURATION_CHANGED).await?
@@ -555,6 +556,9 @@ pub async fn put_ai(
     }
     let settings = view(&mut tx, key).await?;
     tx.commit().await?;
+    state
+        .metrics
+        .event(crate::metrics::Event::AiHandoff, handed_off);
     Ok(Json(settings))
 }
 
@@ -630,6 +634,9 @@ pub async fn put_credential(
     .await?;
     let settings = view(&mut tx, key).await?;
     tx.commit().await?;
+    state
+        .metrics
+        .event(crate::metrics::Event::AiHandoff, handed_off);
     Ok(Json(settings))
 }
 
@@ -685,6 +692,9 @@ pub async fn delete_credential(
     .await?;
     let settings = view(&mut tx, &auth.settings.encryption_key).await?;
     tx.commit().await?;
+    state
+        .metrics
+        .event(crate::metrics::Event::AiHandoff, handed_off);
     Ok(Json(settings))
 }
 

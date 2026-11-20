@@ -441,6 +441,9 @@ pub async fn submit_ticket(
     )
     .await?;
     tx.commit().await?;
+    if receipt.status == TicketStatus::Queued {
+        state.metrics.event(crate::metrics::Event::DirectIntake, 1);
+    }
     Ok((StatusCode::CREATED, Json(receipt)))
 }
 
@@ -484,5 +487,8 @@ pub async fn submit_draft(
     sqlx::query("UPDATE ticket_drafts SET intake = NULL, submitted_ticket_id = $2, version = version + 1, updated_at = now() WHERE id = $1")
         .bind(id).bind(receipt.id).execute(&mut *tx).await?;
     tx.commit().await?;
+    if receipt.status == TicketStatus::Queued {
+        state.metrics.event(crate::metrics::Event::DirectIntake, 1);
+    }
     Ok((StatusCode::CREATED, Json(receipt)))
 }

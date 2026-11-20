@@ -2,8 +2,8 @@ use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use tikkit_api::{
-    AppState, ai_attempts, ai_guard, app_with, auth, autoclose, config::Config, db, notifications,
-    screenshots,
+    AppState, ai_attempts, ai_guard, app_with, auth, autoclose, config::Config, db, metrics,
+    notifications, screenshots, telemetry,
 };
 use tokio::{net::TcpListener, sync::watch};
 
@@ -14,16 +14,26 @@ async fn main() -> anyhow::Result<()> {
     if std::env::var("ENVIRONMENT").as_deref() != Ok("production") {
         dotenvy::dotenv().ok();
     }
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,sqlx=warn".into()),
-        )
-        .init();
     let config = Config::from_env()?;
+    telemetry::init_logging(config.json_logs);
 
-    let pool = db::connect(&config.database_url).await?;
-    db::migrate(&pool).await?;
+    let pool = db::connect(&config.database_url).await.map_err(|error| {
+        let sqlstate = error.as_database_error().and_then(|db| db.code());
+        tracing::error!(
+            error_kind = db::error_kind(&error),
+            sqlstate = sqlstate.as_deref(),
+            "database startup connection failed"
+        );
+        anyhow::anyhow!(
+            "cannot connect to PostgreSQL; check DATABASE_URL and database service health"
+        )
+    })?;
+    db::migrate(&pool)
+        .await
+        .map_err(|error| {
+            db::log_migration_failure(&error);
+            anyhow::anyhow!("database migration failed; check database health and the migration history for this build")
+        })?;
     std::fs::create_dir_all(&config.screenshot_dir)
         .context("cannot create SCREENSHOT_DIR (see docs/configuration.md)")?;
     tokio::spawn(screenshots::cleanup_loop(
@@ -31,22 +41,39 @@ async fn main() -> anyhow::Result<()> {
         config.screenshot_dir.clone(),
     ));
 
-    let notifier = tokio::spawn(notifications::worker_loop(
-        pool.clone(),
-        auth::Settings::from(&config),
-    ));
-    let auto_close = tokio::spawn(autoclose::worker_loop(pool.clone()));
-    let ai_retention = tokio::spawn(ai_guard::retention_loop(pool.clone()));
-
     let listener = TcpListener::bind(config.api_addr)
         .await
         .with_context(|| format!("cannot listen on API_ADDR {}", config.api_addr))?;
-    tracing::info!("Tikkit API listening on http://{}", listener.local_addr()?);
+    let metrics_listener = match config.metrics_port {
+        Some(port) => Some(
+            metrics::bind(port)
+                .await
+                .context("cannot listen on METRICS_PORT")?,
+        ),
+        None => None,
+    };
+    tracing::info!(address = %listener.local_addr()?, "Tikkit API listening");
+    let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
+    let settings = auth::Settings::from(&config);
+    let notifier = tokio::spawn(notifications::worker_loop(state.clone(), settings.clone()));
+    let auto_close = tokio::spawn(autoclose::worker_loop(state.clone()));
+    let ai_retention = tokio::spawn(ai_guard::retention_loop(pool.clone()));
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
-    let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
-    let settings = auth::Settings::from(&config);
+    let mut metrics_stopped = stopped.clone();
+    let metrics_state = state.clone();
+    let metrics_server = async move {
+        if let Some(listener) = metrics_listener {
+            tracing::info!(address = %listener.local_addr()?, "private metrics listening");
+            axum::serve(listener, metrics::router(metrics_state))
+                .with_graceful_shutdown(async move {
+                    let _ = metrics_stopped.wait_for(|stop| *stop).await;
+                })
+                .await?;
+        }
+        Ok::<_, std::io::Error>(())
+    };
     // AI suggestion attempts. At shutdown the calls in flight are cancelled and
     // their attempts released for the next start to take over.
     let ai_worker = tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
@@ -73,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(config.shutdown_timeout).await;
     };
     tokio::select! {
-        result = server => result?,
+        result = async { tokio::try_join!(server, metrics_server) } => { result?; },
         () = deadline => tracing::warn!("Drain timeout reached; aborting remaining requests"),
     }
     // Let a notification already being sent record its outcome, an auto-close

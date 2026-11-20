@@ -656,14 +656,37 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
     .await
     .unwrap();
 
+    let state = support::test_state(w.pool());
     let mut skipped = Vec::new();
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
+    let metrics = support::metrics_text(&state).await;
+    assert!(metrics.contains("tikkit_worker_pending_jobs{worker=\"auto_close\"} 2\n"));
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"auto_close\"} 2\n"));
+    assert!(metrics.contains("tikkit_worker_failures_total{worker=\"auto_close\"} 1\n"));
+    assert!(metrics.contains("tikkit_worker_retries_total{worker=\"auto_close\"} 1\n"));
+    let lag: f64 = metrics
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("tikkit_worker_oldest_due_seconds{worker=\"auto_close\"} ")
+        })
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(lag > 7200.0);
     assert_eq!(skipped, vec![older]);
     assert_eq!(w.row(older).await.0, "awaiting_confirmation");
     assert_eq!(w.events(older, "confirmation_timeout").await, 0);
     assert_eq!(w.outbox(older, "confirmation_timeout").await, 0);
 
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         w.row(newer).await.2.as_deref(),
         Some("confirmation_timeout")
@@ -672,26 +695,58 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
     assert_eq!(w.row(older).await.0, "awaiting_confirmation");
 
     // Cycle exhausted: the skip list is cleared and the worker would sleep.
-    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        !close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert!(skipped.is_empty());
     // The next cycle tries the failed ticket once, then idles again. It does not spin.
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(skipped, vec![older]);
-    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        !close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(w.events(older, "confirmation_timeout").await, 0);
 
     sqlx::query("DROP TRIGGER fail_autoclose ON tickets")
         .execute(w.pool())
         .await
         .unwrap();
-    assert!(close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         w.row(older).await.2.as_deref(),
         Some("confirmation_timeout")
     );
     assert_eq!(w.events(older, "confirmation_timeout").await, 1);
     assert_eq!(w.events(newer, "confirmation_timeout").await, 1);
-    assert!(!close_due(w.pool(), &mut skipped).await.unwrap());
+    assert!(
+        !close_due(w.pool(), &mut skipped, &state.metrics)
+            .await
+            .unwrap()
+    );
+    let metrics = support::metrics_text(&state).await;
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"auto_close\"} 0\n"));
+    assert!(
+        metrics.contains(
+            "tikkit_ticket_operations_total{operation=\"confirmation_timeout_closed\"} 2\n"
+        )
+    );
+    assert!(
+        metrics.contains(
+            "tikkit_ticket_operations_total{operation=\"human_requester_confirmed\"} 0\n"
+        )
+    );
 }
 
 /// The worker spawned in `main.rs`: it drains overdue proposals through the shared
@@ -701,7 +756,9 @@ async fn a_failing_transition_does_not_block_the_tickets_behind_it() {
 async fn the_spawned_worker_closes_overdue_proposals_and_stops_on_shutdown() {
     let Some(w) = world().await else { return };
     let id = w.overdue().await;
-    let worker = tokio::spawn(tikkit_api::autoclose::worker_loop(w.pool().clone()));
+    let worker = tokio::spawn(tikkit_api::autoclose::worker_loop(support::test_state(
+        w.pool(),
+    )));
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while w.events(id, "confirmation_timeout").await == 0 {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
