@@ -375,57 +375,59 @@ impl fmt::Debug for Suggestion {
 
 // --- Errors -------------------------------------------------------------------
 
-/// Every failure is one of these. None of them is fatal for the ticket: the
-/// caller records the kind and hands the ticket to human support.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AiErrorKind {
+// Keep the stable identifiers and the list used by report classification
+// derived from the same set of variants.
+macro_rules! ai_error_kinds {
+    ($($(#[$doc:meta])* $kind:ident => $code:literal),+ $(,)?) => {
+        /// Every failure is one of these. The caller records the kind and
+        /// hands the ticket to human support.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum AiErrorKind {
+            $($(#[$doc])* $kind),+
+        }
+
+        impl AiErrorKind {
+            pub(crate) const ALL: &[Self] = &[$(Self::$kind),+];
+
+            /// Stable machine identifier for storage and reporting.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$kind => $code),+
+                }
+            }
+        }
+    };
+}
+
+ai_error_kinds! {
     /// The request exceeds an input bound or is missing required text. No
     /// provider call was made.
-    InvalidInput,
+    InvalidInput => "invalid_input",
     /// The provider rejected the credential (401/403, or an invalid-key error).
-    InvalidCredentials,
+    InvalidCredentials => "invalid_credentials",
     /// Rate limit or quota (429/402).
-    RateLimited,
+    RateLimited => "rate_limited",
     /// The provider rejected the request or model, or the model refused,
     /// filtered, or failed the generation. Also: model not in the supported
     /// list (no call made).
-    ModelError,
+    ModelError => "model_error",
     /// An attempt or the whole call exceeded its time limit.
-    Timeout,
+    Timeout => "timeout",
     /// Connection failure or 5xx/408 after the bounded retries.
-    UpstreamUnavailable,
+    UpstreamUnavailable => "upstream_unavailable",
     /// The response is not the expected single suggestion.
-    MalformedOutput,
+    MalformedOutput => "malformed_output",
     /// The response body or the suggestion exceeds an output bound, or the
     /// model ran out of output tokens.
-    OversizedOutput,
+    OversizedOutput => "oversized_output",
     /// Images cannot be sent or were rejected: model without image input, an
     /// image outside the bounds, or a provider error about an image.
-    Vision,
+    Vision => "vision_failed",
     /// The destination is not allowed, or the provider answered with a
     /// redirect (redirects are never followed).
-    DestinationBlocked,
+    DestinationBlocked => "destination_blocked",
     /// Stopped through [`Cancel`].
-    Cancelled,
-}
-
-impl AiErrorKind {
-    /// Stable machine identifier for storage and reporting.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            AiErrorKind::InvalidInput => "invalid_input",
-            AiErrorKind::InvalidCredentials => "invalid_credentials",
-            AiErrorKind::RateLimited => "rate_limited",
-            AiErrorKind::ModelError => "model_error",
-            AiErrorKind::Timeout => "timeout",
-            AiErrorKind::UpstreamUnavailable => "upstream_unavailable",
-            AiErrorKind::MalformedOutput => "malformed_output",
-            AiErrorKind::OversizedOutput => "oversized_output",
-            AiErrorKind::Vision => "vision_failed",
-            AiErrorKind::DestinationBlocked => "destination_blocked",
-            AiErrorKind::Cancelled => "cancelled",
-        }
-    }
+    Cancelled => "cancelled",
 }
 
 /// A provider-call failure. It never carries the key, the request, a URL, or

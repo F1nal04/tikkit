@@ -846,6 +846,196 @@
         }
       }
     },
+    "/api/admin/reports": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "get_report",
+        "parameters": [
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "Frozen category ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Current destination team ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, reversed, or over-366-day range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/reports/export": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "export_report",
+        "parameters": [
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "Frozen category ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Current destination team ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, reversed, or over-366-day range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "More than 10,000 matching rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/settings": {
       "get": {
         "tags": [
@@ -960,6 +1150,63 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Current destination team, including archived teams.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "assignee_id",
+            "in": "query",
+            "description": "Current assignee account.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "entered_queue",
+            "in": "query",
+            "description": "Whether a recorded transition entered the shared queue.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "priority_id",
+            "in": "query",
+            "description": "Current effective priority.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "Current closure classification used in Admin reports.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubmissionResolution"
+            }
+          },
+          {
+            "name": "ai_disposition",
+            "in": "query",
+            "description": "AI reporting bucket, including bypass routes with no attempt.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AiDisposition"
             }
           },
           {
@@ -6020,6 +6267,25 @@
           "not_solved"
         ]
       },
+      "AiDisposition": {
+        "type": "string",
+        "description": "Mutually exclusive AI reporting buckets, derived from the Admin attempt\noutcome and the recorded submission route.",
+        "enum": [
+          "solved",
+          "not_solved",
+          "provider_failed",
+          "failed",
+          "missing_attempt",
+          "policy_withdrawn",
+          "processing",
+          "awaiting_decision",
+          "cancelled",
+          "category_exempt",
+          "ai_disabled",
+          "requester_skip",
+          "unknown"
+        ]
+      },
       "AiFailureCount": {
         "type": "object",
         "required": [
@@ -6727,6 +6993,22 @@
           },
           "window": {
             "$ref": "#/components/schemas/AiBudgetWindow"
+          }
+        }
+      },
+      "AiVolume": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AiDisposition"
           }
         }
       },
@@ -7593,6 +7875,22 @@
           "confirmation_timeout"
         ]
       },
+      "ClosureVolume": {
+        "type": "object",
+        "required": [
+          "resolution",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/SubmissionResolution"
+          }
+        }
+      },
       "CreateInvitationRequest": {
         "type": "object",
         "properties": {
@@ -7689,6 +7987,24 @@
           "url": {
             "type": "string",
             "description": "Single-use acceptance link. Shown only now; only its hash is stored."
+          }
+        }
+      },
+      "DailyVolume": {
+        "type": "object",
+        "required": [
+          "day",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "description": "Calendar date in UTC."
           }
         }
       },
@@ -8308,6 +8624,27 @@
           }
         }
       },
+      "NamedVolume": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "NewCategory": {
         "type": "object",
         "required": [
@@ -8457,6 +8794,100 @@
           }
         },
         "additionalProperties": false
+      },
+      "OperatorTotals": {
+        "type": "object",
+        "required": [
+          "queued",
+          "first_response_samples",
+          "mean_first_response_seconds",
+          "initial_closures",
+          "initial_requester_confirmed",
+          "initial_confirmation_timeout",
+          "subsequent_closures",
+          "reopens",
+          "rejected_proposals",
+          "time_to_proposal_samples",
+          "mean_queue_to_proposal_seconds",
+          "confirmation_wait_samples",
+          "mean_proposal_to_closure_seconds",
+          "resolution_samples",
+          "mean_queue_to_closure_seconds"
+        ],
+        "properties": {
+          "confirmation_wait_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "first_response_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_closures": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_confirmation_timeout": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_requester_confirmed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mean_first_response_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mean_proposal_to_closure_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mean_queue_to_closure_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mean_queue_to_proposal_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rejected_proposals": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reopens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolution_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subsequent_closures": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "time_to_proposal_samples": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "Order": {
         "type": "object",
@@ -9726,6 +10157,110 @@
           }
         },
         "additionalProperties": false
+      },
+      "Report": {
+        "type": "object",
+        "required": [
+          "submissions",
+          "daily",
+          "categories",
+          "priorities",
+          "ai_outcomes",
+          "ai_attempts",
+          "ai_rate_numerator",
+          "ai_rate_denominator",
+          "deflection_rate_numerator",
+          "deflection_rate_denominator",
+          "closures",
+          "awaiting_confirmation",
+          "operator",
+          "workload"
+        ],
+        "properties": {
+          "ai_attempts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ai_outcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiVolume"
+            }
+          },
+          "ai_rate_denominator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Solved, not-solved, and recorded failures. Null with a team filter."
+          },
+          "ai_rate_numerator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Explicit AI confirmations. Null with a team filter."
+          },
+          "awaiting_confirmation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedVolume"
+            }
+          },
+          "closures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosureVolume"
+            }
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyVolume"
+            }
+          },
+          "deflection_rate_denominator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Submissions excluding cancellations and policy withdrawals. Null with a team filter."
+          },
+          "deflection_rate_numerator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Explicit AI confirmations. Null with a team filter."
+          },
+          "operator": {
+            "$ref": "#/components/schemas/OperatorTotals"
+          },
+          "priorities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedVolume"
+            }
+          },
+          "submissions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workload": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Workload"
+            }
+          }
+        }
       },
       "RequesterAction": {
         "oneOf": [
@@ -11449,6 +11984,69 @@
           }
         },
         "additionalProperties": false
+      },
+      "Workload": {
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "assignee_id",
+          "assignee_name",
+          "assignee_role",
+          "queued",
+          "active",
+          "awaiting_confirmation"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "assignee_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "assignee_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee_role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role"
+              }
+            ]
+          },
+          "awaiting_confirmation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       }
     }
   }

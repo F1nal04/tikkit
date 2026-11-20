@@ -40,6 +40,7 @@ pub mod messages;
 pub mod metrics;
 pub mod notifications;
 pub mod queues;
+pub mod reports;
 pub mod screenshots;
 pub mod smtp;
 pub mod submission;
@@ -130,6 +131,8 @@ impl AppState {
         ai_usage::usage,
         ai_records::records,
         ai_records::outcomes,
+        reports::get_report,
+        reports::export_report,
         submissions::list_submissions,
         submissions::submission_detail,
         audit::search,
@@ -193,6 +196,7 @@ impl AppState {
         queues::QueueSort,
         submissions::ResolutionSourceFilter,
         submissions::AiOutcomeFilter,
+        submissions::AiDisposition,
     ))
 )]
 pub struct ApiDoc;
@@ -368,6 +372,8 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
         .route("/api/settings/ai/usage", get(ai_usage::usage))
         .route("/api/admin/ai/records", get(ai_records::records))
         .route("/api/admin/ai/outcomes", get(ai_records::outcomes))
+        .route("/api/admin/reports", get(reports::get_report))
+        .route("/api/admin/reports/export", post(reports::export_report))
         .route("/api/admin/submissions", get(submissions::list_submissions))
         .route(
             "/api/admin/submissions/{id}",

@@ -37,9 +37,12 @@ test('an Admin finds mixed outcomes, filters them, and opens the AI-solved recor
   await expect(rows).toHaveCount(1)
   await expect(rows.first()).toContainText('Suggestion abandoned')
   await page.getByRole('link', { name: 'Clear filters' }).click()
+  await expect(page).toHaveURL(/\/admin\/submissions$/)
+  await expect(rows).toHaveCount(6)
   await page.getByLabel('Resolution source').selectOption('ai')
   await page.getByRole('button', { name: 'Apply filters' }).click()
   await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText('Solved by the AI suggestion')
 
   // Opening and reading the record sends nothing but reads.
   const requests = await apiRequests(page, async () => {

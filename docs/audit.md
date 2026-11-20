@@ -282,8 +282,10 @@ CSV (RFC 4180, UTF-8, CRLF, every cell quoted) with a header row: `id`,
 `resource_id`, `ticket_reference`, `request_id`, `metadata` (JSON), `ticket_id`.
 At most 10,000 rows, newest first; `x-export-rows` and `x-export-truncated`
 report the bound, and the page tells the Admin to narrow the filters. A cell
-starting with `=`, `+`, `-`, `@`, tab, or carriage return is prefixed with `'`
-so a spreadsheet shows it as text (`csv::cell`). The response is
+starting with a formula prefix, tab, or line break is prefixed with `'`
+so a spreadsheet shows it as text (`csv::cell`). The check covers leading
+whitespace and quotes, as well as full-width formula prefixes. Report exports
+use the same encoder. The response is
 `private, no-store`.
 
 ## Upgrading
