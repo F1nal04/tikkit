@@ -52,12 +52,11 @@ impl TestDb {
         conn.execute(format!("CREATE DATABASE {name}").as_str())
             .await
             .unwrap();
-        let pool = PgPoolOptions::new()
-            .connect_with(admin.clone().database(&name))
-            .await
-            .unwrap();
-        db::migrate(&pool).await.unwrap();
-        Some(Self { pool, name, admin })
+        let pool = PgPoolOptions::new().connect_lazy_with(admin.clone().database(&name));
+        // Own cleanup before the first connection/migration can fail.
+        let test = Self { pool, name, admin };
+        db::migrate(&test.pool).await.unwrap();
+        Some(test)
     }
 
     /// Another pool on the same database: a second process (the API and a worker).
@@ -419,4 +418,59 @@ impl std::io::Write for Logs {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+/// Wait for transactions to actually contend in this test's private database.
+pub async fn wait_for_lock_waiters(pool: &PgPool, count: i64) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting >= count {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("expected both requests to contend for the database lock");
+}
+
+/// Queue the two requests in a known order while the test holds the relevant lock.
+pub async fn queued_requests<A, B>(
+    pool: &PgPool,
+    gate: sqlx::Transaction<'_, sqlx::Postgres>,
+    first: impl Future<Output = A>,
+    second: impl Future<Output = B>,
+) -> (A, B) {
+    let (start_second, started) = tokio::sync::oneshot::channel();
+    let (a, b, ()) = tokio::join!(
+        first,
+        async {
+            started.await.unwrap();
+            second.await
+        },
+        async {
+            wait_for_lock_waiters(pool, 1).await;
+            start_second.send(()).unwrap();
+            wait_for_lock_waiters(pool, 2).await;
+            gate.commit().await.unwrap();
+        }
+    );
+    (a, b)
+}
+
+pub async fn lock_ticket(pool: &PgPool, id: Uuid) -> sqlx::Transaction<'_, sqlx::Postgres> {
+    let mut gate = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    gate
 }

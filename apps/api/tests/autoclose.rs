@@ -773,3 +773,122 @@ async fn the_spawned_worker_closes_overdue_proposals_and_stops_on_shutdown() {
         .unwrap();
     assert_eq!(w.events(id, "confirmation_timeout").await, 1);
 }
+
+#[tokio::test]
+async fn requester_cancel_and_confirmation_in_both_commit_orders() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let owner = login(&app, "requester", PASSWORD).await.session();
+
+    for cancel_first in [true, false] {
+        let id = w.seed("awaiting_confirmation", "1 hour").await;
+        let path = format!("/api/tickets/{id}/actions");
+        let cancel = call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "action": "cancel", "reason": "No further support needed" })),
+            Some(&owner),
+        );
+        let accept = call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "action": "accept_resolution", "proposal_version": 1 })),
+            Some(&owner),
+        );
+        let gate = support::lock_ticket(w.pool(), id).await;
+        let (cancel, accept) = if cancel_first {
+            support::queued_requests(w.pool(), gate, cancel, accept).await
+        } else {
+            let (accept, cancel) = support::queued_requests(w.pool(), gate, accept, cancel).await;
+            (cancel, accept)
+        };
+        assert_eq!(
+            (cancel.status.as_u16(), accept.status.as_u16()),
+            if cancel_first { (200, 409) } else { (409, 200) }
+        );
+        let (status, _, reason, team, assignee) = w.row(id).await;
+        assert_eq!(status, if cancel_first { "cancelled" } else { "closed" });
+        assert_eq!(
+            reason.as_deref(),
+            (!cancel_first).then_some("requester_confirmed")
+        );
+        assert_eq!((team, assignee), (Some(w.team), Some(w.op)));
+        assert_eq!(w.events(id, "cancel").await, i64::from(cancel_first));
+        assert_eq!(w.outbox(id, "cancel").await, 2 * i64::from(cancel_first));
+        assert_eq!(
+            w.events(id, "accept_resolution").await,
+            i64::from(!cancel_first)
+        );
+        assert_eq!(
+            w.outbox(id, "accept_resolution").await,
+            i64::from(!cancel_first)
+        );
+        assert_eq!(w.events(id, "confirmation_timeout").await, 0);
+    }
+}
+
+#[tokio::test]
+async fn requester_cancel_and_timeout_in_both_commit_orders() {
+    let Some(w) = world().await else { return };
+    let app = test_app(w.pool());
+    let owner = login(&app, "requester", PASSWORD).await.session();
+
+    for cancel_first in [true, false] {
+        let id = w.overdue().await;
+        let path = format!("/api/tickets/{id}/actions");
+        let cancel = call(
+            &app,
+            "POST",
+            &path,
+            Some(json!({ "action": "cancel", "reason": "No further support needed" })),
+            Some(&owner),
+        );
+        // Both transitions insert into the outbox after taking the ticket lock.
+        // This gate keeps that lock held when the competing operation arrives.
+        let mut gate = w.pool().begin().await.unwrap();
+        sqlx::query("LOCK TABLE notification_outbox IN SHARE MODE")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        let (cancelled, closed) = if cancel_first {
+            tokio::join!(cancel, async {
+                support::wait_for_lock_waiters(w.pool(), 1).await;
+                let skipped = close_one(w.pool()).await;
+                gate.commit().await.unwrap();
+                skipped
+            })
+        } else {
+            let (closed, cancelled) =
+                support::queued_requests(w.pool(), gate, close_one(w.pool()), cancel).await;
+            (cancelled, closed)
+        };
+
+        assert_eq!(closed.unwrap(), !cancel_first);
+        assert_eq!(
+            cancelled.status.as_u16(),
+            if cancel_first { 200 } else { 409 },
+            "{}",
+            cancelled.body
+        );
+        let (status, _, reason, team, assignee) = w.row(id).await;
+        assert_eq!(status, if cancel_first { "cancelled" } else { "closed" });
+        assert_eq!(
+            reason.as_deref(),
+            (!cancel_first).then_some("confirmation_timeout")
+        );
+        assert_eq!((team, assignee), (Some(w.team), Some(w.op)));
+        assert_eq!(w.events(id, "cancel").await, i64::from(cancel_first));
+        assert_eq!(w.outbox(id, "cancel").await, 2 * i64::from(cancel_first));
+        assert_eq!(
+            w.events(id, "confirmation_timeout").await,
+            i64::from(!cancel_first)
+        );
+        assert_eq!(
+            w.outbox(id, "confirmation_timeout").await,
+            i64::from(!cancel_first)
+        );
+        assert!(!close_one(w.pool()).await.unwrap());
+    }
+}

@@ -12,7 +12,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "start": "node build/index.js",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:full": "bun run build && playwright test --config=playwright.full.config.ts"
   },
   "dependencies": {
     "@tikkit/api-client": "workspace:*"
