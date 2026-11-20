@@ -7,7 +7,8 @@ accepted from a body or compared by email. Errors use the stable codes in
 
 ## Drafts
 
-- `POST /api/ticket-drafts` saves a `TicketIntake` and returns `201 Draft`.
+- `POST /api/ticket-drafts` saves a `TicketIntake` and returns `201 Draft`. An
+  account keeps at most 100 unsubmitted drafts (`422 draft: too_many`).
 - `GET /api/ticket-drafts` lists this account's editable drafts using standard
   `limit`/`cursor` pagination; `GET /api/ticket-drafts/{id}` resumes one.
 - `PATCH /api/ticket-drafts/{id}` takes `{version, intake}`. `intake` replaces

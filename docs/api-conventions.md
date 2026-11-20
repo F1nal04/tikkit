@@ -53,8 +53,9 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Retention confirmation whose preview no longer matches the stored policy | 409 | `retention_preview_stale` |
 | Not signed in | 401 | `unauthorized` |
 | Login failed (any reason) | 401 | `invalid_credentials` |
-| State-changing request without `X-Requested-With: tikkit` | 403 | `csrf_rejected` |
-| Too many login/setup attempts (`Retry-After` header set) | 429 | `rate_limited` |
+| State-changing request without `X-Requested-With: tikkit`, or from another origin | 403 | `csrf_rejected` |
+| Too many sign-in attempts or over a route's per-account budget (`Retry-After` header set) | 429 | `rate_limited` |
+| Request still running after 60 seconds | 503 | `request_timeout` |
 | First-admin setup already done | 409 | `setup_already_completed` |
 | Invitation token unknown, expired, revoked, or used | 410 | `invitation_invalid` |
 | Password reset token unknown, expired, or used | 410 | `reset_token_invalid` |
@@ -96,9 +97,10 @@ In Rust: return `api::ApiError`, extract with `api::Json`, `api::Path`,
 
 Sessions are the HttpOnly `tikkit_session` cookie (see [auth.md](auth.md)).
 Every `POST`/`PUT`/`PATCH`/`DELETE` under `/api/` must carry
-`X-Requested-With: tikkit`, otherwise `403 csrf_rejected`. Browsers cannot add
-custom headers to cross-site requests without a CORS preflight, which the API
-never grants. `@tikkit/api-client` sends the header on every request.
+`X-Requested-With: tikkit`, otherwise `403 csrf_rejected`; a browser's `Origin`
+/ `Sec-Fetch-Site`, when present, must also be the portal's own. Browsers cannot
+add custom headers to cross-site requests without a CORS preflight, which the
+API never grants ([security.md](security.md)). `@tikkit/api-client` sends the header on every request.
 Handlers take `auth::CurrentUser` to require a session (`401 unauthorized` otherwise).
 
 ## Lists: pagination, ordering, filtering

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { pageLocale, resolveLocale } from '#lib/i18n.ts'
+import { errorText, messages, pageLocale, resolveLocale } from '#lib/i18n.ts'
 
 test('resolves locale from query, cookie, then Accept-Language', () => {
   expect(resolveLocale('de', 'en', 'en')).toBe('de')
@@ -15,4 +15,10 @@ test("signed in, the account's language wins unless ?lang= chose one", () => {
   expect(pageLocale('en', 'en', 'de')).toBe('en')
   expect(pageLocale('de', 'fr', 'en')).toBe('en')
   expect(pageLocale('de', null, undefined)).toBe('de')
+})
+
+test('a refused cross-site or wrong-address request tells the user to open the configured address', () => {
+  expect(errorText(messages.en, { code: 'csrf_rejected' })).toContain('configured address')
+  expect(errorText(messages.de, { code: 'csrf_rejected' })).toContain('eingerichteten Adresse')
+  expect(errorText(messages.en, { code: 'request_timeout' })).toContain('took too long')
 })

@@ -15,7 +15,11 @@ bun install
 bun run dev
 ```
 
-Open <http://localhost:3000>. The page checks the Rust API through Vite's
+Open <http://localhost:3000>, exactly that address: `PUBLIC_ORIGIN` in `.env`
+is the only origin the API accepts state-changing browser requests from, so
+<http://127.0.0.1:3000> or a LAN address answers every save with
+`403 csrf_rejected`. To use another address, set `PUBLIC_ORIGIN` to it and
+restart the API. The page checks the Rust API through Vite's
 `/api` proxy. Add `?lang=de` for German. The API listens on `127.0.0.1:3001` and exposes
 `GET /api/health`, returning `{"status":"ok"}`.
 

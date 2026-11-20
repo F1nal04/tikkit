@@ -47,6 +47,18 @@ pub struct DeliverOptions {
     pub max_attempts: u32,
     /// The Admin test action may try a connection that is saved but disabled.
     pub allow_disabled: bool,
+    /// How the saved host is resolved for the destination check before connecting.
+    pub resolve: Resolve,
+}
+
+/// Name resolution for the send-time destination check.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum Resolve {
+    /// The system resolver (production).
+    #[default]
+    System,
+    /// Test seam: the saved host resolves to exactly these addresses.
+    Fixed(&'static [std::net::IpAddr]),
 }
 
 impl Default for DeliverOptions {
@@ -55,6 +67,7 @@ impl Default for DeliverOptions {
             timeout: SMTP_TIMEOUT,
             max_attempts: SMTP_ATTEMPTS,
             allow_disabled: false,
+            resolve: Resolve::System,
         }
     }
 }
@@ -295,7 +308,7 @@ pub async fn deliver(
         }
         let sent = tokio::time::timeout(
             options.timeout,
-            send_once(&ready, trust_root_pem, message, options.timeout),
+            send_once(&ready, trust_root_pem, message, options),
         )
         .await;
         match sent {
@@ -322,14 +335,37 @@ async fn send_once(
     ready: &ReadySmtp,
     trust_root_pem: Option<&[u8]>,
     message: &OutboundMessage,
-    timeout: Duration,
+    options: DeliverOptions,
 ) -> Result<(), Attempt> {
+    let timeout = options.timeout;
     let email = build_message(ready, message)?;
+    // A saved host name may resolve somewhere a relay never is (link-local
+    // metadata services and the like). Checked again here because DNS changes;
+    // certificate verification remains the second layer against rebinding.
+    if !destination_allowed(&ready.host, ready.port, options.resolve).await {
+        return Err(Attempt::Fatal(MailError::Network));
+    }
     let transport = build_transport(ready, trust_root_pem, timeout)?;
     match transport.send(email).await {
         Ok(_) => Ok(()),
         Err(error) => Err(classify(&error)),
     }
+}
+
+/// False when any address the host resolves to is refused by
+/// [`crate::smtp::forbidden_destination`]. A failed lookup is left to the
+/// connection attempt, which reports it as a network error.
+async fn destination_allowed(host: &str, port: u16, resolve: Resolve) -> bool {
+    let addresses: Vec<std::net::IpAddr> = match resolve {
+        Resolve::Fixed(addresses) => addresses.to_vec(),
+        Resolve::System => match tokio::net::lookup_host((host, port)).await {
+            Ok(found) => found.map(|a| a.ip()).collect(),
+            Err(_) => return true,
+        },
+    };
+    !addresses
+        .into_iter()
+        .any(crate::smtp::forbidden_destination)
 }
 
 fn build_message(ready: &ReadySmtp, message: &OutboundMessage) -> Result<Message, Attempt> {

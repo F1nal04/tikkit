@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tikkit API",
-    "description": "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; lists use `limit`/`cursor` and return a Page. Authentication is the HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send `X-Requested-With: tikkit` or is rejected with 403 `csrf_rejected` (docs/auth.md).",
+    "description": "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; lists use `limit`/`cursor` and return a Page. Authentication is the HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send `X-Requested-With: tikkit` and, from a browser, come from the portal's own origin, or is rejected with 403 `csrf_rejected` (docs/security.md).",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -5261,7 +5261,7 @@
             }
           },
           "422": {
-            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)",
+            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8737,6 +8737,7 @@
           "invalid_credentials",
           "csrf_rejected",
           "rate_limited",
+          "request_timeout",
           "setup_already_completed",
           "invitation_invalid",
           "reset_token_invalid",

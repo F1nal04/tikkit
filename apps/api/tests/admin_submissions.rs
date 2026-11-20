@@ -1226,8 +1226,9 @@ async fn timed_ticket(w: &World) -> (Uuid, i64) {
 async fn csv(w: &World, query: &str) -> axum::response::Response {
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
-    w.app
-        .clone()
+    // A fresh app (and so a fresh per-account export budget) per export: some
+    // tests here export far more often than the 6 per minute a person may.
+    support::test_app(w.pool())
         .oneshot(
             Request::post(format!("/api/admin/reports/export?{query}"))
                 .header("cookie", &w.cookies["admin"])

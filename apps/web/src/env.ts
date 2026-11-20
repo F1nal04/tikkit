@@ -11,4 +11,10 @@ export const variables = defineEnvVars({
       return url.origin
     },
   },
+  PROTOCOL_HEADER: {
+    description:
+      'adapter-node: the header the reverse proxy sets to the request protocol (e.g. `x-forwarded-proto`). ' +
+      'The page URL takes its protocol from it; HSTS is sent only when it is set and says https.',
+    schema: (value) => (value ?? '').trim().toLowerCase(),
+  },
 })

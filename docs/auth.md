@@ -54,18 +54,29 @@ becomes the Admin.
 State-changing requests (`POST`/`PUT`/`PATCH`/`DELETE`) need
 `X-Requested-With: tikkit`, else `403 csrf_rejected`. Cross-site pages cannot
 set custom headers without a CORS preflight, which the API never allows; the
-`SameSite=Lax` cookie is the second layer. The typed client sends the header.
+`SameSite=Lax` cookie is another layer. When the browser sends `Origin` or
+`Sec-Fetch-Site`, they must name `PUBLIC_ORIGIN` / `same-origin` too (also
+`403 csrf_rejected`); callers that send neither (the SSR server, scripts) rely
+on the header alone. The typed client sends the header. The full policy,
+including the web server's own origin check: [security.md](security.md#csrf-and-origin-policy).
 
 ## Abuse protection
 
-Login, setup, password change, invitation acceptance, and recovery requests allow 10 attempts per minute per client IP and
-then 5 per minute per username; the token endpoints (`/api/invitations/lookup`,
+Sign-in and password change count only failures; setup, invitation
+acceptance, and recovery count every request. Each scope allows 10 per minute
+per client network (an IPv4 address or an IPv6 /64), 5 per minute per
+username from one network, and 30 per minute per username from all networks
+together, a ceiling that does not apply to a network the account signed in
+from successfully in the last 30 days ([security.md](security.md#bounded-resource-use)).
+The checks run before any account lookup, so known and unknown usernames are
+answered alike. The token endpoints (`/api/invitations/lookup`,
 `/api/auth/recovery/reset`) allow 10 per minute per client IP, else `429 rate_limited` with `Retry-After`.
-The IP is checked first, so a blocked client creates no further keys. Counters
-are in memory (one API process) and capped at 10,000 live keys; beyond that new
-keys are refused for the window. The IP is the socket peer, or the last
-`X-Forwarded-For` hop when `TRUST_PROXY_HEADERS=true`: set it only behind a
-reverse proxy that overwrites that header (the production compose sets it for Caddy).
+Counters are in memory (one API process) and capped at 10,000 keys; a full
+table drops expired windows, then the oldest one, so new clients are never
+refused for want of room. The IP is the socket peer, or the client a
+peer listed in `TRUSTED_PROXIES` forwarded for ([security.md](security.md#reverse-proxy-trust));
+a forwarding header from any other peer is ignored. Costlier signed-in routes
+have per-account budgets ([security.md](security.md#bounded-resource-use)).
 
 ## Invitations
 

@@ -10,14 +10,14 @@ name the variable and the fix but never echo values.
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | yes | | `postgres://user:password@host:5432/db`. PostgreSQL 17. |
-| `PUBLIC_ORIGIN` | yes | | Origin users open, e.g. `https://help.example.com` (no path). Used for links and cookies. Must be `https://` in production. |
+| `PUBLIC_ORIGIN` | yes | | Origin users open, e.g. `https://help.example.com` (no path). Used for links in mail, cookies, HSTS, and as the CSRF anchor: a browser request that changes something is refused (`403 csrf_rejected`) unless its `Origin` is exactly this value, so the portal must be opened under this address (in development `http://localhost:3000`, not `127.0.0.1` or a LAN address). Must be `https://` in production. |
 | `SESSION_SECRET` | yes | | At least 32 random bytes, base64 or hex. `openssl rand -base64 32`. |
 | `ENCRYPTION_KEY` | yes | | Exactly 32 random bytes, base64 or hex. Encrypts stored AI/SMTP credentials. Back it up separately from database backups; losing it makes those credentials unreadable. |
 | `API_ADDR` | no | `127.0.0.1:3001` | Listen address. Use `0.0.0.0:3001` in a container. |
 | `ENVIRONMENT` | no | `development` | `development` or `production` (production enforces https origin and secure cookies). |
 | `SESSION_TTL_HOURS` | no | `336` (14 days) | Absolute session lifetime (1-8760). Sign in again afterwards. |
 | `SESSION_ROTATE_HOURS` | no | `24` | Session age after which its token is replaced on the next request (1-8760). |
-| `TRUST_PROXY_HEADERS` | no | `false` | `true` only behind a reverse proxy that overwrites `X-Forwarded-For` (the production compose sets it for Caddy); the last hop is used as client IP for rate limits. Otherwise every client shares the proxy's IP. |
+| `TRUSTED_PROXIES` | no | empty | Comma-separated IP addresses or CIDR networks of the peers allowed to supply `X-Forwarded-For`: the public reverse proxy and the web (SSR) server, e.g. `172.30.0.0/24`. The client IP for rate limits, sessions, and audit events is the socket peer, or, when that peer is listed, the rightmost `X-Forwarded-For` entry that is not itself listed (entries with a port such as `1.2.3.4:5678` or `[::1]:5678` are read without it). Networks wider than IPv4 /8 or IPv6 /16 are refused; IPv4-mapped networks (`::ffff:10.0.0.0/104`) mean the IPv4 network. Empty: forwarding headers are ignored and every client behind a proxy shares its IP. Replaces `TRUST_PROXY_HEADERS` (see [Upgrading](#upgrading)). See [security.md](security.md#reverse-proxy-trust). |
 | `SHUTDOWN_TIMEOUT_SECS` | no | `20` | Drain window (1-600) after SIGTERM/Ctrl+C before remaining requests are aborted. |
 | `SCREENSHOT_DIR` | in production | `data/screenshots` | Private directory for validated screenshot files, created at startup. Production requires an absolute path on a persistent volume (the production compose uses `/var/lib/tikkit/screenshots`). Only the API reads it; never serve it. Back it up with the database ([screenshots.md](screenshots.md#storage-backup-and-restore)). |
 | `LOG_FORMAT` | no | `json` | API structured logging. Set `text` for human-readable output. The web server logs JSON. |
@@ -41,6 +41,31 @@ a saved, enabled connection, Admins copy invitation links and recovery emails
 are not sent (see [auth.md](auth.md#email-delivery)). The API starts and serves
 the full service desk either way. Each delivery attempt is limited to 15 seconds.
 Background sends try transient failures at most 3 times; the Admin test sends once.
+
+## Upgrading
+
+**`TRUST_PROXY_HEADERS` was replaced by `TRUSTED_PROXIES` (#44).** The old
+switch trusted `X-Forwarded-For` from any peer. An API started with
+`TRUST_PROXY_HEADERS=true` now refuses to start and names the replacement;
+`TRUST_PROXY_HEADERS=false` is still accepted and means "no proxy trusted".
+Migrate by removing `TRUST_PROXY_HEADERS` and setting `TRUSTED_PROXIES` to
+the network of the reverse proxy and the web server, e.g.
+`TRUSTED_PROXIES=172.30.0.0/24` with a fixed Compose subnet (see
+`docker-compose.prod.example.yml`). Without it, every client behind the proxy
+shares one rate-limit bucket and audit IP.
+
+## Web server (adapter-node)
+
+`apps/web/build` reads `HOST`, `PORT`, `API_ORIGIN`, and adapter-node's own
+`PROTOCOL_HEADER`, `HOST_HEADER`, `ADDRESS_HEADER`, `XFF_DEPTH`. adapter-node 6
+(SvelteKit 3) has **no `ORIGIN` variable**: unless the build sets
+`kit.paths.origin`, the page origin is `https://` plus the request's `Host`
+header (`HOST_HEADER` to read another header, `PROTOCOL_HEADER` for the
+protocol). SvelteKit's origin check for form posts and the SSR fetch rewrite
+compare against that origin, so the reverse proxy must accept only the
+configured site host and pass it unchanged. Set
+`PROTOCOL_HEADER=x-forwarded-proto` behind a proxy that overwrites that header:
+pages then send HSTS for https requests (without it they never do).
 
 ## Probes and shutdown
 

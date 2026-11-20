@@ -30,6 +30,9 @@
   type Draft = Schemas['Draft']
 
   const AUTOSAVE_MS = 1200
+  // After a failed save (offline, 429 budget, 5xx) the input stays here and saving is
+  // tried again on its own, also when the user has stopped typing.
+  const RETRY_MS = 5000
 
   let { data }: PageProps = $props()
   let t = $derived(messages[data.locale])
@@ -150,6 +153,10 @@
         saveState = 'idle'
       } else {
         saveState = 'failed'
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          if (alive) flush()
+        }, RETRY_MS)
       }
       return false
     }

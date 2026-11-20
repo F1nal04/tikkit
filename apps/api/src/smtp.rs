@@ -478,10 +478,25 @@ fn valid_sender_name(name: &str) -> bool {
 }
 
 pub(crate) fn valid_host(host: &str) -> bool {
-    if host.parse::<std::net::IpAddr>().is_ok() {
-        return true;
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return !forbidden_destination(ip);
     }
     if host.is_empty() || host.len() > 253 {
+        return false;
+    }
+    // A name whose last label is numeric (`2852039166`, `169.254.43518`,
+    // `0xa9fea9fe`) is an IPv4 address in another notation to most resolvers;
+    // real top-level domains are never numeric.
+    let last = host
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if last.bytes().all(|b| b.is_ascii_digit())
+        || last
+            .strip_prefix("0x")
+            .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
         return false;
     }
     host.split('.').all(|label| {
@@ -492,6 +507,40 @@ pub(crate) fn valid_host(host: &str) -> bool {
             && !label.starts_with('-')
             && !label.ends_with('-')
     })
+}
+
+/// Addresses that are never a mail relay: unspecified, link-local (which
+/// includes cloud metadata services such as 169.254.169.254), multicast,
+/// broadcast, and the AWS IPv6 metadata address `fd00:ec2::254`; IPv6 forms
+/// that embed an IPv4 address (mapped, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`)
+/// are judged by that address. Loopback and private networks stay allowed for
+/// internal relays.
+pub(crate) fn forbidden_destination(ip: std::net::IpAddr) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    const AWS_METADATA_V6: Ipv6Addr = Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254);
+    let v4 = |ip: Ipv4Addr| {
+        ip.is_unspecified() || ip.is_link_local() || ip.is_broadcast() || ip.is_multicast()
+    };
+    match ip {
+        IpAddr::V4(ip) => v4(ip),
+        IpAddr::V6(ip) => {
+            let bits = u128::from(ip);
+            let embedded = if let Some(mapped) = ip.to_ipv4_mapped() {
+                Some(mapped)
+            } else if bits >> 32 == 0x0064_ff9b_0000_0000_0000_0000 {
+                Some(Ipv4Addr::from(bits as u32))
+            } else if ip.segments()[0] == 0x2002 {
+                Some(Ipv4Addr::from((bits >> 80) as u32))
+            } else {
+                None
+            };
+            ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_unicast_link_local()
+                || ip == AWS_METADATA_V6
+                || embedded.is_some_and(v4)
+        }
+    }
 }
 
 fn security_name(security: SmtpSecurity) -> &'static str {
@@ -519,5 +568,38 @@ mod tests {
         assert!(!valid_host("-bad.example"));
         assert!(!valid_host("has space.example"));
         assert!(!valid_host("user:pass@smtp.example.com"));
+        for blocked in [
+            "0.0.0.0",
+            "::",
+            "169.254.169.254",
+            "fe80::1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::ffff:169.254.169.254",
+        ] {
+            assert!(!valid_host(blocked), "{blocked}");
+        }
+        assert!(valid_host("10.0.0.25") && valid_host("fd00::25"));
+        for blocked in [
+            "64:ff9b::a9fe:a9fe",  // NAT64 of 169.254.169.254
+            "2002:a9fe:a9fe::1",   // 6to4 of 169.254.169.254
+            "fd00:ec2::254",       // AWS IPv6 metadata
+            "2852039166",          // decimal 169.254.169.254
+            "0xa9fea9fe",          // hex
+            "169.254.43518",       // two-part
+            "0251.0376.0251.0376", // octal
+        ] {
+            assert!(!valid_host(blocked), "{blocked}");
+        }
+        for allowed in [
+            "64:ff9b::a00:19",
+            "2002:a00:19::1",
+            "fd00:ec2::253",
+            "::1",
+            "smtp1.example.com",
+            "relay.example.co.uk",
+        ] {
+            assert!(valid_host(allowed), "{allowed}");
+        }
     }
 }

@@ -41,6 +41,8 @@ pub enum ApiError {
     CsrfRejected,
     /// Too many attempts; retry after this many seconds.
     RateLimited(u64),
+    /// The request did not finish within the API's request deadline.
+    RequestTimeout,
     SetupAlreadyCompleted,
     /// Invitation token unknown, expired, revoked, or already used.
     InvitationInvalid,
@@ -109,6 +111,7 @@ pub enum ErrorCode {
     InvalidCredentials,
     CsrfRejected,
     RateLimited,
+    RequestTimeout,
     SetupAlreadyCompleted,
     InvitationInvalid,
     ResetTokenInvalid,
@@ -219,7 +222,12 @@ impl ApiError {
             CsrfRejected => (
                 StatusCode::FORBIDDEN,
                 ErrorCode::CsrfRejected,
-                "Missing the X-Requested-With: tikkit header.",
+                "Open the portal at its configured address (PUBLIC_ORIGIN); cross-site requests and requests without X-Requested-With: tikkit are refused.",
+            ),
+            RequestTimeout => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::RequestTimeout,
+                "The request took too long; try again later.",
             ),
             RateLimited(_) => (
                 StatusCode::TOO_MANY_REQUESTS,
