@@ -37,7 +37,8 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 - `request_id` equals the `x-request-id` response header. The internal SSR server
   sends a hyphenated UUIDv4 as `x-request-id`. The public proxy strips incoming
   request IDs before forwarding, so the API generates them for public calls.
-  Logs carry the UUID and the matched route template.
+  Logs carry the UUID and the matched route template, and audit events store
+  it ([audit.md](audit.md)), so an Admin can find everything one request changed.
 
 | Situation | Status | Code |
 | --- | --- | --- |

@@ -640,7 +640,20 @@ async fn the_ai_solved_detail_shows_intake_suggestion_and_confirmation_read_only
     )
     .await;
     assert_eq!(r.status, 403);
-    assert_eq!(w.everything().await, before);
+    // The denied attempts changed nothing but the audit log, which gained one
+    // `ai_solved_change_denied` event per attempt (docs/audit.md).
+    let (mut before, mut after) = (before, w.everything().await);
+    let audit = |v: &mut Value| v["audit"].take().as_array().cloned().unwrap_or_default();
+    let (audit_before, audit_after) = (audit(&mut before), audit(&mut after));
+    assert_eq!(after, before);
+    assert_eq!(audit_after[..audit_before.len()], audit_before[..]);
+    let denied = &audit_after[audit_before.len()..];
+    assert_eq!(denied.len(), 5);
+    for event in denied {
+        assert_eq!(event["event_type"], "ai_solved_change_denied");
+        assert_eq!(event["ticket_id"], json!(solved));
+        assert_eq!(event["actor_role"], "admin");
+    }
 }
 
 #[tokio::test]

@@ -51,6 +51,8 @@ const LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const LIMIT_PER_IP: u32 = 10;
 const LIMIT_PER_USERNAME: u32 = 5;
 const LIMIT_MAX_KEYS: usize = 10_000;
+/// Audit rows one account may cause per window by repeating one denied action on one ticket.
+const LIMIT_DENIALS: u32 = 5;
 /// How long a rotated-away token keeps working, for requests already in flight.
 const ROTATION_GRACE: &str = "interval '1 minute'";
 
@@ -151,6 +153,14 @@ impl Auth {
             return Err(ApiError::RateLimited(left.max(1)));
         }
         Ok(())
+    }
+
+    /// Whether another denied `action` of `account` on `ticket` may still be
+    /// written to the audit log in this window. Repeats beyond it change nothing
+    /// for the caller; they are just not recorded again.
+    pub(crate) fn allow_denial_record(&self, account: Uuid, ticket: Uuid, action: &str) -> bool {
+        let key = format!("denied:{}:{}:{action}", account.simple(), ticket.simple());
+        self.hit(key, LIMIT_DENIALS).is_ok()
     }
 
     /// Per-IP only, for endpoints keyed by an unguessable token rather than a username.
@@ -446,6 +456,16 @@ pub async fn setup_status(State(state): State<AppState>) -> Result<Json<SetupSta
     Ok(Json(SetupStatus { setup_required }))
 }
 
+/// Records a bootstrap attempt after setup was completed (a replay). Rate
+/// limited per client so the closed endpoint cannot be used to flood the log.
+async fn setup_rejected(state: &AppState, auth: &Auth, client: &Client) -> Result<(), sqlx::Error> {
+    if auth.limit_ip("setup_rejected", client).is_err() {
+        return Ok(());
+    }
+    let metadata = json!({ "reason": "already_completed", "ip": client.ip });
+    audit(&state.pool, "setup_rejected", None, None, metadata).await
+}
+
 async fn setup_open(state: &AppState) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT setup_completed_at IS NULL FROM organization")
         .fetch_one(&state.pool)
@@ -469,6 +489,7 @@ pub async fn setup(
     let username = body.username.trim().to_owned();
     let normalized = username.to_lowercase();
     if !setup_open(&state).await? {
+        setup_rejected(&state, &auth, &client).await?;
         return Err(ApiError::SetupAlreadyCompleted);
     }
     auth.limit_attempt("setup", &client, &normalized)?;
@@ -497,6 +518,8 @@ pub async fn setup(
     .await?
     .rows_affected();
     if claimed != 1 {
+        drop(tx);
+        setup_rejected(&state, &auth, &client).await?;
         return Err(ApiError::SetupAlreadyCompleted);
     }
     let language = match body.language {
@@ -778,7 +801,9 @@ pub(crate) async fn load_account<'c>(
     })
 }
 
-/// Appends an audit event. Metadata must never hold passwords, tokens, or secrets.
+/// Appends an audit event ([`crate::audit::record`]) by an account, or by an
+/// anonymous caller when `actor` is `None`; background jobs use
+/// [`crate::audit::system`]. Metadata must never hold passwords, tokens, or secrets.
 pub async fn audit<'c>(
     db: impl PgExecutor<'c>,
     event_type: &str,
@@ -786,17 +811,17 @@ pub async fn audit<'c>(
     subject: Option<Uuid>,
     metadata: Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO audit_events (event_type, actor_account_id, subject_account_id, metadata)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(event_type)
-    .bind(actor)
-    .bind(subject)
-    .bind(metadata)
-    .execute(db)
-    .await
-    .map(drop)
+    let entry = crate::audit::Entry {
+        action: event_type,
+        who: actor.map_or(
+            crate::audit::Who::Service(crate::audit::ANONYMOUS),
+            crate::audit::Who::Account,
+        ),
+        subject,
+        ticket: None,
+        metadata,
+    };
+    crate::audit::record(db, entry).await
 }
 
 fn cookie_token(headers: &HeaderMap) -> Option<String> {

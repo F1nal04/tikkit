@@ -420,6 +420,351 @@
         }
       }
     },
+    "/api/admin/audit": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "The audit log, newest first (Admin only). Searching is a pure read: it\nwrites nothing, so reviewing history leaves no trace in it.",
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Acting account ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "actor_username",
+            "in": "query",
+            "description": "Acting account's username (case-insensitive, exact).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Action identifier, e.g. `login_failed` or `ticket_ai_solved`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "description": "Resource type, e.g. `ticket`, `account`, `team`, `invitation`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "description": "Resource identifier within its type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ticket_id",
+            "in": "query",
+            "description": "Events about this ticket.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ticket_reference",
+            "in": "query",
+            "description": "Events about the ticket with this reference number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "description": "Events written by one request, or by the jobs it caused (`x-request-id`, a UUID).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AuditEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` (unknown parameter, malformed value, or empty time range)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`cursor: invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit/actions": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "The action identifiers that occur in the log, for the search filter (Admin only).",
+        "operationId": "actions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditActions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit/export": {
+      "post": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Exports the matching events as CSV, newest first (Admin only). Bounded: at\nmost 10,000 rows; `x-export-truncated: true` says a longer result was cut\n(narrow the filters or the time range). Cells that a spreadsheet would run\nas a formula are neutralized. The export itself is audited\n(`audit_exported`: who, the filters, the row count).",
+        "operationId": "export",
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Acting account ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "actor_username",
+            "in": "query",
+            "description": "Acting account's username (case-insensitive, exact).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Action identifier, e.g. `login_failed` or `ticket_ai_solved`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "description": "Resource type, e.g. `ticket`, `account`, `team`, `invitation`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "description": "Resource identifier within its type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ticket_id",
+            "in": "query",
+            "description": "Events about this ticket.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ticket_reference",
+            "in": "query",
+            "description": "Events about the ticket with this reference number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "description": "Events written by one request, or by the jobs it caused (`x-request-id`, a UUID).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV with a header row. Headers `x-export-rows` and `x-export-truncated`.",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin) or `csrf_rejected`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/notifications": {
       "get": {
         "tags": [
@@ -6626,6 +6971,183 @@
           }
         }
       },
+      "AuditAccount": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "username"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AuditActions": {
+        "type": "object",
+        "required": [
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every action identifier present in the log, sorted."
+          }
+        }
+      },
+      "AuditActor": {
+        "type": "object",
+        "description": "Who acted, as it was when the event was written.",
+        "required": [
+          "account_id",
+          "username",
+          "role",
+          "team_id",
+          "team_name",
+          "service"
+        ],
+        "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` when a service acted."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "The account's role at the time. `null` for services and for events\nolder than this field."
+              }
+            ]
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set exactly when no account acted: `anonymous` or the background service."
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The account's team at the time, if it had one."
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "action",
+          "actor",
+          "subject",
+          "resource_type",
+          "resource_id",
+          "ticket_id",
+          "ticket_reference",
+          "request_id",
+          "metadata"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Stable machine identifier."
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AuditActor"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Identifiers, codes, and before/after settings. Never secrets or content."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The request that wrote the event, or that caused the job that wrote it."
+          },
+          "resource_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AuditAccount",
+                "description": "The account the event is about, if any."
+              }
+            ]
+          },
+          "ticket_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "ticket_reference": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`null` when the event is not about a ticket."
+          }
+        }
+      },
       "AuthorKind": {
         "type": "string",
         "enum": [
@@ -8156,6 +8678,108 @@
                   "type": "string",
                   "format": "uuid",
                   "description": "Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_AuditEvent": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "created_at",
+                "action",
+                "actor",
+                "subject",
+                "resource_type",
+                "resource_id",
+                "ticket_id",
+                "ticket_reference",
+                "request_id",
+                "metadata"
+              ],
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "description": "Stable machine identifier."
+                },
+                "actor": {
+                  "$ref": "#/components/schemas/AuditActor"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "metadata": {
+                  "type": "object",
+                  "description": "Identifiers, codes, and before/after settings. Never secrets or content."
+                },
+                "request_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "The request that wrote the event, or that caused the job that wrote it."
+                },
+                "resource_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "resource_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuditAccount",
+                      "description": "The account the event is about, if any."
+                    }
+                  ]
+                },
+                "ticket_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "ticket_reference": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "`null` when the event is not about a ticket."
                 }
               }
             }

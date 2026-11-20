@@ -489,13 +489,31 @@ pub async fn accept_invitation(
 
     let mut tx = state.pool.begin().await?;
     // The row lock makes a concurrent acceptance wait, then re-check and miss.
-    let (invitation_id, role): (Uuid, String) = sqlx::query_as(&format!(
+    let pending: Option<(Uuid, String)> = sqlx::query_as(&format!(
         "SELECT id, role::text FROM invitations WHERE token_hash = $1 AND {PENDING} FOR UPDATE"
     ))
     .bind(token_hash(&body.token))
     .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(ApiError::InvitationInvalid)?;
+    .await?;
+    let Some((invitation_id, role)) = pending else {
+        drop(tx);
+        // A replayed, revoked, expired, or made-up link. The token is not stored;
+        // a known invitation is named by its ID.
+        let known: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, CASE WHEN accepted_at IS NOT NULL THEN 'already_accepted'
+                             WHEN revoked_at IS NOT NULL THEN 'revoked' ELSE 'expired' END
+             FROM invitations WHERE token_hash = $1",
+        )
+        .bind(token_hash(&body.token))
+        .fetch_optional(&state.pool)
+        .await?;
+        let metadata = match known {
+            Some((id, reason)) => json!({ "invitation_id": id, "reason": reason, "ip": client.ip }),
+            None => json!({ "reason": "unknown_token", "ip": client.ip }),
+        };
+        audit(&state.pool, "invitation_rejected", None, None, metadata).await?;
+        return Err(ApiError::InvitationInvalid);
+    };
     let account_id: Uuid = sqlx::query_scalar(
         "INSERT INTO accounts (username, display_name, email, password_hash, role, language)
          VALUES ($1, $1, $2, $3, $4, $5) RETURNING id",

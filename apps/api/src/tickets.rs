@@ -1,7 +1,9 @@
 //! Ticket read API. Status changes go through [`crate::lifecycle`]; visibility
 //! is [`authz::ticket_view`]. See docs/lifecycle.md.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -16,7 +18,7 @@ use crate::{
         ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketAssignmentView,
         TicketStatus,
     },
-    auth::{CurrentUser, ident},
+    auth::{Auth, CurrentUser, ident},
     authz::{self, Actor, Permission, TicketScope, TicketView},
     lifecycle::{self, By, ClosureReason, ResolutionSource, Transition},
     submission::SubmittedIntake,
@@ -629,6 +631,7 @@ pub struct ActionResult {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn requester_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<RequesterAction>,
@@ -664,7 +667,7 @@ pub async fn requester_action(
     let mut tx = state.pool.begin().await?;
     let result =
         lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await;
-    let status = match result {
+    let result = match result {
         Ok(status) => {
             tx.commit()
                 .await
@@ -673,7 +676,7 @@ pub async fn requester_action(
             if let Some(metric) = metric {
                 state.metrics.event(metric, 1);
             }
-            status
+            Ok(status)
         }
         Err(ApiError::Conflict)
             if matches!(
@@ -683,14 +686,22 @@ pub async fn requester_action(
         {
             // Releases the ticket lock; whoever held it before us has committed.
             drop(tx);
-            ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await?
+            ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await
         }
         Err(error) => {
             failure(&error);
-            return Err(error);
+            drop(tx);
+            Err(error)
         }
     };
-    Ok(Json(ActionResult { status }))
+    if let Err(error) = &result {
+        // Denied cancellations and reopens, and any attempt to change an
+        // AI-solved record, are recorded without touching the ticket.
+        let attempted = transition.event_type();
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, attempted, error).await;
+    }
+    Ok(Json(ActionResult { status: result? }))
 }
 
 /// An AI decision that could not be applied because the ticket is no longer (or
@@ -768,6 +779,19 @@ pub enum StaffAction {
     },
 }
 
+impl StaffAction {
+    /// The stable name of the attempted action, for the audit log.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::StartWork { .. } => "start_work",
+            Self::RequestInformation { .. } => "request_information",
+            Self::ProposeResolution { .. } => "propose_resolution",
+            Self::Reopen { .. } => "reopen",
+            Self::SetPriority { .. } => "set_priority",
+        }
+    }
+}
+
 /// Staff status work and priority changes. Thin over [`lifecycle::transition`]
 /// (visibility, self-handling, claimed-ticket and policy rules live there and in
 /// [`authz::authorize_ticket`]); stale clients get `409` and nothing is written.
@@ -781,18 +805,42 @@ pub enum StaffAction {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn staff_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<StaffAction>,
 ) -> Result<Json<ActionResult>, ApiError> {
-    authz::require_permission(&user, Permission::ReplyAsStaff)?;
-    let status = apply_staff_action(&state.pool, user.account_id(), id, action).await?;
+    if let Err(error) = authz::require_permission(&user, Permission::ReplyAsStaff) {
+        // A role that can never do staff work still leaves a trace when it
+        // aims at an AI-solved record or tries to reopen a ticket.
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, action.name(), &error).await;
+        return Err(error);
+    }
+    let status = apply_staff_action(&state.pool, &auth, user.account_id(), id, action).await?;
     Ok(Json(ActionResult { status }))
 }
 
 /// One staff action in its own transaction: the single-ticket endpoint and each
 /// item of a bulk action (`bulk.rs`) run exactly this.
 pub(crate) async fn apply_staff_action(
+    pool: &PgPool,
+    auth: &Auth,
+    account_id: Uuid,
+    id: Uuid,
+    action: StaffAction,
+) -> Result<TicketStatus, ApiError> {
+    let attempted = action.name();
+    let result = staff_action_in_transaction(pool, account_id, id, action).await;
+    if let Err(error) = &result {
+        // The transaction is gone: denied reopens and attempts on AI-solved
+        // records are recorded on their own, and the ticket stays untouched.
+        crate::audit::ticket_denied(pool, auth, account_id, id, attempted, error).await;
+    }
+    result
+}
+
+async fn staff_action_in_transaction(
     pool: &PgPool,
     account_id: Uuid,
     id: Uuid,

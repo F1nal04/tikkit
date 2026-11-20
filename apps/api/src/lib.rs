@@ -24,12 +24,14 @@ pub mod ai_records;
 pub mod ai_usage;
 pub mod api;
 pub mod assignment;
+pub mod audit;
 pub mod auth;
 pub mod authz;
 pub mod autoclose;
 pub mod bulk;
 pub mod catalog;
 pub mod config;
+pub mod csv;
 pub mod db;
 pub mod lifecycle;
 pub mod mail;
@@ -130,6 +132,9 @@ impl AppState {
         ai_records::outcomes,
         submissions::list_submissions,
         submissions::submission_detail,
+        audit::search,
+        audit::actions,
+        audit::export,
         catalog::active_catalog,
         catalog::full_catalog,
         catalog::create_category,
@@ -299,7 +304,13 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             get(accounts::list_invitations).post(accounts::create_invitation),
         )
         .route("/api/invitations/lookup", post(accounts::lookup_invitation))
-        .route("/api/invitations/accept", post(accounts::accept_invitation))
+        .route(
+            "/api/invitations/accept",
+            post(accounts::accept_invitation).layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                audit::invitation_tampering,
+            )),
+        )
         .route(
             "/api/invitations/{id}/revoke",
             post(accounts::revoke_invitation),
@@ -362,6 +373,9 @@ pub fn app_with(state: AppState, settings: auth::Settings) -> Router {
             "/api/admin/submissions/{id}",
             get(submissions::submission_detail),
         )
+        .route("/api/admin/audit", get(audit::search))
+        .route("/api/admin/audit/actions", get(audit::actions))
+        .route("/api/admin/audit/export", post(audit::export))
         .route("/api/ai/policy", get(ai_config::policy))
         .route("/api/catalog", get(catalog::active_catalog))
         .route("/api/catalog/all", get(catalog::full_catalog))

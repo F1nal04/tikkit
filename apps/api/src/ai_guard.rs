@@ -27,7 +27,6 @@ use crate::{
     },
     ai_config::ActiveAi,
     api::ApiError,
-    auth::audit,
     notifications::poll_loop,
 };
 
@@ -692,11 +691,10 @@ pub async fn purge_expired(pool: &PgPool) -> Result<u64, ApiError> {
     .await?
     .rows_affected();
     if deleted > 0 {
-        audit(
+        crate::audit::system(
             &mut *tx,
+            "ai_usage_retention",
             "ai_usage_purged",
-            None,
-            None,
             serde_json::json!({ "deleted": deleted, "retention_days": retention_days }),
         )
         .await?;

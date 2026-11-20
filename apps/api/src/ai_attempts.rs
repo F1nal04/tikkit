@@ -48,7 +48,7 @@ use crate::{
     ai_guard::{AiGuard, Guarded, Refusal},
     ai_privacy,
     api::{ApiError, Language},
-    auth::{audit, ident, ident_str},
+    auth::{ident, ident_str},
     lifecycle::{self, By, Transition},
     metrics::{Event as Metric, Metrics, Worker as WorkerMetric},
     notifications::{is_stopping, poll_loop},
@@ -310,11 +310,9 @@ async fn hand_off(
     usage_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
     // Locks the ticket row, then checks its status under that lock.
-    match lifecycle::transition(tx, ticket_id, By::System, &Transition::AiFailed).await {
-        Ok(_) => {
-            close(tx, ticket_id, "handed_off", outcome, usage_id).await?;
-            Ok(true)
-        }
+    // Ends the attempt with `outcome` under the same lock, before the event.
+    match lifecycle::ai_failed(tx, ticket_id, outcome, usage_id).await {
+        Ok(_) => Ok(true),
         Err(ApiError::Conflict) => Ok(false),
         Err(error) => Err(error),
     }
@@ -1228,11 +1226,10 @@ async fn sweep_job(worker: &Worker, skipped: &mut Vec<Uuid>) -> Result<bool, Api
             let queued = hand_off(&mut tx, ticket_id, &outcome, None).await?;
             if queued && outcome == ORPHANED {
                 // There is no attempt row to carry the outcome.
-                audit(
+                crate::audit::system(
                     &mut *tx,
+                    "ai_attempts",
                     "ai_attempt_orphaned",
-                    None,
-                    None,
                     serde_json::json!({ "ticket_id": ticket_id, "outcome": ORPHANED }),
                 )
                 .await?;

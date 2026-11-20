@@ -25,7 +25,9 @@ dispatches, reopens, notifies, writes an event or audit row, or touches a
 ticket's `updated_at`. The routes accept `GET` only (`405` otherwise). There is
 no reopen, escalate, or decide action here; AI-solved records stay final
 through the existing write endpoints for Admins too (`403`,
-[ai-decisions.md](ai-decisions.md#ai-solved-records-are-final)). The web pages
+[ai-decisions.md](ai-decisions.md#ai-solved-records-are-final)); such an
+attempt is recorded as `ai_solved_change_denied` in the audit log and changes
+nothing else ([audit.md](audit.md#denied-attempts)). The web pages
 have no buttons besides the filter form and do not poll.
 
 Responses carry no secret: no AI credential, key hint, or ciphertext, no

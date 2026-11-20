@@ -755,6 +755,26 @@ async fn a_changed_connection_is_what_the_next_delivery_uses() {
     .await
     .unwrap();
     assert_eq!(events, ["smtp_configured", "smtp_updated"]);
+    // Each event shows the change itself, never a credential.
+    let meta: Vec<Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_events WHERE event_type LIKE 'smtp_%' ORDER BY id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(meta[0]["from"], Value::Null);
+    assert!(meta[0]["to"]["host"].is_string());
+    assert_eq!(meta[0]["credential_replaced"], true);
+    assert_eq!(meta[1]["from"], meta[0]["to"]);
+    for key in ["host", "port", "security", "sender_address", "enabled"] {
+        assert!(!meta[1]["to"][key].is_null(), "{key}");
+    }
+    assert_eq!(
+        meta[1]["to"]["enabled"],
+        updated.body["connection"]["enabled"]
+    );
+    let text = meta.iter().map(Value::to_string).collect::<String>();
+    assert!(!text.contains(SECRET) && !text.contains(USER));
 }
 
 #[tokio::test]

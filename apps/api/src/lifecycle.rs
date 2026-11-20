@@ -441,7 +441,23 @@ pub async fn transition(
     by: By,
     t: &Transition,
 ) -> Result<TicketStatus, ApiError> {
-    run(tx, ticket_id, by, t, None, None).await
+    run(tx, ticket_id, by, t, None, None, None).await
+}
+
+/// [`Transition::AiFailed`] for the attempt machinery: ends the ticket's
+/// attempt with its stable `outcome` code under the ticket lock, just before
+/// the handoff event is written. The event payload stays `{"route":
+/// "ai_failed"}` (requesters read it and only ever see coarse reasons); the
+/// audit mirror of the event reads the outcome from the attempt.
+pub(crate) async fn ai_failed(
+    tx: &mut Transaction<'_, Postgres>,
+    ticket_id: Uuid,
+    outcome: &str,
+    usage_id: Option<Uuid>,
+) -> Result<TicketStatus, ApiError> {
+    let t = Transition::AiFailed;
+    let end = Some((outcome, usage_id));
+    run(tx, ticket_id, By::System, &t, None, None, end).await
 }
 
 /// Submits the requester's draft ticket: [`Transition::Submit`] with the real AI
@@ -463,6 +479,7 @@ pub async fn submit(
         &t,
         None,
         Some(encryption_key),
+        None,
     )
     .await
 }
@@ -477,7 +494,7 @@ pub async fn transition_with(
     t: &Transition,
     fixed_policy: Option<Policy>,
 ) -> Result<TicketStatus, ApiError> {
-    run(tx, ticket_id, by, t, fixed_policy, None).await
+    run(tx, ticket_id, by, t, fixed_policy, None, None).await
 }
 
 async fn run(
@@ -487,6 +504,7 @@ async fn run(
     t: &Transition,
     fixed_policy: Option<Policy>,
     encryption_key: Option<&[u8; 32]>,
+    end_attempt: Option<(&str, Option<Uuid>)>,
 ) -> Result<TicketStatus, ApiError> {
     let conn = &mut **tx;
     let actor = match by {
@@ -530,6 +548,11 @@ async fn run(
         category_skip_ai: row.skip_ai,
     };
     let mut out = decide(&state, actor.as_ref(), t, &policy, now)?;
+    // The transition is accepted and the ticket is locked: a failed attempt
+    // ends now, so its outcome is stored when the event below is audited.
+    if let Some((outcome, usage_id)) = end_attempt {
+        ai_attempts::close(conn, ticket_id, "handed_off", outcome, usage_id).await?;
+    }
     // A decision applies to the ticket's one stored suggestion and records which
     // attempt it answered. Without a stored suggestion there is nothing to decide.
     // A skip names the attempt it ended, if there is one.

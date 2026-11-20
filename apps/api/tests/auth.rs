@@ -58,7 +58,8 @@ async fn setup_is_one_time_and_signs_in_the_first_admin() {
     let r = call(&app, "POST", "/api/setup", Some(setup_body("other")), None).await;
     assert_eq!(r.status, StatusCode::CONFLICT);
     assert_eq!(r.code(), "setup_already_completed");
-    assert_eq!(audit_types(&t).await, ["setup_completed"]);
+    // The replay is recorded, and created nothing.
+    assert_eq!(audit_types(&t).await, ["setup_completed", "setup_rejected"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -90,7 +91,11 @@ async fn concurrent_setup_creates_exactly_one_admin() {
     .await
     .unwrap();
     assert_eq!((admins, completed), (1, true));
-    assert_eq!(audit_types(&t).await, ["setup_completed"]);
+    // One bootstrap; every loser is recorded as a rejected replay.
+    let types = audit_types(&t).await;
+    assert_eq!(types[0], "setup_completed");
+    assert_eq!(types.len(), 20);
+    assert!(types[1..].iter().all(|t| t == "setup_rejected"));
 }
 
 #[tokio::test]
