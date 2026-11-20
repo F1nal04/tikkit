@@ -75,8 +75,10 @@ services:
       METRICS_PORT: ${METRICS_PORT:-}
       SCREENSHOT_DIR: /var/lib/tikkit/screenshots
       SHUTDOWN_TIMEOUT_SECS: 20
+      # SMTP_CA_FILE: /etc/tikkit/smtp-ca.pem # Private CA bundle, replaces WebPKI roots.
     volumes:
       - screenshots-data:/var/lib/tikkit/screenshots
+      # - ./smtp-ca.pem:/etc/tikkit/smtp-ca.pem:ro # Enable with SMTP_CA_FILE above.
     networks:
       egress: { gw_priority: 1 }
       app: {}

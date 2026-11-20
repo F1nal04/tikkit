@@ -215,9 +215,9 @@ enum Outcome {
 
 /// One bounded unit of work: claim a due row, deliver it, record the result.
 /// Returns whether a row was handled. The row lock is held until the result is
-/// committed, so concurrent workers skip it and a row is never sent twice; if
-/// the process dies after SMTP accepted a message, the idempotency key makes
-/// the retry a no-op that is then recorded as sent.
+/// committed, so concurrent workers skip it. A durable SMTP receipt suppresses
+/// retries. If the relay accepts mail before the receipt commits, a crash
+/// can cause another delivery.
 pub async fn process_one(
     pool: &PgPool,
     settings: &Settings,
@@ -684,8 +684,8 @@ pub struct RetryResult {
     pub retried: u64,
 }
 
-/// Re-queues every `failed` row. Rows keep their idempotency key, so a message
-/// the relay already accepted is never sent twice.
+/// Re-queues every `failed` row. A durable delivery receipt suppresses the
+/// resend. A relay acceptance without a committed receipt may be delivered again.
 #[utoipa::path(post, path = "/api/admin/notifications/retry", tag = "notifications",
     responses((status = 200, body = RetryResult),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),

@@ -248,8 +248,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Re-queues every `failed` row. Rows keep their idempotency key, so a message
-         *     the relay already accepted is never sent twice.
+         * Re-queues every `failed` row. A durable delivery receipt suppresses the
+         *     resend. A relay acceptance without a committed receipt may be delivered again.
          */
         post: operations["retry_failed"];
         delete?: never;

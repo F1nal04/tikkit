@@ -97,6 +97,10 @@ API restart. Avoid manual status changes or queue deletion.
   relay is repaired, let pending rows retry. Use the Admin retry action for
   rows that reached the terminal failed state. Verify that due lag and
   failures stop climbing. SMTP disabled by policy suppresses email.
+- For `smtp_tls_failed`, check the certificate chain and hostname. For a private
+  relay, check the mounted [`SMTP_CA_FILE`](configuration.md) contains CA
+  certificates. A self-signed leaf can pass startup validation and fail at
+  send time. Unset the private bundle for a public relay.
 - Invitation and password-reset mail diagnostics also use stable failure
   logs. The notification worker series track the durable ticket outbox.
 
@@ -201,6 +205,28 @@ timestamp of zero means it has yet to complete a successful poll. Counters
 reset on API restart and track operations observed by that process. The
 backlog gauges reflect shared database state. Metric labels contain no request
 IDs, ticket identifiers, category names or requester data.
+
+## Load and recovery drill
+
+Use the [capacity profile](performance-baseline.md) and the
+[disposable Compose runner](../ops/load/README.md) to rehearse recovery.
+During a database outage, [readiness](#api-and-database) should fail while API
+liveness stays up. After connectivity returns, verify both readiness and
+[worker polling](#worker-health). Retry an interrupted submission with the
+original idempotency key and input.
+
+For a stuck AI attempt, watch [AI handoffs](#ai-handoffs-and-provider-failures)
+and confirm that the requester can still submit through an exempt category.
+For delayed email, check [outbox retries and SMTP](#notifications-and-smtp).
+A relay acceptance followed by a lost response or a process crash before the
+delivery receipt commits is an ambiguous SMTP outcome. A durable receipt
+suppresses retries, but the relay can deliver twice inside that gap.
+
+After an API restart, check [overdue confirmations](#resolution-confirmation-timeouts)
+and [retention runs](#data-retention) for catch-up. The drill starts two API
+replicas briefly to exercise concurrent workers against the same data.
+Operate one API replica in production because the per-account and sign-in
+rate limits live in each process.
 
 ## Backups
 

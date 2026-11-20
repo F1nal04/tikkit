@@ -31,6 +31,8 @@ pub struct Config {
     pub trusted_proxies: TrustedProxies,
     /// Private directory for screenshot files (a persistent volume in production).
     pub screenshot_dir: PathBuf,
+    /// Optional private SMTP trust anchors. Kept separate from HTTPS trust.
+    pub smtp_trust_root_pem: Option<Vec<u8>>,
     /// Restored copy under verification: no background jobs, no outbound dispatch
     /// (docs/backup-restore.md). Off in every normal deployment.
     pub restore_mode: bool,
@@ -65,6 +67,10 @@ impl fmt::Debug for Config {
             .field("session_rotate", &self.session_rotate)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("screenshot_dir", &self.screenshot_dir)
+            .field(
+                "smtp_trust_root_pem",
+                &self.smtp_trust_root_pem.as_ref().map(|_| "<set>"),
+            )
             .field("restore_mode", &self.restore_mode)
             .finish()
     }
@@ -208,6 +214,17 @@ impl Config {
             );
         }
 
+        let smtp_trust_root_pem = var("SMTP_CA_FILE").and_then(|path| {
+            let pem = std::fs::read(path).ok().filter(|pem| {
+                reqwest::Certificate::from_pem_bundle(pem).is_ok_and(|roots| !roots.is_empty())
+                    && crate::mail::smtp_tls("localhost", Some(pem)).is_ok()
+            });
+            if pem.is_none() {
+                fail("SMTP_CA_FILE must point to a readable PEM certificate bundle");
+            }
+            pem
+        });
+
         let restore_mode = match var("RESTORE_MODE").as_deref() {
             None | Some("false") => false,
             Some("true") => true,
@@ -235,6 +252,7 @@ impl Config {
                     session_rotate,
                     trusted_proxies,
                     screenshot_dir,
+                    smtp_trust_root_pem,
                     restore_mode,
                 })
             }
@@ -296,6 +314,29 @@ mod tests {
         assert!(!c.restore_mode);
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
+    }
+
+    #[test]
+    fn smtp_relay_ca_file_is_validated_and_used_by_auth_settings() {
+        let file = std::env::temp_dir().join(format!("tikkit-ca-{}.pem", uuid::Uuid::new_v4()));
+        let path = file.to_str().unwrap();
+        let overrides = [("SMTP_CA_FILE", path)];
+        let error = config(&overrides).unwrap_err().to_string();
+        assert!(error.contains("SMTP_CA_FILE"));
+        assert!(!error.contains(path));
+
+        let pem = rcgen::generate_simple_self_signed(vec!["smtp.example.test".into()])
+            .unwrap()
+            .cert
+            .pem();
+        std::fs::write(&file, &pem).unwrap();
+        let loaded = config(&overrides);
+        std::fs::remove_file(file).unwrap();
+        let settings = crate::auth::Settings::from(&loaded.unwrap());
+        assert_eq!(
+            settings.smtp_trust_root_pem.as_deref(),
+            Some(pem.as_bytes())
+        );
     }
 
     #[test]

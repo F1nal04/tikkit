@@ -1,10 +1,17 @@
 // Deterministic HTTPS peer for the production API in the isolated Compose test.
-import { readFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
+import { setTimeout as delay } from 'node:timers/promises'
 import { createServer } from 'node:https'
 
 const tls = {
   cert: readFileSync('/workflow-tls/stub.crt'),
   key: readFileSync('/workflow-tls/stub.key'),
+}
+const control = process.env.WORKFLOW_PROVIDER_CONTROL
+let active = 0
+let timeoutAttempts = 0
+const note = (kind, value) => {
+  if (control) appendFileSync(control + '-events', `${kind} ${value}\n`)
 }
 const answer = {
   en: {
@@ -29,6 +36,37 @@ createServer(tls, async (request, response) => {
     if (JSON.stringify(body.input).includes('Compose provider rejection fixture')) {
       send(401, { error: { code: 'invalid_api_key', message: 'Test credential rejected' } })
       return
+    }
+    if (control) {
+      const setting = readFileSync(control, 'utf8').trim()
+      const [mode, value] = setting.includes(' ') ? setting.split(' ') : ['ok', setting]
+      const start = performance.now()
+      note('active', ++active)
+      try {
+        if (mode === 'retry-then-hang' && timeoutAttempts++ === 0) {
+          response.writeHead(503, { 'Retry-After': '65', 'Content-Type': 'application/json' })
+            .end(JSON.stringify({ error: { code: 'server_error', message: 'Synthetic retry' } }))
+          return
+        }
+        if (mode === 'retry-then-hang') {
+          const abort = new AbortController()
+          response.once('close', () => abort.abort())
+          await delay(Number(value), undefined, { signal: abort.signal }).catch(error => {
+            if (error.name !== 'AbortError') throw error
+          })
+          if (response.destroyed) return
+        } else {
+          await delay(Number(value))
+        }
+      } finally {
+        --active
+        note('duration_ms', Math.round(performance.now() - start))
+        if (response.destroyed) note('disconnected', 1)
+      }
+      if (mode === 'outage') {
+        send(503, { error: { code: 'server_error', message: 'Synthetic outage' } })
+        return
+      }
     }
     const locale = body.instructions.includes('in German') ? 'de' : 'en'
     send(200, {

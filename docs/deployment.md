@@ -8,6 +8,16 @@ same release revision where possible. The web and API versions can differ
 because their tags are independent, so use the pair tested together for the
 release.
 
+## Size the host
+
+Use 4 vCPU and 8 GiB RAM as the starting size for a single-organization
+deployment close to the [measured capped reference](performance-baseline.md#capped-reference-rerun-results)
+of 30 active workload lanes and 30,000 historical tickets. The reference
+allocated 4 vCPU and 4 GiB of container memory across the stack and local test
+peers. It ran on an ARM developer workstation with container caps and a
+co-located load driver. Treat that result as sizing guidance for this workload
+and measure storage separately for your attachment and backup retention.
+
 ## Configure the host and secrets
 
 1. Place [docker-compose.prod.example.yml](../docker-compose.prod.example.yml),
@@ -212,7 +222,12 @@ To enable SMTP, allow outbound DNS and TCP from the API through the host
 firewall to the configured relay port (commonly 587 for STARTTLS or 465
 for implicit TLS). The Admin configures and tests the relay in the portal.
 Tikkit verifies the relay certificate and stores credentials encrypted
-with `ENCRYPTION_KEY`. Invitation and recovery links use `PUBLIC_ORIGIN`.
+with `ENCRYPTION_KEY`. For a private relay, mount a PEM bundle of CA certificates
+read-only and set `SMTP_CA_FILE` in the API service's explicit `environment`
+list. The production Compose example shows both entries. Adding it only to the
+Compose env file has no effect. This setting replaces the default WebPKI roots.
+Unset it when switching to a public relay. See [SMTP trust errors](operations.md#notifications-and-smtp).
+Invitation and recovery links use `PUBLIC_ORIGIN`.
 To enable AI, allow outbound DNS and HTTPS to the selected official provider
 and configure its credential in Admin AI settings. Outbound configuration
 is optional for both features. Mail delivery is outbound-only.

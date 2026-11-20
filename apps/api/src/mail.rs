@@ -277,8 +277,7 @@ pub(crate) async fn queue(
 /// Sends one message through the saved connection.
 ///
 /// `trust_root_pem`, when set, is the only trust anchor and certificates are
-/// still verified against it. Production passes `None`, which uses the default
-/// WebPKI roots. Verification is never disabled.
+/// still verified against it. Passing `None` uses the default WebPKI roots.
 ///
 /// A transient failure is retried at most [`SMTP_ATTEMPTS`] times. Each attempt
 /// is bounded by `options.timeout` (DNS, connect, and commands). Auth and TLS
@@ -387,6 +386,19 @@ fn build_message(ready: &ReadySmtp, message: &OutboundMessage) -> Result<Message
         .map_err(|_| Attempt::Fatal(MailError::Delivery))
 }
 
+pub(crate) fn smtp_tls(
+    host: &str,
+    trust_root_pem: Option<&[u8]>,
+) -> Result<TlsParameters, lettre::transport::smtp::Error> {
+    match trust_root_pem {
+        Some(pem) => TlsParameters::builder(host.to_owned())
+            .certificate_store(CertificateStore::None)
+            .add_root_certificate(Certificate::from_pem(pem)?)
+            .build(),
+        None => TlsParameters::new_rustls(host.to_owned()),
+    }
+}
+
 /// `builder_dangerous` is the only lettre entry point that accepts an explicit
 /// port. TLS is always `Required` (STARTTLS) or `Wrapper` (implicit TLS).
 fn build_transport(
@@ -394,18 +406,8 @@ fn build_transport(
     trust_root_pem: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, Attempt> {
-    let tls_parameters = match trust_root_pem {
-        Some(pem) => {
-            let cert = Certificate::from_pem(pem).map_err(|_| Attempt::Fatal(MailError::Tls))?;
-            TlsParameters::builder(ready.host.clone())
-                .certificate_store(CertificateStore::None)
-                .add_root_certificate(cert)
-                .build()
-                .map_err(|_| Attempt::Fatal(MailError::Tls))?
-        }
-        None => TlsParameters::new_rustls(ready.host.clone())
-            .map_err(|_| Attempt::Fatal(MailError::Tls))?,
-    };
+    let tls_parameters =
+        smtp_tls(&ready.host, trust_root_pem).map_err(|_| Attempt::Fatal(MailError::Tls))?;
     let tls = match ready.security {
         SmtpSecurity::StartTls => Tls::Required(tls_parameters),
         SmtpSecurity::ImplicitTls => Tls::Wrapper(tls_parameters),
