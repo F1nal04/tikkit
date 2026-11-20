@@ -41,6 +41,8 @@ pub enum ApiError {
     CsrfRejected,
     /// Too many attempts; retry after this many seconds.
     RateLimited(u64),
+    /// The request did not finish within the API's request deadline.
+    RequestTimeout,
     SetupAlreadyCompleted,
     /// Invitation token unknown, expired, revoked, or already used.
     InvitationInvalid,
@@ -56,7 +58,19 @@ pub enum ApiError {
     NotFound,
     MethodNotAllowed,
     Conflict,
+    /// A conflict whose winner is already committed: `details.status` carries
+    /// the ticket's committed status, so the losing caller knows the outcome.
+    ConflictWith(TicketStatus),
     PayloadTooLarge,
+    /// A retention confirmation whose preview no longer matches the stored
+    /// policy (another Admin changed it, or the preview is too old).
+    RetentionPreviewStale,
+    /// A personal-data export over its byte budget.
+    ExportTooLarge,
+    /// Restore mode: this copy sends nothing to mail relays or AI providers.
+    OutboundDisabled,
+    /// Restore mode: destructive jobs (retention runs, anonymization) are refused.
+    RestoreModeBlocked,
     /// No outbound SMTP connection has been saved.
     SmtpNotConfigured,
     /// The relay rejected the username or password.
@@ -69,6 +83,20 @@ pub enum ApiError {
     SmtpDeliveryFailed,
     /// The stored password cannot be decrypted with the current encryption key.
     SmtpCredentialUnreadable,
+    /// No AI provider, model, or key for the selected provider is stored.
+    AiNotConfigured,
+    /// The stored AI key does not decrypt with this deployment's encryption key.
+    AiCredentialUnreadable,
+    /// The AI provider rejected the key.
+    AiProviderAuthFailed,
+    /// DNS, connect, TLS, timeout, or outage talking to the AI provider.
+    AiProviderUnreachable,
+    /// The AI provider's rate limit or the account's quota is exhausted.
+    AiProviderRateLimited,
+    /// The model is unknown to the provider or cannot take image input.
+    AiModelUnsupported,
+    /// Any other AI provider failure.
+    AiProviderFailed,
     Internal,
 }
 
@@ -87,6 +115,7 @@ pub enum ErrorCode {
     InvalidCredentials,
     CsrfRejected,
     RateLimited,
+    RequestTimeout,
     SetupAlreadyCompleted,
     InvitationInvalid,
     ResetTokenInvalid,
@@ -97,12 +126,23 @@ pub enum ErrorCode {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    RetentionPreviewStale,
+    ExportTooLarge,
+    OutboundDisabled,
+    RestoreModeBlocked,
     SmtpNotConfigured,
     SmtpAuthFailed,
     SmtpTlsFailed,
     SmtpNetworkFailed,
     SmtpDeliveryFailed,
     SmtpCredentialUnreadable,
+    AiNotConfigured,
+    AiCredentialUnreadable,
+    AiProviderAuthFailed,
+    AiProviderUnreachable,
+    AiProviderRateLimited,
+    AiModelUnsupported,
+    AiProviderFailed,
     Internal,
 }
 
@@ -126,6 +166,9 @@ pub struct ErrorBody {
 pub struct ErrorDetails {
     /// Invalid input fields (dotted paths) and their stable error codes.
     pub fields: BTreeMap<String, Vec<String>>,
+    /// On a `conflict` about an AI decision: the ticket's committed status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TicketStatus>,
 }
 
 impl ApiError {
@@ -185,7 +228,12 @@ impl ApiError {
             CsrfRejected => (
                 StatusCode::FORBIDDEN,
                 ErrorCode::CsrfRejected,
-                "Missing the X-Requested-With: tikkit header.",
+                "Open the portal at its configured address (PUBLIC_ORIGIN); cross-site requests and requests without X-Requested-With: tikkit are refused.",
+            ),
+            RequestTimeout => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::RequestTimeout,
+                "The request took too long; try again later.",
             ),
             RateLimited(_) => (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -232,7 +280,7 @@ impl ApiError {
                 ErrorCode::MethodNotAllowed,
                 "This method is not allowed here.",
             ),
-            Conflict => (
+            Conflict | ConflictWith(_) => (
                 StatusCode::CONFLICT,
                 ErrorCode::Conflict,
                 "The resource changed; reload and try again.",
@@ -241,6 +289,16 @@ impl ApiError {
                 StatusCode::PAYLOAD_TOO_LARGE,
                 ErrorCode::PayloadTooLarge,
                 "The request body is too large.",
+            ),
+            RetentionPreviewStale => (
+                StatusCode::CONFLICT,
+                ErrorCode::RetentionPreviewStale,
+                "The retention policy changed since this preview; preview again.",
+            ),
+            ExportTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::ExportTooLarge,
+                "This account's data is too large to export in one file.",
             ),
             SmtpNotConfigured => (
                 StatusCode::CONFLICT,
@@ -271,6 +329,51 @@ impl ApiError {
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::SmtpCredentialUnreadable,
                 "The stored mail password could not be read. Enter it again.",
+            ),
+            OutboundDisabled => (
+                StatusCode::CONFLICT,
+                ErrorCode::OutboundDisabled,
+                "This restored copy is in restore mode and sends nothing to mail servers or AI providers.",
+            ),
+            RestoreModeBlocked => (
+                StatusCode::CONFLICT,
+                ErrorCode::RestoreModeBlocked,
+                "This copy is in restore mode and is under verification: retention runs and anonymization are refused until it leaves restore mode.",
+            ),
+            AiNotConfigured => (
+                StatusCode::CONFLICT,
+                ErrorCode::AiNotConfigured,
+                "Select an AI provider and model and store its API key first.",
+            ),
+            AiCredentialUnreadable => (
+                StatusCode::CONFLICT,
+                ErrorCode::AiCredentialUnreadable,
+                "The stored AI API key could not be read. Enter it again.",
+            ),
+            AiProviderAuthFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderAuthFailed,
+                "The AI provider rejected the API key.",
+            ),
+            AiProviderUnreachable => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderUnreachable,
+                "The AI provider could not be reached.",
+            ),
+            AiProviderRateLimited => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderRateLimited,
+                "The AI provider refused the request because of a rate limit or quota. Check the plan and billing of the provider account.",
+            ),
+            AiModelUnsupported => (
+                StatusCode::CONFLICT,
+                ErrorCode::AiModelUnsupported,
+                "The model is not supported, cannot analyze screenshots, or is not available to this API key. Choose another model.",
+            ),
+            AiProviderFailed => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::AiProviderFailed,
+                "The AI provider returned an error.",
             ),
             Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -303,12 +406,21 @@ impl ApiError {
             }
             _ => None,
         };
-        let details = fields.map(|f| ErrorDetails {
-            fields: f
-                .into_iter()
-                .map(|(k, v)| (k, v.into_iter().map(Into::into).collect()))
-                .collect(),
-        });
+        let committed = match self {
+            Self::ConflictWith(status) => Some(*status),
+            _ => None,
+        };
+        let details = match (fields, committed) {
+            (None, None) => None,
+            (fields, status) => Some(ErrorDetails {
+                fields: fields
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_iter().map(Into::into).collect()))
+                    .collect(),
+                status,
+            }),
+        };
         let error = ErrorBody {
             code,
             message: message.into(),
@@ -347,7 +459,11 @@ impl From<sqlx::Error> for ApiError {
         if matches!(code.as_deref(), Some("40001" | "40P01")) {
             return Self::Conflict;
         }
-        tracing::error!(%error, "database error");
+        tracing::error!(
+            error_kind = crate::db::error_kind(&error),
+            sqlstate = code.as_deref(),
+            "database error"
+        );
         Self::Internal
     }
 }

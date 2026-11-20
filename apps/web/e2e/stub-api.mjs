@@ -144,7 +144,15 @@ const CATALOG = {
 }
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 const sessionState = {}
-const stateOf = (req) => (sessionState[tokenOf(req)] ??= { drafts: new Map(), tickets: [], receipts: new Map(), shots: new Map(), submitted: [], reference: 1000 })
+// `ai` is the Admin's AI configuration for this session (POST /api/test/ai): off by default, like the
+// product. `providerCalls` counts attempts that would reach a provider; `aiActions` logs decision requests.
+const stateOf = (req) => (sessionState[tokenOf(req)] ??= { drafts: new Map(), tickets: [], receipts: new Map(), shots: new Map(), submitted: [], reference: 1000, ai: { ai_assistance: false, requester_skip_allowed: false }, providerCalls: 0, aiActions: [] })
+const aiPolicy = (st) => ({ ai_assistance: st.ai.ai_assistance, requester_skip_allowed: st.ai.ai_assistance && st.ai.requester_skip_allowed })
+// Model output is untrusted text: the page must show markup, markdown, and links literally.
+const SUGGESTION = {
+  explanation: 'Word keeps a damaged profile. <img src=x onerror="window.aiXss = true"> **Reset** it: [click here](javascript:window.aiXss=true) or https://evil.example/reset\nYour screenshot seems to show error 0x80070005.',
+  steps: ['Close Word. <script>window.aiXss = true</script>', 'Rename the folder "Normal.dotm".', 'Start Word again.'],
+}
 const validation = (res, fields) => reply(res, 422, { error: { code: 'validation_failed', message: 'validation_failed', details: { fields } }, request_id: 'stub' })
 
 // Mirrors the server rules the form relies on (docs/submission.md); hidden answers are dropped.
@@ -167,15 +175,29 @@ function checkIntake(intake) {
   return { fields, category, answers }
 }
 
-function submit(res, st, intake, key, sameRequest, draftId) {
+// Routing as in docs/submission.md: AI off, then category exemption, then the requester's skip
+// (403 unless the Admin allows it), otherwise the one AI attempt.
+function submit(res, st, intake, key, sameRequest, draftId, skip, language) {
   // What the client actually sent, before hidden answers are dropped the way the server does.
   st.submitted.push(JSON.parse(JSON.stringify(intake ?? {})))
   const prior = st.receipts.get(key)
   if (prior) return prior.same === sameRequest ? reply(res, 200, prior.receipt) : fail(res, 409, 'conflict')
-  const { fields, answers } = checkIntake(intake)
+  const { fields, answers, category } = checkIntake(intake)
   if (Object.keys(fields).length) return validation(res, fields)
-  const ticket = { id: randomUUID(), reference: ++st.reference, status: 'queued' }
-  st.tickets.push({ ...ticket, intake: { ...intake, answers } })
+  const policy = aiPolicy(st), now = new Date().toISOString()
+  let status = 'queued', route = 'ai_disabled', ai = null
+  if (policy.ai_assistance) {
+    if (category.skip_ai) route = 'category_exempt'
+    else if (skip) {
+      if (!policy.requester_skip_allowed) return fail(res, 403, 'forbidden')
+      route = 'requester_skip'
+    } else {
+      status = 'ai_processing'; route = 'ai'; st.providerCalls++
+      ai = { state: 'processing', language, suggestion: null, reason: null, created_at: now, finished_at: null, decision: null, decided_at: null }
+    }
+  }
+  const ticket = { id: randomUUID(), reference: ++st.reference, status }
+  st.tickets.push({ ...ticket, intake: { ...intake, answers }, ai, created_at: now, updated_at: now, transitions: [{ id: 1, event_type: 'submit', from_status: 'draft', to_status: status, actor_account_id: null, payload: { route }, created_at: now }] })
   st.receipts.set(key, { same: sameRequest, receipt: ticket })
   st.drafts.delete(draftId)
   // Slow enough that a second click or Enter lands while the first request is still running.
@@ -191,7 +213,7 @@ function detailOf(t) {
     view: 'requester', category_id: c.id, category_name: c.name, priority_id: p.id, priority_name: p.name,
     assignment: { team_name: null, assignee_display_name: null },
     intake_snapshot: { subject: t.subject ?? t.intake?.subject ?? 'Printer', description: t.description ?? t.intake?.description ?? 'Jammed', catalog: { category_id: c.id, category_name: c.name, skip_ai: c.skip_ai, priority_id: p.id, priority_name: p.name, answers: [] }, screenshot_ids: t.intake?.screenshot_ids ?? [] },
-    resolution_source: null, closure_reason: null, requester: null,
+    resolution_source: null, closure_reason: null, requester: null, ai: null, content_removed_at: null, removed_screenshots: 0,
     proposal_version: 0, confirmation_deadline: null, transitions: [],
     created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z', ...t,
   }
@@ -222,6 +244,7 @@ function seedHistory(st, user) {
   changeTicket(timeout, 'confirmation_timeout', 'closed')
   const ai = add('AI solved final', 'awaiting_ai_decision', { resolution_source: 'ai', closure_reason: 'requester_confirmed' })
   changeTicket(ai, 'ai_solved', 'ai_solved')
+  ai.ai = { state: 'suggestion_ready', language: 'en', suggestion: SUGGESTION, reason: null, created_at: ai.created_at, finished_at: ai.created_at, decision: 'solved', decided_at: '2026-10-01T10:05:00Z' }
   const privateShot = randomUUID()
   st.shots.set(privateShot, { ...screenshot, id: privateShot, private: true })
   const publicMessage = (i) => ({ id: randomUUID(), kind: 'public_reply', author_kind: 'staff', author_account_id: null, author_display_name: 'Olga Support', created_at: pending.created_at, body: `Public update ${i}: <script>window.messageXss = true</script>`, screenshot_ids: i === 0 ? [screenshot.id] : [] })
@@ -229,11 +252,129 @@ function seedHistory(st, user) {
   return { queued: queued.id, pending: pending.id, closed: closed.id, timeout: timeout.id, ai: ai.id, screenshot: screenshot.id, privateShot }
 }
 
+
+// Admin audit log (docs/audit.md): newest first, Admin only. Metadata is untrusted text, and one
+// resource ID is a spreadsheet formula. The export is CSV and records itself, as the API does.
+const auditActor = (username, role, team = null) => ({ account_id: `40000000-0000-4000-8000-00000000000${{ admin: 6, requester: 1, operator: 3 }[username]}`, username, role, team_id: team && '50000000-0000-4000-8000-000000000001', team_name: team, service: null })
+const auditService = (service) => ({ account_id: null, username: null, role: null, team_id: null, team_name: null, service })
+const AUDIT_TICKET = '60000000-0000-4000-8000-000000000301'
+const auditTicket = { resource_type: 'ticket', resource_id: AUDIT_TICKET, ticket_id: AUDIT_TICKET, ticket_reference: 301 }
+const auditEvent = (id, minute, action, actor, extra = {}) => ({
+  id, created_at: `2026-11-02T09:${String(minute).padStart(2, '0')}:00Z`, action, actor, subject: null,
+  resource_type: null, resource_id: null, ticket_id: null, ticket_reference: null, request_id: `70000000-0000-4000-8000-${String(id).padStart(12, '0')}`, metadata: {}, ...extra,
+})
+const AUDIT = [
+  auditEvent(1, 1, 'login_failed', auditService('anonymous'), { subject: { account_id: '40000000-0000-4000-8000-000000000003', username: 'operator' }, resource_type: 'account', resource_id: '40000000-0000-4000-8000-000000000003', metadata: { reason: 'wrong_password' } }),
+  auditEvent(2, 2, 'ticket_submit', auditActor('requester', 'user'), { ...auditTicket, metadata: { route: 'ai', to_status: 'ai_processing' } }),
+  auditEvent(3, 3, 'ticket_ai_suggestion_ready', auditService('ai_attempts'), { ...auditTicket, request_id: null }),
+  auditEvent(4, 4, 'ticket_ai_solved', auditActor('requester', 'user'), { ...auditTicket, metadata: { resolution_source: 'ai', closure_reason: 'requester_confirmed', note: '<img src=x onerror="window.auditXss = true">' } }),
+  auditEvent(5, 5, 'ai_solved_change_denied', auditActor('operator', 'operator', 'Desk'), { ...auditTicket, metadata: { attempted: 'reopen', status: 'ai_solved', error: 'not_found' } }),
+  auditEvent(6, 6, 'organization_settings_updated', auditActor('admin', 'admin'), { resource_type: 'organization', resource_id: '=HYPERLINK("http://evil.example")', metadata: { from: { allow_reopening: false }, to: { allow_reopening: true } } }),
+]
+const auditMatches = (q) => (e) =>
+  (!q.get('action') || e.action === q.get('action')) &&
+  (!q.get('actor_username') || e.actor.username === q.get('actor_username').toLowerCase()) &&
+  (!q.get('ticket_reference') || String(e.ticket_reference) === q.get('ticket_reference')) &&
+  (!q.get('resource_type') || e.resource_type === q.get('resource_type')) &&
+  (!q.get('resource_id') || e.resource_id === q.get('resource_id')) &&
+  (!q.get('request_id') || e.request_id === q.get('request_id')) &&
+  (!q.get('created_from') || e.created_at >= q.get('created_from')) &&
+  (!q.get('created_before') || e.created_at < q.get('created_before'))
+const auditExports = new Map()
+const retention = {}
+const csvCell = (value) => `"${/^[=+\-@\t\r]/.test(value) ? "'" : ''}${String(value).replaceAll('"', '""')}"`
+
+
+// Admin submission view (docs/admin-submissions.md): mixed outcomes, Admin only. The suggestion is
+// untrusted text, and the AI settings carry a credential hint that must never reach these pages.
+const submission = (reference, subject, extra = {}) => ({
+  id: `60000000-0000-4000-8000-${String(reference).padStart(12, '0')}`,
+  reference, subject, status: 'queued', category_id: CATEGORY, category_name: 'Hardware', priority_name: 'Normal',
+  requester: { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' },
+  team_name: null, assignee_display_name: null, resolution_source: null, closure_reason: null, resolution: 'open',
+  route: 'ai', ai_outcome: null, created_at: `2026-10-${String(30 - (reference % 30)).padStart(2, '0')}T08:00:00Z`, updated_at: '2026-10-30T08:00:00Z',
+  ...extra,
+})
+const SUBMISSIONS = [
+  submission(301, 'Solved by the AI suggestion', { status: 'ai_solved', resolution: 'ai_confirmed', resolution_source: 'ai', closure_reason: 'requester_confirmed', ai_outcome: 'solved' }),
+  submission(302, 'Suggestion waiting for a decision', { status: 'awaiting_ai_decision', ai_outcome: 'awaiting_decision' }),
+  submission(303, 'Suggestion abandoned', { status: 'cancelled', resolution: 'cancelled', ai_outcome: 'cancelled' }),
+  submission(304, 'AI timed out', { ai_outcome: 'failed' }),
+  submission(305, 'Escalated after the suggestion', { status: 'in_progress', ai_outcome: 'not_solved', team_name: 'Desk', assignee_display_name: 'operator' }),
+  submission(306, 'Resolved by the help desk', { status: 'closed', resolution: 'requester_confirmed', resolution_source: 'operator', closure_reason: 'requester_confirmed', route: 'ai_disabled', team_name: 'Desk', assignee_display_name: 'operator' }),
+]
+const submittedScope = (x, q) =>
+  (!q.get('created_from') || Date.parse(x.created_at) >= Date.parse(q.get('created_from'))) &&
+  (!q.get('created_before') || Date.parse(x.created_at) < Date.parse(q.get('created_before'))) &&
+  (!q.get('team_id') || TEAMS.find((t) => t.name === x.team_name)?.id === q.get('team_id')) &&
+  (!q.get('category_id') || x.category_id === q.get('category_id'))
+const disposition = (x) => x.ai_outcome === 'failed' ? 'provider_failed' : (x.ai_outcome ?? x.route)
+const enteredQueue = (x) => ['failed', 'not_solved', null].includes(x.ai_outcome)
+function reportFixture(items, teamFiltered) {
+  const counts = (group, key) => Object.entries(Object.groupBy(items, group))
+    .map(([value, rows]) => ({ [key]: value, count: rows.length }))
+  const queued = items.filter(enteredQueue)
+  const closed = items.filter((x) => x.status === 'closed').length
+  const assigned = queued.filter((x) => x.team_name).length
+  const solved = items.filter((x) => x.ai_outcome === 'solved').length
+  return {
+    submissions: items.length,
+    daily: counts((x) => x.created_at.slice(0, 10), 'day'),
+    categories: counts((x) => x.category_name, 'name').map((row) => ({ id: CATEGORY, ...row })),
+    priorities: counts((x) => x.priority_name, 'name').map((row) => ({ id: PRIORITIES[1].id, ...row })),
+    ai_outcomes: counts(disposition, 'outcome'),
+    ai_attempts: items.filter((x) => x.ai_outcome).length,
+    ai_rate_numerator: teamFiltered ? null : solved,
+    ai_rate_denominator: teamFiltered ? null : items.filter((x) => ['solved', 'not_solved', 'failed'].includes(x.ai_outcome)).length,
+    deflection_rate_numerator: teamFiltered ? null : solved,
+    deflection_rate_denominator: teamFiltered ? null : items.filter((x) => x.status !== 'cancelled').length,
+    closures: counts((x) => x.resolution, 'resolution'),
+    awaiting_confirmation: 0,
+    operator: {
+      queued: queued.length, first_response_samples: closed, mean_first_response_seconds: closed ? 1800 : null,
+      initial_closures: closed, initial_requester_confirmed: closed, initial_confirmation_timeout: 0, subsequent_closures: 0, reopens: 0, rejected_proposals: 0,
+      time_to_proposal_samples: closed, mean_queue_to_proposal_seconds: closed ? 3600 : null,
+      confirmation_wait_samples: closed, mean_proposal_to_closure_seconds: closed ? 5400 : null,
+      resolution_samples: closed, mean_queue_to_closure_seconds: closed ? 9000 : null,
+    },
+    workload: assigned ? [{ team_id: TEAMS[0].id, team_name: TEAMS[0].name, assignee_id: account('operator', null).id,
+      assignee_name: 'operator', assignee_role: 'operator', queued: assigned, active: assigned - closed, awaiting_confirmation: 0 }] : [],
+  }
+}
+const requesterActor = { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' }
+function submissionDetail(s) {
+  const ev = (id, event_type, from_status, to_status, actor = null, payload = {}) => ({ id, event_type, from_status, to_status, actor, payload, created_at: s.created_at })
+  const events = [ev(1, 'submit', 'draft', s.route === 'ai' ? 'ai_processing' : 'queued', requesterActor, { route: s.route })]
+  const suggested = ['solved', 'awaiting_decision', 'cancelled', 'not_solved'].includes(s.ai_outcome)
+  if (suggested) events.push(ev(2, 'ai_suggestion_ready', 'ai_processing', 'awaiting_ai_decision'))
+  if (s.ai_outcome === 'solved') events.push(ev(3, 'ai_solved', 'awaiting_ai_decision', 'ai_solved', requesterActor, { resolution_source: 'ai', closure_reason: 'requester_confirmed' }))
+  if (s.ai_outcome === 'not_solved') events.push(ev(3, 'ai_not_solved', 'awaiting_ai_decision', 'queued', requesterActor, { route: 'not_solved' }))
+  if (s.ai_outcome === 'cancelled') events.push(ev(3, 'cancel', 'awaiting_ai_decision', 'cancelled', requesterActor, { reason: 'Found it myself' }))
+  if (s.ai_outcome === 'failed') events.push(ev(2, 'ai_failed', 'ai_processing', 'queued', null, { route: 'ai_failed' }))
+  if (s.resolution === 'requester_confirmed') events.push(ev(5, 'propose_resolution', 'in_progress', 'awaiting_confirmation', { id: 'op', username: 'operator', display_name: 'operator' }, { summary: 'Replaced the toner.' }), ev(6, 'accept_resolution', 'awaiting_confirmation', 'closed', requesterActor))
+  const decision = s.ai_outcome === 'solved' ? 'solved' : s.ai_outcome === 'not_solved' ? 'not_solved' : null
+  const ai = s.ai_outcome && {
+    attempt_id: randomUUID(), outcome: s.ai_outcome, state: suggested ? 'suggestion_ready' : 'handed_off', outcome_code: s.ai_outcome === 'failed' ? 'timeout' : null,
+    provider: 'openai', model: 'openai-vision', language: 'en', suggestion: suggested ? SUGGESTION : null,
+    decision, decision_event_id: decision ? 3 : null, decided_at: decision ? s.created_at : null, created_at: s.created_at, finished_at: s.created_at,
+  }
+  return {
+    summary: s, description: 'Printer jams on page two.', confirmation_deadline: null, ai: ai || null, events,
+    intake_snapshot: { subject: s.subject, description: 'Printer jams on page two.', catalog: { category_id: CATEGORY, category_name: 'Hardware', skip_ai: false, priority_id: PRIORITIES[1].id, priority_name: 'Normal', answers: [] }, screenshot_ids: [] },
+  }
+}
+
 createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://stub')
   const route = `${req.method} ${pathname}`
   if (route === 'GET /api/health') return reply(res, 200, { status: 'ok' })
-  if (route === 'GET /api/setup') return reply(res, 200, { setup_required: false })
+  if (route === 'GET /api/setup') {
+    const required = /(?:^|;\s*)tikkit_setup=1/.test(req.headers.cookie ?? '')
+    return reply(res, 200, { setup_required: required })
+  }
+  if (route === 'POST /api/invitations/lookup') {
+    return reply(res, 200, { role: 'operator', language: 'en', email: 'new@example.com', expires_at: '2026-12-01T00:00:00Z' })
+  }
   if (route === 'POST /api/test/expire') return void (sessions.delete(tokenOf(req)), reply(res, 204))
   if (route === 'POST /api/auth/login') {
     const { username, password } = await readBody(req)
@@ -256,6 +397,243 @@ createServer(async (req, res) => {
     return reply(res, 200, account(user, tokenOf(req)))
   }
   if (route === 'GET /api/organization') return reply(res, 200, { ...settings, ...stateOf(req).policy })
+  if (route === 'GET /api/notifications') {
+    return reply(res, 200, {
+      items: [{
+        id: '80000000-0000-4000-8000-000000000001',
+        title: 'Your ticket was updated',
+        body: 'A reply was added.',
+        href: '/',
+        ticket_id: '30000000-0000-4000-8000-000000000001',
+        created_at: '2026-10-20T08:00:00Z',
+        read_at: null,
+      }],
+      next_cursor: null,
+    })
+  }
+  if (route === 'GET /api/notification-preferences') return reply(res, 200, { email: true, in_app: true })
+  if (route === 'GET /api/admin/ai/outcomes') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    return reply(res, 200, {
+      days: 30, solved: 1, not_solved: 1, skipped: 0, failed: 1, category_exempt: 0, cancelled: 0,
+      processing: 1, awaiting_decision: 1, failures: [{ outcome: 'provider_error', count: 1 }],
+    })
+  }
+  if (route === 'GET /api/admin/ai/records') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    return reply(res, 200, {
+      items: [{
+        id: '81000000-0000-4000-8000-000000000001',
+        ticket_id: '60000000-0000-4000-8000-000000000301',
+        reference: 301,
+        subject: 'Solved by the AI suggestion',
+        requester: { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' },
+        outcome: 'solved', outcome_code: null, status: 'ai_solved', provider: 'openai', model: 'openai-vision',
+        created_at: '2026-10-20T08:00:00Z', decided_at: '2026-10-20T08:05:00Z',
+      }],
+      next_cursor: null,
+    })
+  }
+  if (route === 'GET /api/ai/policy') return reply(res, 200, aiPolicy(stateOf(req)))
+  if (route === 'GET /api/settings/ai') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const credential = { hint: 'WXYZ', set_at: '2026-01-01T00:00:00Z', set_by: null, set_by_username: 'admin', readable: true }
+    return reply(res, 200, {
+      enabled: false,
+      provider: null,
+      model: null,
+      status: 'disabled',
+      allow_requester_skip: false,
+      providers: [
+        { provider: 'openai', models: [{ id: 'openai-vision', image_input: true }], credential },
+        { provider: 'gemini', models: [{ id: 'gemini-vision', image_input: true }, { id: 'gemini-text', image_input: false }], credential: null },
+        { provider: 'anthropic', models: [{ id: 'anthropic-vision', image_input: true }], credential: null },
+      ],
+      connection: { status: 'untested', error: null, tested_at: null },
+      updated_at: '2026-01-01T00:00:00Z',
+    })
+  }
+  if (route === 'GET /api/settings/ai/limits' || route === 'GET /api/settings/ai/usage') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    if (route.endsWith('limits'))
+      return reply(res, 200, {
+        window_hours: 24,
+        org_request_limit: 500,
+        user_request_limit: 10,
+        org_token_limit: null,
+        user_token_limit: null,
+        max_concurrency: 2,
+        concurrency_wait_seconds: 30,
+        breaker_failure_threshold: 5,
+        breaker_cooldown_seconds: 60,
+        retention_days: 90,
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+    const none = { requests: 0, succeeded: 0, failed: 0, refused: 0, images: 0, input_tokens: null, output_tokens: null, total_tokens: null, usage_unreported: 0 }
+    const closed = { state: 'closed', consecutive_failures: 0, open_until: null }
+    return reply(res, 200, {
+      days: 30,
+      window: { window_hours: 24, requests: 3, request_limit: 500, budget_tokens: 495, estimated_tokens: 0, token_limit: null, in_flight: 0, max_concurrency: 2 },
+      totals: { ...none, requests: 3, succeeded: 2, failed: 1, refused: 1, images: 2, input_tokens: 240, output_tokens: 90 },
+      providers: [
+        { provider: 'openai', usage: none, circuit: closed },
+        { provider: 'gemini', usage: none, circuit: closed },
+        { provider: 'anthropic', usage: { ...none, requests: 3, succeeded: 2, failed: 1, refused: 1, images: 2, input_tokens: 240, output_tokens: 90 }, circuit: closed },
+      ],
+      outcomes: [
+        { status: 'failed', outcome: 'rate_limited', count: 1 },
+        { status: 'refused', outcome: 'budget_user_requests', count: 1 },
+      ],
+    })
+  }
+  if (route === 'GET /api/catalog/all') return ROLES[user] === 'admin' ? reply(res, 200, CATALOG) : fail(res, 403, 'forbidden')
+  // Data retention (docs/retention.md): Admin only. State is per session, so parallel tests stay apart.
+  if (pathname.startsWith('/api/admin/retention') || pathname === '/api/admin/personal-data' || /^\/api\/admin\/accounts\/[^/]+\/(personal-data\/export|anonymize)$/.test(pathname)) {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const invalid = (fields) => reply(res, 422, { error: { code: 'validation_failed', message: 'invalid', details: { fields } }, request_id: 'stub' })
+    const keep = { draft_days: null, screenshot_days: null, ai_content_days: null, ticket_content_days: null, audit_days: null }
+    const r = (retention[tokenOf(req)] ??= {
+      settings: { policy: keep, automatic: false, version: 1, updated_at: '2026-11-01T00:00:00Z' },
+      runs: [],
+      accounts: [
+        { account_id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'Requester', role: 'user', is_active: true, anonymized_at: null, tickets: 3, open_tickets: 1, final_tickets_with_content: 2, drafts: 1, pending_screenshots: 0, sessions: 2, audit_events: 14 },
+        { account_id: '40000000-0000-4000-8000-000000000009', username: 'former.user', display_name: 'Former User', role: 'operator', is_active: false, anonymized_at: null, tickets: 5, open_tickets: 0, final_tickets_with_content: 5, drafts: 2, pending_screenshots: 1, sessions: 0, audit_events: 31 },
+      ],
+    })
+    // A preview is bound to the periods it showed and the settings version it was made under.
+    const tokenFor = (p) => `v${r.settings.version}|${Object.keys(keep).map((k) => p[k] ?? '-').join('|')}`
+    const stale = () => fail(res, 409, 'retention_preview_stale')
+    // What the sample data holds beyond each period.
+    const affected = (p) => ({
+      drafts: p.draft_days ? 4 : 0,
+      screenshots: p.screenshot_days || p.ticket_content_days ? 7 : 0,
+      ai_content: p.ai_content_days || p.ticket_content_days ? 2 : 0,
+      ticket_content: p.ticket_content_days ? 5 : 0,
+      audit_events: p.audit_days ? 120 : 0,
+    })
+    const range = (p) => {
+      const fields = {}
+      for (const key of Object.keys(keep)) {
+        const min = key === 'audit_days' ? 30 : 1
+        if (p[key] !== null && !(Number.isInteger(p[key]) && p[key] >= min && p[key] <= 3650)) fields[key] = ['out_of_range']
+      }
+      return fields
+    }
+    if (route === 'GET /api/admin/retention') {
+      // The worker finishes a run between two reads.
+      for (const run of r.runs) {
+        if (run.state === 'pending' && run.seen) Object.assign(run, { state: 'completed', finished_at: '2026-11-18T09:01:00Z', deleted: affected(run.policy) })
+        run.seen = true
+      }
+      return reply(res, 200, { settings: r.settings, limits: { min_days: 1, max_days: 3650, audit_min_days: 30 }, runs: r.runs.map(({ seen, ...run }) => run) })
+    }
+    if (route === 'PUT /api/admin/retention') {
+      const { automatic, confirm, preview_token, ...policy } = await readBody(req)
+      const fields = range(policy)
+      const deletes = automatic && Object.values(policy).some((d) => d !== null)
+      if (deletes && confirm !== 'DELETE') fields.confirm = ['invalid']
+      if (Object.keys(fields).length) return invalid(fields)
+      if (deletes && preview_token !== tokenFor(policy)) return stale()
+      r.settings = { policy, automatic, version: r.settings.version + 1, updated_at: '2026-11-18T09:00:00Z' }
+      return reply(res, 200, r.settings)
+    }
+    // Another Admin saves different periods meanwhile (the stale-tab case).
+    if (route === 'POST /api/admin/retention/test-other-admin') {
+      r.settings = { ...r.settings, policy: { ...r.settings.policy, ...(await readBody(req)) }, version: r.settings.version + 1 }
+      return reply(res, 204)
+    }
+    if (route === 'POST /api/admin/retention/preview') {
+      const policy = await readBody(req)
+      const fields = range(policy)
+      if (Object.keys(fields).length) return invalid(fields)
+      return reply(res, 200, { as_of: '2026-11-18T09:00:00Z', policy, affected: affected(policy), token: tokenFor(policy) })
+    }
+    if (route === 'POST /api/admin/retention/runs') {
+      const { confirm, preview_token, as_of } = await readBody(req)
+      if (confirm !== 'DELETE') return invalid({ confirm: ['invalid'] })
+      if (Object.values(r.settings.policy).every((d) => d === null)) return invalid({ policy: ['not_configured'] })
+      if (preview_token !== tokenFor(r.settings.policy) || !as_of) return stale()
+      if (r.runs.some((run) => run.state === 'pending')) return fail(res, 409, 'conflict')
+      const run = { id: randomUUID(), state: 'pending', requested_by: '40000000-0000-4000-8000-000000000006', requested_by_username: 'admin', created_at: '2026-11-18T09:00:00Z', as_of: '2026-11-18T09:00:00Z', finished_at: null, policy: r.settings.policy, deleted: affected(keep) }
+      r.runs.unshift(run)
+      return reply(res, 202, run)
+    }
+    if (route === 'GET /api/admin/personal-data') {
+      const wanted = (new URL(req.url, 'http://stub').searchParams.get('username') ?? '').trim().toLowerCase()
+      const found = r.accounts.find((a) => a.username.toLowerCase() === wanted)
+      return found ? reply(res, 200, found) : fail(res, 404, 'not_found')
+    }
+    const [, id, action] = /^\/api\/admin\/accounts\/([^/]+)\/(.+)$/.exec(pathname) ?? []
+    const account = r.accounts.find((a) => a.account_id === id)
+    if (req.method !== 'POST' || !account) return fail(res, 404, 'not_found')
+    const body = await readBody(req)
+    if (String(body.username ?? '').trim().toLowerCase() !== account.username.toLowerCase()) return invalid({ username: ['mismatch'] })
+    if (action === 'personal-data/export') {
+      const document = { format: 'tikkit.personal_data.v1', generated_at: '2026-11-18T09:00:00Z', account: { id, username: account.username, email: 'shared@example.com' }, tickets: [{ reference: 301, subject: 'Printer' }], truncated: [] }
+      return reply(res, 200, document, { 'content-disposition': `attachment; filename="personal-data-${id}.json"`, 'cache-control': 'private, no-store' })
+    }
+    if (account.anonymized_at) return invalid({ account: ['already_anonymized'] })
+    if (account.is_active) return invalid({ account: ['active'] })
+    const username = `anonymized-${id.replaceAll('-', '')}`
+    Object.assign(account, { username, display_name: username, anonymized_at: '2026-11-18T09:00:00Z', drafts: 0, pending_screenshots: 0, sessions: 0, final_tickets_with_content: body.purge_ticket_content ? 0 : account.final_tickets_with_content })
+    return reply(res, 200, { account_id: id, username, sessions: 0, drafts: 2, pending_screenshots: 1, saved_views: 0, notifications: 3, audit_events: 31, ticket_content: { drafts: 0, screenshots: body.purge_ticket_content ? 4 : 0, ai_content: 0, ticket_content: body.purge_ticket_content ? 5 : 0, audit_events: 0 } })
+  }
+  if (pathname.startsWith('/api/admin/audit')) {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const q = new URL(req.url, 'http://stub').searchParams
+    // Per session, so parallel tests do not see each other's exports.
+    const token = tokenOf(req)
+    const log = [...AUDIT, ...(auditExports.get(token) ?? [])]
+    if (route === 'GET /api/admin/audit/actions') return reply(res, 200, { actions: [...new Set(log.map((e) => e.action))].sort() })
+    if (route === 'POST /api/admin/audit/export') {
+      if (req.headers['x-requested-with'] !== 'tikkit') return fail(res, 403, 'csrf_rejected')
+      const rows = log.filter(auditMatches(q)).reverse()
+      const mine = auditExports.get(token) ?? []
+      mine.push(auditEvent(100 + mine.length, 30 + mine.length, 'audit_exported', auditActor('admin', 'admin'), { resource_type: 'audit_log', metadata: { filters: Object.fromEntries(q), rows: rows.length, truncated: false } }))
+      auditExports.set(token, mine)
+      const lines = [['id', 'time_utc', 'action', 'actor_username', 'resource_id'], ...rows.map((e) => [String(e.id), e.created_at, e.action, e.actor.username ?? '', e.resource_id ?? ''])]
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="tikkit-audit-2026-11-18.csv"', 'x-export-rows': String(rows.length), 'x-export-truncated': 'false' })
+      return res.end(lines.map((cells) => `${cells.map(csvCell).join(',')}\r\n`).join(''))
+    }
+    if (route !== 'GET /api/admin/audit') return fail(res, 405, 'method_not_allowed')
+    const matching = log.filter(auditMatches(q)).reverse()
+    // Two pages of the unfiltered log, so paging is exercised.
+    const limit = 4
+    const start = q.get('cursor') ? Number(q.get('cursor')) : 0
+    const next = start + limit < matching.length ? String(start + limit) : null
+    return reply(res, 200, { items: matching.slice(start, start + limit), next_cursor: next })
+  }
+  if (route === 'GET /api/admin/reports' || route === 'POST /api/admin/reports/export') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    const q = new URL(req.url, 'http://stub').searchParams
+    const duration = Date.parse(q.get('created_before')) - Date.parse(q.get('created_from'))
+    if (!(duration > 0 && duration <= 366 * 86_400_000)) return fail(res, 400, 'invalid_query')
+    const items = SUBMISSIONS.filter((x) => submittedScope(x, q))
+    if (req.method === 'GET') return reply(res, 200, reportFixture(items, q.has('team_id')))
+    if (req.headers['x-requested-with'] !== 'tikkit') return fail(res, 403, 'csrf_rejected')
+    res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="ticket-report.csv"' })
+    return res.end(['reference,ai_outcome', ...items.map((x) => `${x.reference},${disposition(x)}`)].join('\r\n'))
+  }
+  if (pathname.startsWith('/api/admin/submissions')) {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed')
+    const q = new URL(req.url, 'http://stub').searchParams
+    const id = /^\/api\/admin\/submissions\/([^/]+)$/.exec(pathname)?.[1]
+    if (id) {
+      const found = SUBMISSIONS.find((x) => x.id === id)
+      return found ? reply(res, 200, submissionDetail(found)) : fail(res, 404, 'not_found')
+    }
+    const items = SUBMISSIONS.filter((x) =>
+      submittedScope(x, q) &&
+      (!q.get('assignee_id') || (x.assignee_display_name && account(x.assignee_display_name, null).id === q.get('assignee_id'))) &&
+      (!q.has('entered_queue') || enteredQueue(x) === (q.get('entered_queue') === 'true')) &&
+      (!q.get('status') || x.status === q.get('status')) &&
+      (!q.get('ai_disposition') || disposition(x) === q.get('ai_disposition')) &&
+      (!q.get('resolution') || x.resolution === q.get('resolution')) &&
+      (!q.get('resolution_source') || (x.resolution_source ?? 'none') === q.get('resolution_source')) &&
+      (!q.get('ai_outcome') || (x.ai_outcome ?? 'none') === q.get('ai_outcome')))
+    return reply(res, 200, { items, next_cursor: null })
+  }
   if (route === 'GET /api/settings/smtp') return ROLES[user] === 'admin' ? reply(res, 200, { connection: null }) : fail(res, 403, 'forbidden')
   if (pathname === '/api/accounts' || pathname === '/api/invitations' || pathname === '/api/teams' || pathname === '/api/admin/settings') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
@@ -263,7 +641,7 @@ createServer(async (req, res) => {
     const items =
       pathname === '/api/accounts'
         ? Object.keys(ROLES).map((u) => ({ ...account(u, null), is_active: true, expertise: null, team_id: null, is_team_lead: false, created_at: '2026-10-01T00:00:00Z' }))
-        : []
+        : pathname === '/api/teams' ? TEAMS.map((team) => ({ ...team, archived: false })) : []
     return reply(res, 200, { items, next_cursor: null })
   }
   if (pathname === '/api/queue' || pathname === '/api/queue/counts') {
@@ -353,9 +731,35 @@ createServer(async (req, res) => {
   const shotId = /^\/api\/screenshots\/([^/]+)(\/(?:preview|download))?$/.exec(pathname)
   st.policy ??= {}
   st.messages ??= new Map()
+  // What the retention policy did to a ticket (docs/retention.md): { id, content_removed_at?, removed_screenshots? }.
+  if (route === 'POST /api/test/retention-ticket') { const { id, ...flags } = await readBody(req); const t = st.tickets.find((t) => t.id === id); if (!t) return fail(res, 404, 'not_found'); Object.assign(t, flags); if (flags.content_removed_at) Object.assign(t, { subject: '—', description: '—' }); return reply(res, 204) }
+  // Restore mode of this session's API, as /api/ready reports it (docs/backup-restore.md).
+  if (route === 'POST /api/test/restore-mode') { st.restoreMode = !!(await readBody(req)).on; return reply(res, 204) }
+  if (route === 'GET /api/ready') return reply(res, 200, { status: 'ready', checks: { database: 'ok', migrations: 'ok' }, restore_mode: !!st.restoreMode })
   if (route === 'POST /api/test/policy') { Object.assign(st.policy, await readBody(req)); return reply(res, 204) }
   if (route === 'POST /api/test/assignment') { const input = await readBody(req); const t = st.tickets.find((t) => t.id === input.id); if (!t) return fail(res, 404, 'not_found'); t.assignment = input.assignment; return reply(res, 204) }
   if (route === 'POST /api/test/history') return reply(res, 200, seedHistory(st, user))
+  // --- AI step test hooks: the Admin's configuration, the worker's result, and what was requested.
+  if (route === 'POST /api/test/ai') { Object.assign(st.ai, await readBody(req)); return reply(res, 204) }
+  if (route === 'GET /api/test/ai-log') return reply(res, 200, { provider_calls: st.providerCalls, actions: st.aiActions })
+  if (route === 'POST /api/test/ai-result') {
+    const { id, outcome = 'suggestion', suggestion = SUGGESTION, force = false } = await readBody(req)
+    const t = st.tickets.find((t) => t.id === id)
+    if (!t) return fail(res, 404, 'not_found')
+    // `force` is a result that reached the attempt after the handoff: the status does not move.
+    if (force) { t.ai = { ...t.ai, suggestion }; t.updated_at = new Date().toISOString(); return reply(res, 200, { applied: false }) }
+    // Like the worker, a result only counts while the attempt is processing; a late one is dropped.
+    if (t.status !== 'ai_processing') return reply(res, 200, { applied: false })
+    const finished_at = new Date().toISOString()
+    if (outcome === 'suggestion') {
+      changeTicket(t, 'ai_suggestion_ready', 'awaiting_ai_decision')
+      t.ai = { ...t.ai, state: 'suggestion_ready', suggestion, finished_at }
+    } else {
+      changeTicket(t, 'ai_failed', 'queued', { route: outcome })
+      t.ai = { ...t.ai, state: 'handed_off', reason: outcome, finished_at }
+    }
+    return reply(res, 200, { applied: true })
+  }
   if (route === 'GET /api/tickets') {
     const q = new URL(req.url, 'http://stub').searchParams
     let items = st.tickets.map(detailOf).reverse()
@@ -463,13 +867,14 @@ createServer(async (req, res) => {
     t.updated_at = new Date().toISOString()
     return reply(res, 204)
   }
-  const ownTicket = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|actions))?$/.exec(pathname)
+  const ownTicket = /^\/api\/tickets\/([^/]+)(?:\/(messages|replies|actions|activity))?$/.exec(pathname)
   if (ownTicket) {
     const source = st.tickets.find((t) => t.id === ownTicket[1])
     if (!source) return fail(res, 404, 'not_found')
     const t = detailOf(source), endpoint = ownTicket[2]
     const all = st.messages.get(t.id) ?? []
     if (!endpoint && req.method === 'GET') return reply(res, 200, t)
+    if (endpoint === 'activity') return reply(res, 200, { version: `${t.updated_at}.${t.status}.${all.length}` })
     if (endpoint === 'messages') {
       const q = new URL(req.url, 'http://stub').searchParams, start = Number(q.get('cursor') ?? 0), limit = Number(q.get('limit') ?? 25)
       const visible = all.filter((m) => m.kind === 'public_reply')
@@ -489,6 +894,33 @@ createServer(async (req, res) => {
     }
     if (endpoint === 'actions') {
       const policy = { ...settings, ...st.policy }, a = input.action
+      // AI decisions (docs/ai-decisions.md): a repeat of the committed decision is 200, another
+      // decision after the stage ended is 409 with the committed status, a forbidden skip is 403.
+      if (['ai_solved', 'ai_not_solved', 'skip_ai'].includes(a)) {
+        st.aiActions.push(a)
+        const conflict = () => reply(res, 409, { error: { code: 'conflict', message: 'conflict', details: { fields: {}, status: source.status } }, request_id: 'stub' })
+        const decide = () => {
+          const now = new Date().toISOString(), skipAllowed = aiPolicy(st).requester_skip_allowed
+          if ((source.transitions ?? []).some((e) => e.event_type === a)) return reply(res, 200, { status: source.status })
+          if (a === 'skip_ai') {
+            if (source.status !== 'ai_processing') return conflict()
+            if (!skipAllowed) return fail(res, 403, 'forbidden')
+            changeTicket(source, 'skip_ai', 'queued', { route: 'requester_skip' })
+            source.ai = { ...source.ai, state: 'handed_off', reason: 'requester_skip', finished_at: now }
+          } else {
+            if (source.status === 'ai_processing' && a === 'ai_not_solved' && !skipAllowed) return fail(res, 403, 'forbidden')
+            if (source.status !== 'awaiting_ai_decision') return conflict()
+            if (a === 'ai_solved') {
+              changeTicket(source, 'ai_solved', 'ai_solved')
+              Object.assign(source, { resolution_source: 'ai', closure_reason: 'requester_confirmed' })
+            } else changeTicket(source, 'ai_not_solved', 'queued', { route: 'not_solved' })
+            source.ai = { ...source.ai, decision: a === 'ai_solved' ? 'solved' : 'not_solved', decided_at: now }
+          }
+          reply(res, 200, { status: source.status })
+        }
+        // Slow enough that a second click lands while the first request is still running.
+        return void setTimeout(decide, 300)
+      }
       if (!['accept_resolution', 'reject_resolution', 'cancel', 'reopen'].includes(a)) return validation(res, { action: ['invalid'] })
       if (['ai_solved', 'cancelled'].includes(t.status)) return fail(res, 409, 'conflict')
       if (a === 'reopen') {
@@ -500,6 +932,7 @@ createServer(async (req, res) => {
         if (input.reason.length > 1000) return validation(res, { reason: ['too_long'] })
         if (!['ai_processing', 'awaiting_ai_decision', ...OPEN].includes(t.status)) return fail(res, 409, 'conflict')
         if (policy.requester_cancellation_policy === 'disabled' || (policy.requester_cancellation_policy === 'before_work_starts' && t.transitions.some((e) => e.to_status === 'in_progress'))) return fail(res, 403, 'forbidden')
+        if (source.ai?.state === 'processing') source.ai = { ...source.ai, state: 'cancelled', finished_at: new Date().toISOString() }
         changeTicket(source, 'cancel', 'cancelled', { reason: input.reason.trim() })
       } else {
         if (t.status !== 'awaiting_confirmation' || t.proposal_version !== input.proposal_version) return fail(res, 409, 'conflict')
@@ -546,12 +979,12 @@ createServer(async (req, res) => {
       return reply(res, 200, draft)
     }
     if (draftId[2]) {
-      return submit(res, st, draft.intake, body.idempotency_key, `${draft.id}:${body.version}`, draft.id)
+      return submit(res, st, draft.intake, body.idempotency_key, `${draft.id}:${body.version}:${!!body.requester_skip}`, draft.id, !!body.requester_skip, languages[tokenOf(req)] ?? 'en')
     }
   }
   if (route === 'POST /api/tickets') {
     const body = await readBody(req)
-    return submit(res, st, body.intake, body.idempotency_key, JSON.stringify(body.intake))
+    return submit(res, st, body.intake, body.idempotency_key, JSON.stringify([body.intake, !!body.requester_skip]), undefined, !!body.requester_skip, languages[tokenOf(req)] ?? 'en')
   }
   if (route === 'POST /api/screenshots') {
     const chunks = []

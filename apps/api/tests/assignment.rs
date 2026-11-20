@@ -258,6 +258,10 @@ async fn every_intake_route_enters_general_intake_once_and_dispatches_manually()
         .unwrap();
         for (by, t) in steps {
             let mut tx = w.db.pool.begin().await.unwrap();
+            if t == Transition::AiNotSolved {
+                // The decision applies to the stored suggestion.
+                support::fixtures::ai_attempt(&mut *tx, id, "suggestion_ready").await;
+            }
             transition_with(&mut tx, id, by, &t, Some(policy))
                 .await
                 .unwrap();
@@ -750,4 +754,232 @@ async fn ai_solved_and_finished_records_are_excluded() {
         .execute(&w.db.pool)
         .await;
     assert!(r.is_err());
+}
+
+#[tokio::test]
+async fn same_team_operator_and_specialist_have_equal_work_permissions() {
+    let Some(w) = world().await else { return };
+    for (actor, peer) in [("op", "peer"), ("peer", "op")] {
+        let unclaimed = w.seed("owner", "queued", Some(w.desk), None).await;
+        let read = w.detail(unclaimed, actor).await;
+        assert_eq!(read.status, 200);
+        assert_eq!(read.body["staff_access"]["can_claim"], true);
+        assert_eq!(w.change(unclaimed, actor, w.assign(peer)).await.status, 403);
+        let general = w.seed("owner", "queued", None, None).await;
+        assert_eq!(
+            w.change(general, actor, w.dispatch(w.network)).await.status,
+            200
+        );
+        assert_eq!(w.detail(general, actor).await.status, 404);
+        assert_eq!(w.change(unclaimed, actor, act("claim")).await.status, 200);
+        assert_eq!(
+            w.placement(unclaimed).await,
+            (Some(w.desk), Some(w.ids[actor]))
+        );
+
+        let detail = w.detail(unclaimed, peer).await;
+        assert_eq!(detail.status, 200);
+        let action = format!("/api/tickets/{unclaimed}/staff-actions");
+        let start =
+            json!({ "action": "start_work", "expected_updated_at": detail.body["updated_at"] });
+        assert_eq!(
+            call(
+                &w.app,
+                "POST",
+                &action,
+                Some(start.clone()),
+                Some(&w.cookies[peer])
+            )
+            .await
+            .status,
+            403,
+        );
+        assert_eq!(
+            call(
+                &w.app,
+                "POST",
+                &action,
+                Some(start),
+                Some(&w.cookies[actor])
+            )
+            .await
+            .status,
+            200,
+        );
+    }
+}
+
+#[tokio::test]
+async fn shared_email_admin_can_dispatch_leads_request_with_separate_audit_identity() {
+    let Some(w) = world().await else { return };
+    let r = call(
+        &w.app,
+        "POST",
+        "/api/tickets",
+        Some(json!({
+            "idempotency_key": Uuid::new_v4(),
+            "intake": { "category_id": w.category, "priority_id": w.normal,
+                "subject": "Lead needs help", "description": "My application fails.",
+                "answers": {}, "screenshot_ids": [] },
+        })),
+        Some(&w.cookies["lead"]),
+    )
+    .await;
+    assert_eq!(r.status, 201, "{}", r.body);
+    let id = serde_json::from_value(r.body["id"].clone()).unwrap();
+    assert_eq!(w.change(id, "lead", w.dispatch(w.desk)).await.status, 403);
+    assert_eq!(w.change(id, "admin", w.dispatch(w.desk)).await.status, 200);
+    for ineligible in ["admin", "lead"] {
+        assert_eq!(
+            w.change(id, "admin", w.assign(ineligible)).await.status,
+            422
+        );
+    }
+    assert_eq!(w.change(id, "admin", w.assign("op")).await.status, 200);
+    let owner = w.detail(id, "lead").await;
+    assert_eq!(owner.body["view"], "requester");
+    assert_eq!(owner.body["assignment"]["assignee_display_name"], "op");
+    let history: Vec<(String, Uuid)> = sqlx::query_as(
+        "SELECT event_type, actor_account_id FROM audit_events
+         WHERE ticket_id = $1 AND event_type IN ('ticket_submit', 'ticket_assignment_changed') ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&w.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        history,
+        [
+            ("ticket_submit".into(), w.ids["lead"]),
+            ("ticket_assignment_changed".into(), w.ids["admin"]),
+            ("ticket_assignment_changed".into(), w.ids["admin"]),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn claim_and_requester_cancellation_in_both_commit_orders() {
+    let Some(w) = world().await else { return };
+    for claim_first in [true, false] {
+        let id = w.seed("owner", "queued", Some(w.desk), None).await;
+        let at = w.updated_at(id).await;
+        let path = format!("/api/tickets/{id}/actions");
+        let claim = w.change_at(id, "op", act("claim"), at);
+        let cancel = call(
+            &w.app,
+            "POST",
+            &path,
+            Some(json!({ "action": "cancel", "reason": "Support no longer needed" })),
+            Some(&w.cookies["owner"]),
+        );
+        let pool = &w.db.pool;
+        let gate = support::lock_ticket(pool, id).await;
+        let (claim, cancel) = if claim_first {
+            support::queued_requests(pool, gate, claim, cancel).await
+        } else {
+            let (cancel, claim) = support::queued_requests(pool, gate, cancel, claim).await;
+            (claim, cancel)
+        };
+        assert_eq!(
+            claim.status.as_u16(),
+            if claim_first { 200 } else { 409 },
+            "{}",
+            claim.body
+        );
+        assert_eq!(cancel.status, 200, "{}", cancel.body);
+        assert_eq!(
+            w.placement(id).await,
+            (Some(w.desk), claim_first.then_some(w.ids["op"]))
+        );
+        assert_eq!(w.events(id).await.len(), usize::from(claim_first));
+        assert_eq!(w.detail(id, "owner").await.body["status"], "cancelled");
+        assert_eq!(
+            cancel_events_and_outbox(pool, id).await,
+            (1, if claim_first { 2 } else { 4 })
+        );
+        assert!(!w.queue("op", "mine").await.contains(&id));
+    }
+}
+
+#[tokio::test]
+async fn start_work_and_before_work_cancellation_in_both_commit_orders() {
+    let Some(w) = world().await else { return };
+    let pool = &w.db.pool;
+    sqlx::query("UPDATE organization SET requester_cancellation_policy = 'before_work_starts'")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    for work_first in [true, false] {
+        let id = w.seed("owner", "queued", Some(w.desk), Some("op")).await;
+        let at = w.updated_at(id).await;
+        let staff = format!("/api/tickets/{id}/staff-actions");
+        let actions = format!("/api/tickets/{id}/actions");
+        let work = call(
+            &w.app,
+            "POST",
+            &staff,
+            Some(json!({ "action": "start_work", "expected_updated_at": at })),
+            Some(&w.cookies["op"]),
+        );
+        let cancel = call(
+            &w.app,
+            "POST",
+            &actions,
+            Some(json!({ "action": "cancel", "reason": "Support no longer needed" })),
+            Some(&w.cookies["owner"]),
+        );
+        let gate = support::lock_ticket(pool, id).await;
+        let (work, cancel) = if work_first {
+            support::queued_requests(pool, gate, work, cancel).await
+        } else {
+            let (cancel, work) = support::queued_requests(pool, gate, cancel, work).await;
+            (work, cancel)
+        };
+        assert_eq!(
+            work.status.as_u16(),
+            if work_first { 200 } else { 409 },
+            "{}",
+            work.body
+        );
+        assert_eq!(
+            cancel.status.as_u16(),
+            if work_first { 403 } else { 200 },
+            "{}",
+            cancel.body
+        );
+        let detail = w.detail(id, "owner").await;
+        assert_eq!(
+            detail.body["status"],
+            if work_first {
+                "in_progress"
+            } else {
+                "cancelled"
+            }
+        );
+        let starts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM ticket_events WHERE ticket_id = $1 AND event_type = 'start_work'",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(starts, i64::from(work_first));
+        assert_eq!(
+            cancel_events_and_outbox(pool, id).await,
+            if work_first { (0, 0) } else { (1, 2) }
+        );
+    }
+}
+
+async fn cancel_events_and_outbox(pool: &sqlx::PgPool, id: Uuid) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT count(DISTINCT e.id), count(o.id) FROM ticket_events e
+         LEFT JOIN notification_outbox o ON o.event_id = e.id
+         WHERE e.ticket_id = $1 AND e.event_type = 'cancel'",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }

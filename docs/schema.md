@@ -45,7 +45,9 @@ language; translations map them to display text.
   `invitation_created`, `invitation_revoked`, `invitation_accepted`,
   `recovery_requested`, `recovery_completed`, `profile_updated`,
   `account_deactivated`, `account_reactivated`, `smtp_configured`,
-  `smtp_updated`, `smtp_removed`, `smtp_tested`, `notifications_retried`, `catalog_item_created`,
+  `smtp_updated`, `smtp_removed`, `smtp_tested`, `ai_settings_updated`,
+  `ai_credential_set`, `ai_credential_removed`, `ai_connection_tested`,
+  `ai_limits_updated`, `ai_usage_purged` (system actor), `notifications_retried`, `catalog_item_created`,
   `catalog_item_updated`, `catalog_reordered` (metadata `kind`: `category`,
   `priority`, `intake_field`)
 - `intake_fields.kind`: `text`, `select`
@@ -118,7 +120,11 @@ Rust validates and authorizes first; these constraints are the backstop.
   Status changes go through `lifecycle::transition` only.
 - `ticket_events`, `team_membership_history`, and `audit_events` are append-only: UPDATE,
   DELETE and TRUNCATE raise `restrict_violation`. Membership history is written
-  by trigger on join, leave, and team change.
+  by trigger on join, leave, and team change. Audit events have two explicit
+  exceptions, `audit_retention_purge` and `audit_anonymize_account`
+  ([Audit events](#audit-events)). Messages and ticket events have one guarded
+  retention path each, and attached screenshots, AI attempts, and submitted
+  intake likewise ([Data retention](#data-retention)).
 
 ## Admin management (0005)
 
@@ -180,7 +186,8 @@ Migration `0009_ticket_submission.sql` adds:
   version, timestamps, and a unique optional `submitted_ticket_id`. Input is
   present exactly while unsubmitted; successful submission replaces it with a
   tombstone. An owner index supports bounded pagination. Drafts are retained
-  until explicit owner deletion or submission, with no automatic expiry.
+  until explicit owner deletion or submission, or the Admin-set draft period
+  ([Data retention](#data-retention); not set by default).
 - `tickets.intake_snapshot`: immutable original subject/description, catalog
   `IntakeSnapshot` (including original priority and visible answers), and
   screenshot IDs (attached rows in `screenshots`). Nullable for pre-existing records;
@@ -269,3 +276,211 @@ inbox, one row per delivered in-app job, with `read_at`). An `AFTER INSERT`
 trigger on `ticket_events` fills the outbox in the event writer's transaction.
 Behavior, recipients, and retries: [notifications.md](notifications.md). No new
 configuration variables.
+
+## AI configuration
+
+Migration `0019_ai_configuration.sql`. Behavior: [ai-configuration.md](ai-configuration.md).
+
+- `ai_settings` has exactly one row (`id boolean PRIMARY KEY CHECK (id)`,
+  inserted by the migration): `enabled` (default false), `provider` (`openai`,
+  `gemini`, `anthropic`, or NULL), `model` (up to 100 characters; the API only
+  stores models from the adapters' supported table), and the last connection test: `connection_status` (`untested`,
+  `ok`, `failed`), `connection_error` (a stable code, set exactly when `failed`),
+  `connection_tested_at`. `enabled` requires a provider and a model.
+- `ai_credentials` has at most one row per provider (`provider` is the primary
+  key). `key_ciphertext` is AES-256-GCM (12-byte nonce, then ciphertext and tag)
+  under `ENCRYPTION_KEY` with the provider name as associated data, never the
+  plaintext key. `key_hint` is the last four characters of a long key or empty;
+  `set_at` and `set_by` record who stored it.
+- "Allow requester to skip AI" stays `organization.allow_requester_ai_skip`.
+
+## AI usage safeguards
+
+Migration `0021_ai_usage_safeguards.sql` (0020 is intentionally unused).
+Behavior: [ai-usage.md](ai-usage.md).
+
+- `ai_limits` has exactly one row (inserted by the migration): `window_hours`,
+  the four budgets `org_request_limit`, `user_request_limit`, `org_token_limit`,
+  `user_token_limit` (NULL means unlimited), `max_concurrency`,
+  `concurrency_wait_seconds`, `breaker_failure_threshold`,
+  `breaker_cooldown_seconds`, and `retention_days`. Every column has a range
+  check, and `retention_days * 24 >= window_hours`. Admission locks this row
+  `FOR UPDATE`, which serializes all admissions.
+- `ai_usage` has one row per guarded provider call or refusal: `account_id`
+  (the requester), `provider`, `model`, `image_count`, `status` (`reserved`,
+  `succeeded`, `failed`, `refused`), `outcome` (stable code, set exactly for
+  `failed` and `refused`), `http_status`, `provider_code`, the token counts
+  `input_tokens` / `output_tokens` / `total_tokens` exactly as reported by the
+  provider (NULL: not reported), `budget_tokens` with `budget_basis`
+  (`estimated`, `reported`, `none`), `breaker_probe`, `started_at`,
+  `finished_at`, and `lease_expires_at` (set exactly while `reserved`). It
+  holds no ticket reference and no content. Indexes: `started_at`,
+  `(account_id, started_at)`, and a partial index on reserved rows.
+- `ai_circuit` has at most one row per provider: `consecutive_failures`,
+  `open_until` / `opened_at` (set while open), and `probe_expires_at` (the
+  half-open probe in flight). No row means closed.
+
+## AI attempts
+
+Migration `0022_ai_attempts.sql`. Behavior: [ai-attempts.md](ai-attempts.md).
+
+- `ai_attempts` has at most one row per ticket (`ticket_id` is unique): `state`
+  (`processing`, `suggestion_ready`, `handed_off`, `cancelled`), `outcome`
+  (stable code, set exactly for `handed_off` and `cancelled`), `language`
+  (`en`/`de`, the requester's language at submission), `input` (the minimized
+  intake snapshot as JSON: category, subject, description, visible answers,
+  and the intake screenshots with their SHA-256), the configuration it was
+  created under (`provider`, `model`, `credential_set_at`), the suggestion
+  (`explanation`, `steps` as a JSON array, set exactly for `suggestion_ready`),
+  `usage_id` (the guarded call in `ai_usage`, `ON DELETE SET NULL`),
+  `created_at`, `deadline_at`, the worker lease (`claimed_until`, `claims`),
+  and `finished_at` (set exactly when not `processing`).
+- A trigger keeps the history immutable: `id`, `ticket_id`, `language`,
+  `input`, `provider`, `model`, `credential_set_at`, `created_at`, and
+  `deadline_at` never change; a row that left `processing` never changes again
+  (only `usage_id` may become NULL); rows cannot be deleted
+  (`restrict_violation`).
+- Indexes: a partial index on `processing` attempts by `created_at`, and
+  `tickets_ai_processing_idx` on `tickets (created_at)` for status
+  `ai_processing` (the deadline sweep).
+
+## AI decisions
+
+Migration `0023_ai_decisions.sql`. Behavior: [ai-decisions.md](ai-decisions.md).
+
+- No new table. The requester's decision is the `ai_solved` or `ai_not_solved`
+  row in `ticket_events`: actor = requester, `created_at` = decision time,
+  `payload.attempt_id` = the `ai_attempts` row it answered. `skip_ai` events
+  carry `payload.attempt_id` too.
+- `ticket_events_one_ai_decision`: unique partial index on `ticket_id` for
+  `event_type IN ('ai_solved', 'ai_not_solved')`. A ticket has at most one
+  decision.
+- `ticket_events_ai_outcome_idx`: partial index on `created_at` for the AI
+  outcome events (`ai_solved`, `ai_not_solved`, `skip_ai`, `ai_failed`), for
+  the Admin statistics.
+- `check_ticket_update()` (the `tickets_lifecycle_guard` trigger of migration
+  `0008`) is replaced with one more rule: a row whose status is `ai_solved`
+  cannot change in any column (`restrict_violation`).
+
+## Admin submission view
+
+Migration `0024_admin_submissions.sql`. Behavior:
+[admin-submissions.md](admin-submissions.md).
+
+- No new table or column. `tickets_submitted_idx` is a partial index on
+  `tickets (created_at, id)` for every status but `draft`: the newest-first
+  order and cursor of `GET /api/admin/submissions`.
+
+## Operational request correlation
+
+Migration `0025_request_correlation.sql` adds nullable `ticket_events.request_id`
+(UUID). Event writers bind the current request or job correlation ID when
+available. The AI worker and sweeper read the originating submission event,
+the notification outbox reads its source event, and auto-close reads the latest
+proposal event under the ticket lock. Legacy events retain NULL. Request IDs
+are operational metadata and are not returned in ticket event API payloads.
+
+## Audit events
+
+Migration `0026_audit_events.sql`. Behavior and the list of actions:
+[audit.md](audit.md).
+
+- `audit_events` gains `request_id` (UUID, the same correlation ID and type as
+  `ticket_events.request_id` of migration `0025`: the request that wrote the
+  event, or the originating request of the job that wrote it; NULL only where
+  no correlation ID exists), the actor snapshot `actor_username`, `actor_role`, `actor_team_id`,
+  `actor_service` (the named identity when no account acts),
+  `subject_username`, `resource_type`, `resource_id`, and `ticket_id` (no
+  foreign keys on team or ticket: history outlives them).
+  `audit_events_actor_identity` requires exactly one of `actor_account_id` and
+  `actor_service`.
+- `audit_events_fill` (`BEFORE INSERT`) fills the actor snapshot from
+  `accounts` and `team_memberships`, the subject's username, and the resource
+  (`audit_resource_of(event_type, subject, metadata)`).
+- `ticket_events_audit` (`AFTER INSERT ON ticket_events`) writes the mirror
+  event `ticket_<event_type>` in the same transaction, with
+  `audit_ticket_metadata(event)`: an allow-list of payload keys, the statuses,
+  and per-event additions, and copies the ticket event's `request_id`. Background ticket events get their service from
+  `audit_ticket_service`.
+- `audit_events_guard` replaces the UPDATE/DELETE guard: both raise
+  `restrict_violation`, except the one DELETE inside
+  `audit_retention_purge(cutoff, admin)` and the one UPDATE inside
+  `audit_anonymize_account(account, admin)`, recognised by the call stack
+  (`PG_CONTEXT`) and re-checked per row (only events older than
+  `audit_retention_floor()`, 30 days, and never `audit_retention_purged`; only
+  username snapshots to NULL and the `ip` metadata key). `admin` must be an
+  active Admin account or NULL (`audit_require_admin`). Both functions append
+  their own event. TRUNCATE stays rejected. The limit of this guard (the
+  owning role can run DDL) is described in
+  [audit.md](audit.md#append-only-retention-and-anonymization).
+- Indexes: `(actor_account_id, created_at, id)`, `(event_type, created_at, id)`,
+  `(ticket_id, created_at, id)`, `(resource_type, resource_id, created_at, id)`,
+  and `request_id`, besides the existing `(created_at, id)`.
+- Additional `audit_events.event_type` values: `ticket_*` (one per ticket event
+  type), `ai_solved_change_denied`, `ticket_reopen_denied`,
+  `ticket_cancel_denied`, `invitation_rejected`, `setup_rejected`,
+  `audit_exported`, `audit_retention_purged`, `audit_account_anonymized`.
+
+## Data retention
+
+Migration `0028_data_retention.sql`. Behavior: [retention.md](retention.md).
+
+- `retention_settings` has exactly one row (inserted by the migration):
+  `draft_days`, `screenshot_days`, `ai_content_days`, `ticket_content_days`
+  (each NULL or 1 to 3,650), `audit_days` (NULL or 30 to 3,650), `automatic`
+  (default false), `version` (bumped by every save; previews are bound to
+  it), `updated_at`, `updated_by`. NULL means keep; every period starts NULL.
+- `retention_runs`: one application of the policy. `requested_by` (NULL for an
+  automatic run), `request_id`, `state` (`pending`, `completed`), `as_of` (the
+  clock), a snapshot of the five periods, `counts` (JSON: `drafts`,
+  `screenshots`, `ai_content`, `ticket_content`, `audit_events`),
+  `attempts` and `next_attempt_at` (the backoff while expired rows are held
+  by other transactions), `created_at`, `finished_at` (set exactly when
+  `completed`). A unique partial index allows one `pending` run.
+  `retention_runs_guard`: `as_of` is never in the future, a run starts
+  `pending` with empty counts, its snapshot never changes, a completed run
+  never changes, and runs are never deleted. `retention_runs_audit` writes
+  `retention_run_started` on insert and `retention_run_completed` on
+  completion.
+- `tickets.content_purged_at`, `ai_attempts.content_purged_at`: set when
+  retention removed the content. They change only on the retention path.
+- `accounts.anonymized_at`, with `accounts_anonymized_inactive`: an anonymized
+  account is never active. `accounts_username_reserved` (`NOT VALID`): only an
+  anonymized account has a username starting with `anonymized-`.
+- `screenshot_files_lock_key()`: the advisory lock key a backup holds to defer
+  file deletions ([retention.md](retention.md#backups)).
+- `retention_marker()` is `—`, the text that replaces removed content.
+  `ticket_final_at(tickets)` is when a ticket reached its current status (the
+  latest event with that `to_status`, else `updated_at`): the retention clock.
+- `retention_redact_payload(jsonb)` sets the free-text keys of a ticket event
+  payload (`reason`, `summary`) to the marker.
+- `retention_delete_screenshots(ticket, run, account)`,
+  `retention_purge_ai(ticket, run, account)`,
+  `retention_purge_ticket(ticket, run, account)` are the only ways past the
+  immutability triggers. Each calls `retention_ticket_due(ticket, category,
+  run, account)` first: it locks the ticket and requires a pending run whose
+  snapshot has a period for the category and for whose clock the ticket has
+  expired now, or the ticket's anonymized requester; otherwise `42501` or no
+  change. `retention_done()` adds the removal to the run's counts or writes
+  `retention_account_content_removed`. `check_ticket_update()`, `check_intake_snapshot()`,
+  `check_screenshot_frozen()`, and `check_ai_attempt_change()` are replaced,
+  and `ticket_messages` / `ticket_events` get their own guards
+  (`check_ticket_message_change()`, `check_ticket_event_change()`) instead of
+  the shared `reject_mutation()`. Each recognises the one statement inside its
+  function by the call stack (`retention_path()`, `PG_CONTEXT`) and rechecks
+  the row: a ticket in a final status, content columns only, the marker only.
+  Everything else still raises `restrict_violation`.
+- `tickets_final_idx`: partial index on tickets in a final status.
+- `audit_resource_of()` gains the resource type `retention` for
+  `retention_*` events.
+- `audit_events_guard()`, `audit_retention_purge()`, and
+  `audit_anonymize_account()` of migration `0026` are replaced:
+  `audit_retention_purge(cutoff, admin, max_rows)` is the batched purge (the
+  two-argument form calls it), anonymization also removes `from_expertise` /
+  `to_expertise` from events about the account, and
+  `audit_redact_ticket_text(ticket)` is a third guarded path
+  ([audit.md](audit.md#append-only-retention-and-anonymization)).
+- Additional `audit_events.event_type` values: `retention_settings_updated`,
+  `retention_run_started`, `retention_run_completed`,
+  `personal_data_exported`, `account_anonymized`,
+  `retention_account_content_removed`, `audit_ticket_text_redacted`.

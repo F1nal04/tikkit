@@ -40,8 +40,9 @@ test('identifies the signed-in requester and states that the request is still a 
 test('category validation: errors are linked to fields and conditional fields are required only while visible', async ({ page }) => {
   await open(page)
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'Please correct the highlighted fields.' })).toBeVisible()
-  await expect(page.getByLabel('Category')).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
+  await expect(page.locator('#form-errors')).toContainText('Please correct the highlighted fields.')
+  await expect(page.locator('#form-errors')).toContainText('Category: This field is required.')
   await expect(page.getByLabel('Category')).toHaveAttribute('aria-invalid', 'true')
   await expect(page.getByLabel('Category')).toHaveAccessibleDescription(/This field is required\./)
   await expect(page.getByLabel('Program')).toHaveCount(0)
@@ -52,7 +53,7 @@ test('category validation: errors are linked to fields and conditional fields ar
   await page.getByLabel('Description').fill('It closes on startup.')
   await page.getByLabel('Priority', { exact: true }).selectOption({ label: 'Low' })
   await submitButton(page).click()
-  await expect(page.getByLabel('Program')).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
   await expect(page.getByLabel('Program')).toHaveAccessibleDescription(/Which program is affected\?.*This field is required\./)
 
   // Another category hides the field, and with it the requirement.
@@ -68,7 +69,7 @@ test('a free-text program name replaces the choice list', async ({ page }) => {
   await fillSoftwareTicket(page)
   await page.getByLabel('Program').selectOption({ label: 'Other (type your own answer)' })
   await submitButton(page).click()
-  await expect(page.getByLabel(/Your answer for/)).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
   await page.getByLabel(/Your answer for/).fill('Notepad++')
   await submitButton(page).click()
   await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
@@ -82,7 +83,8 @@ test('a full no-AI submission shows the receipt with the chosen priority and sen
   // Change the category: the program answer is hidden, remembered, and not sent.
   await page.getByLabel('Category').selectOption({ label: 'Network' })
   await expect(page.getByText(/will not be sent: Program/)).toBeVisible()
-  await expect(page.getByText('goes straight to the support team without AI assistance')).toBeVisible()
+  // AI is off here: the form says nothing about AI (the AI flow is covered in ai-step.spec.ts).
+  await expect(page.getByRole('heading', { name: 'AI assistance' })).toHaveCount(0)
   // The draft save itself omits the hidden answer; the stub must not be what strips it.
   await expect.poll(async () => (await drafts(page)).items[0]?.intake.answers).toEqual({})
   await page.getByLabel('Category').selectOption({ label: 'Software' })
@@ -109,8 +111,32 @@ test('the German interface shows the same form', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Neues Ticket')
   await expect(page.getByLabel('Kategorie')).toBeVisible()
   await page.getByRole('button', { name: 'Anfrage absenden' }).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'Bitte korrigieren Sie die markierten Felder.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('Bitte korrigieren Sie die markierten Felder.')
   await expect(page.getByText('Dieses Feld ist erforderlich.').first()).toBeVisible()
+})
+
+test('a refused autosave (429) keeps the input and saves again on its own', async ({ page }) => {
+  await open(page)
+  let refused = 0
+  await page.route('**/api/ticket-drafts', async (route) => {
+    if (route.request().method() === 'POST' && refused === 0) {
+      refused++
+      return route.fulfill({
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '3' },
+        body: JSON.stringify({ error: { code: 'rate_limited', message: 'Too many attempts; try again later.' }, request_id: 'x' }),
+      })
+    }
+    return route.fallback()
+  })
+  await page.getByLabel('Subject').fill('Printer jams')
+  await page.getByLabel('Description').fill('Paper stuck in tray 2.')
+  await expect(page.getByRole('status').filter({ hasText: 'could not be saved' })).toBeVisible()
+  await expect(page.getByLabel('Description')).toHaveValue('Paper stuck in tray 2.')
+  // No further typing: the retry saves the same input.
+  await expect(page.getByText(/Draft saved at/)).toBeVisible({ timeout: 15_000 })
+  expect(refused).toBe(1)
+  await expect.poll(async () => (await drafts(page)).items[0]?.intake.description).toBe('Paper stuck in tray 2.')
 })
 
 test('draft recovery: autosaves, resumes after a reload, and keeps text when the category was archived', async ({ page }) => {
@@ -274,7 +300,7 @@ test('a failed submission retries with the same key, and changed input gets a ne
     await route.fallback()
   })
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'The service is unavailable. Please try again later.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('The service is unavailable. Please try again later.')
   await submitButton(page).click()
   await expect(page.getByRole('heading', { name: 'Request sent' })).toBeVisible()
   expect(keys).toHaveLength(2)
@@ -298,7 +324,7 @@ test('a failed submission retries with the same key, and changed input gets a ne
     await route.fallback()
   })
   await submitButton(page).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'The service is unavailable. Please try again later.' })).toBeVisible()
+  await expect(page.locator('#form-errors')).toContainText('The service is unavailable. Please try again later.')
   const saved = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes('/api/ticket-drafts/') && r.ok())
   await page.getByLabel('Subject').fill('Word crashes again')
   await saved
@@ -323,7 +349,7 @@ test('a server screenshot error is attached to the control and focused', async (
   )
   await submitButton(page).click()
   const input = page.getByLabel('Add screenshots')
-  await expect(input).toBeFocused()
+  await expect(page.locator('#form-errors')).toBeFocused()
   await expect(input).toHaveAttribute('aria-invalid', 'true')
   await expect(input).toHaveAccessibleDescription(/This value is not valid/)
   await expect(page.getByLabel('Subject')).toHaveValue('Word crashes')

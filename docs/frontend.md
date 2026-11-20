@@ -99,8 +99,13 @@ controls.
   visible form differs from it (answers resume could not restore) the visible intake is written
   first. `attemptFor` keeps one idempotency key per identical request and issues a new one when the
   input changed; the submit button and handler ignore clicks while a request runs.
-- The receipt shows the reference, status, category, and the priority the requester chose; the
-  full ticket view is `/tickets/{id}`.
+- **AI:** with `GET /api/ai/policy` reporting AI on, the form discloses what is sent to the
+  external AI provider (or that the category bypasses AI) and offers a skip checkbox only when
+  the policy allows it; with AI off it says nothing about AI
+  ([ai-requester-step.md](ai-requester-step.md)).
+- A submission routed to AI goes to `/tickets/{id}`, where the AI step continues. Otherwise the
+  receipt shows the reference, status, category, and the priority the requester chose, and why
+  no AI suggestion was created when AI is on; the full ticket view is `/tickets/{id}`.
 
 ## Requester history and detail
 
@@ -117,16 +122,72 @@ separate workflow. All authored text is escaped plain
 text with preserved line breaks. Images use only authorized screenshot ID URLs;
 there are no edit/delete controls. AI-solved history is permanently read-only.
 
+The AI step is the first section of this page (`AiStep.svelte`, state logic in
+`src/lib/aiStep.ts`): the wait, the one stored suggestion with "Solved" and
+"Still need help", the support receipts, and the final AI-solved receipt.
+While that step is undecided the page polls the ticket's change marker every 3
+seconds and stops once it is settled. Details:
+[ai-requester-step.md](ai-requester-step.md).
+
 Actions are affordances from current policy/state; Rust's lifecycle remains the
 authority. Resolution decisions send the displayed proposal version, rejection
 is independent of the reopen toggle, deadlines and timeout closure are explicit,
 and cancellation requires a reason. After `403`/`409`, refresh the detail/policy
 and announce the conflict without a success claim or clearing unsent input.
-Use Refresh to discover reassignment, transfers, messages, or policy changes.
+Use Refresh to discover reassignment, transfers, messages, or policy changes
+(outside the AI step, this page does not poll).
 Reply retries reuse the idempotency key for identical content and screenshots;
 changed input gets a new key. Uploads finish before sending. Language changes
 keep mounted input. A reply that becomes unavailable is retained, disabled,
 until the current lifecycle permits sending again.
+
+## Admin submission view (`/admin/submissions`)
+
+Every submitted ticket for Admins, with filters for category, status,
+resolution source, AI outcome, and submission dates (inclusive UTC days) kept
+in the address bar (`src/lib/submissions.ts` parses them; unknown values fall
+back to "all"). A row opens `/admin/submissions/{id}`: overview, frozen intake
+and screenshots, the AI attempt with its suggestion as plain text in its own
+`lang`, the requester's decision and its confirmation event, and every ticket
+event. Both pages only read: there are no buttons besides the filter form, no
+polling, and no action endpoint. An outcome notice says whether a suggestion
+was confirmed (`solved`, final) or is unconfirmed, pending, abandoned, failed,
+skipped, or escalated. Tickets that are help desk work link to the staff view
+(`/queue/{id}`); AI-stage and AI-solved records do not. Details:
+[admin-submissions.md](admin-submissions.md).
+
+## Admin audit log (`/admin/audit`)
+
+The audit log for Admins, newest first in pages of 50, with filters for actor
+(username), action, ticket number, request ID, and dates (inclusive UTC days)
+kept in the address bar (`src/lib/audit.ts`; values the API would reject fall
+back to no filter). Each row shows the time (UTC), the action identifier as it
+is stored (identifiers are not translated), the actor with the role and team it
+had at the time or the service name, what the event is about, the request ID,
+and the metadata as plain JSON text behind a disclosure. Links in a row filter
+by that actor, ticket, resource, or request; a ticket also links to its
+submission. The page only reads. "Export as CSV" posts the current filters to
+`POST /api/admin/audit/export` and saves the file in the browser; the server
+bounds it and records the export. Details: [audit.md](audit.md).
+
+## Admin data retention (`/admin/retention`)
+
+Retention periods, the deletion preview, runs, and the personal data of one
+account (`src/lib/retention.ts`). An empty period means "keep"; a typo is sent
+as an out-of-range value so it can never silently mean "keep". "Preview
+deletion" shows the server's counts for the periods as typed; editing a period
+or saving clears it. A run uses the saved periods only and is bound to a
+preview of them: the page asks to save and then to preview first, sends the
+preview's token and clock with the confirmation, and the "Delete now" button
+stays disabled until the Admin types `DELETE` (the API checks the same word;
+it is not translated). Saving with automatic deletion on needs a preview of
+the typed periods and the same word. If the stored periods changed meanwhile
+(`retention_preview_stale`), nothing happens and the page reloads them. Export and anonymization of an account need its username typed, and the
+anonymize button is only offered for a deactivated account. Ticket pages show a
+notice when `content_removed_at` (or `ai.content_removed`) is set, a note
+instead of previews for `removed_screenshots`, and no reopen button once the
+content was removed. Details:
+[retention.md](retention.md).
 
 ## Notifications
 
@@ -137,3 +198,10 @@ read", and "Load more". Text is already localized by the API, in the recipient's
 account language. Notification preferences (email, in-app) are on `/profile`.
 Opening a link while signed out goes through `/login?next=…` and back; the ticket
 page then applies the current access rules. See [notifications.md](notifications.md).
+
+## Accessibility
+
+Keyboard operation, the axe scan, live regions, and the screen-reader checklist
+are in [accessibility.md](accessibility.md). Shared controls
+(`Field`, `Alert`, `Dialog`, `Table`) carry the labels, error summary, and
+focus behaviour those checks rely on.

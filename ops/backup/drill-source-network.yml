@@ -1,0 +1,13 @@
+# Drill only (ops/backup/drill.sh): the source stack gets its own fixed `app` subnet so it can
+# run beside another Tikkit stack and the restore project, all of which would otherwise claim the
+# production file's 172.30.0.0/24. TRUSTED_PROXIES follows the subnet, as in production.
+services:
+  api:
+    environment:
+      TRUSTED_PROXIES: ${DRILL_APP_SUBNET:-10.99.47.0/24}
+
+networks:
+  app:
+    ipam:
+      config: !override
+        - subnet: ${DRILL_APP_SUBNET:-10.99.47.0/24}

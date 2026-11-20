@@ -75,6 +75,153 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/accounts/{id}/anonymize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Removes the identity of a deactivated account for good (Admin only). The
+         *     account ID, role, and every ticket, event, and statistic that refers to it
+         *     stay; see docs/retention.md for the exact policy. The account must be
+         *     deactivated first, so the last active Admin and an active team's lead can
+         *     never be anonymized. Irreversible. Writes `account_anonymized`.
+         */
+        post: operations["anonymize_account"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/accounts/{id}/personal-data/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exports the personal data of one account as a JSON document (Admin only).
+         *     The typed `username` must be the account's. Bounded: each section holds at
+         *     most 10,000 rows and `truncated` names the sections that were cut, and the
+         *     whole export at most 16 MiB (`413 export_too_large` otherwise). Never
+         *     contains credentials, hashes, internal notes, or other people's data; see
+         *     docs/retention.md for the exact contents. Writes `personal_data_exported`.
+         */
+        post: operations["export_personal_data"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI outcome statistics (Admin only): solved, escalated after a suggestion,
+         *     skipped, and failed. No ticket content.
+         */
+        get: operations["outcomes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI attempts and their outcomes, newest first (Admin only). This is the only
+         *     list that contains AI-solved records and tickets still in an AI stage.
+         */
+        get: operations["records"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The audit log, newest first (Admin only). Searching is a pure read: it
+         *     writes nothing, so reviewing history leaves no trace in it.
+         */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The action identifiers that occur in the log, for the search filter (Admin only). */
+        get: operations["actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exports the matching events as CSV, newest first (Admin only). Bounded: at
+         *     most 10,000 rows; `x-export-truncated: true` says a longer result was cut
+         *     (narrow the filters or the time range). Cells that a spreadsheet would run
+         *     as a formula are neutralized. The export itself is audited
+         *     (`audit_exported`: who, the filters, the row count).
+         */
+        post: operations["export"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/notifications": {
         parameters: {
             query?: never;
@@ -101,10 +248,126 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Re-queues every `failed` row. Rows keep their idempotency key, so a message
-         *     the relay already accepted is never sent twice.
+         * Re-queues every `failed` row. A durable delivery receipt suppresses the
+         *     resend. A relay acceptance without a committed receipt may be delivered again.
          */
         post: operations["retry_failed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finds one account by username and counts what is stored about it (Admin
+         *     only). Read-only; the preview before an export or anonymization.
+         */
+        get: operations["personal_data_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reports/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["export_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The retention policy and the latest runs (Admin only). */
+        get: operations["get_retention"];
+        /**
+         * Replaces the retention policy (Admin only). Saving deletes nothing unless
+         *     `automatic` is on; then the worker applies the policy within a day.
+         */
+        put: operations["put_retention"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dry run (Admin only): exact counts per category for the given periods,
+         *     saved or not. Changes nothing and writes no audit event.
+         */
+        post: operations["preview_retention"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Starts applying the saved policy as previewed (Admin only). The preview must
+         *     be of the saved periods, made under the current settings, and at most an
+         *     hour old; otherwise `409 retention_preview_stale` and nothing starts. The
+         *     retention worker does the work in batches; `GET /api/admin/retention` shows
+         *     its progress.
+         */
+        post: operations["start_retention_run"];
         delete?: never;
         options?: never;
         head?: never;
@@ -120,6 +383,70 @@ export interface paths {
         };
         get: operations["settings"];
         put: operations["update_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every submitted ticket, newest first (Admin only): AI-stage and AI-solved
+         *     records, escalated tickets, operator resolutions, and cancellations. Drafts
+         *     are not submissions and never listed. Filters apply before the page limit.
+         */
+        get: operations["list_submissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/submissions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One submission with its frozen intake, AI attempt (suggestion, internal
+         *     outcome code, decision and confirmation event), and every event (Admin
+         *     only). Read-only: there is no action here, and AI-solved records stay final.
+         */
+        get: operations["submission_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The effective AI policy for new tickets, for any signed-in account. Read-only:
+         *     it reveals whether AI applies and whether skipping is allowed, and nothing
+         *     about the provider. Category exemptions ("Skip AI automatically") apply on
+         *     top of this and are decided by Rust at submission.
+         */
+        get: operations["policy"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -847,6 +1174,116 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Masked AI configuration (Admin only). */
+        get: operations["get_ai"];
+        /**
+         * Selects the provider and model and enables or disables AI (Admin only).
+         *     Keys are stored separately per provider; changing the selection never moves
+         *     a key to another provider. Disabling takes effect for the next submission.
+         */
+        put: operations["put_ai"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/credentials/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Stores or replaces one provider's API key (Admin only). The key is
+         *     encrypted, bound to this provider, and never returned.
+         */
+        put: operations["put_credential"];
+        post?: never;
+        /**
+         * Deletes one provider's API key (Admin only). Removing the selected
+         *     provider's key also disables AI, so the next submission goes to operators.
+         */
+        delete: operations["delete_credential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** AI budgets and limits (Admin only). */
+        get: operations["get_limits"];
+        /**
+         * Replaces the AI budgets and limits (Admin only). They apply to the next
+         *     provider call. They never affect whether tickets can be submitted: a call
+         *     that is refused sends its ticket to human support.
+         */
+        put: operations["put_limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tests the selected provider and model with the stored key (Admin only):
+         *     the key must authenticate and the model must accept image input. The
+         *     outcome is stored as a stable code; provider responses are never echoed.
+         */
+        post: operations["test_ai"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI usage and failure counts (Admin only): provider calls, refusals, failures
+         *     by stable code, tokens as reported by each provider, the circuit breaker
+         *     state, and the current budget window. No ticket content and no cost figures.
+         */
+        get: operations["usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/smtp": {
         parameters: {
             query?: never;
@@ -1076,6 +1513,11 @@ export interface paths {
         /**
          * Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
          *     return 409; policy is read again by the lifecycle inside the transaction.
+         * @description The AI decisions (`ai_solved`, `ai_not_solved`, `skip_ai`) are idempotent:
+         *     repeating the decision that was committed for the ticket returns `200` with
+         *     the ticket's current status and writes nothing. Any other AI decision on a
+         *     ticket that already left that stage is `409 conflict` with the committed
+         *     status in `error.details.status`. See docs/ai-decisions.md.
          */
         post: operations["requester_action"];
         delete?: never;
@@ -1234,7 +1676,14 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /** @description The typed confirmation of a request about one account. */
+        AccountConfirmation: {
+            /** @description The account's current username, typed by the Admin. */
+            username: string;
+        };
         AccountSummary: {
+            /** @description The account's identity was removed; it cannot be reactivated. */
+            anonymized: boolean;
             /** Format: date-time */
             created_at: string;
             display_name: string;
@@ -1252,6 +1701,446 @@ export interface components {
         };
         ActionResult: {
             status: components["schemas"]["TicketStatus"];
+        };
+        /**
+         * @description Where a ticket's single AI attempt stands.
+         * @enum {string}
+         */
+        AiAttemptState: "processing" | "suggestion_ready" | "handed_off" | "cancelled";
+        /** @description The organization budgets in the current rolling window. */
+        AiBudgetWindow: {
+            /**
+             * Format: int64
+             * @description Tokens counted against the token budget: provider-reported where the
+             *     provider reported them, Tikkit's admission estimate otherwise.
+             */
+            budget_tokens: number;
+            /**
+             * Format: int64
+             * @description The part of `budget_tokens` that is an estimate, not a provider figure.
+             */
+            estimated_tokens: number;
+            /**
+             * Format: int64
+             * @description Provider calls in flight right now.
+             */
+            in_flight: number;
+            /** Format: int32 */
+            max_concurrency: number;
+            /** Format: int32 */
+            request_limit: number | null;
+            /**
+             * Format: int64
+             * @description Provider calls counted against the request budget.
+             */
+            requests: number;
+            /** Format: int64 */
+            token_limit: number | null;
+            /** Format: int32 */
+            window_hours: number;
+        };
+        AiCircuit: {
+            /** Format: int32 */
+            consecutive_failures: number;
+            /** Format: date-time */
+            open_until: string | null;
+            state: components["schemas"]["AiCircuitState"];
+        };
+        /** @enum {string} */
+        AiCircuitState: "closed" | "open" | "half_open";
+        /** @description The last connection test of the selected provider and model. */
+        AiConnection: {
+            /** @description Stable code of the failure (`ai_provider_auth_failed`, ...), if it failed. */
+            error: string | null;
+            status: components["schemas"]["AiConnectionStatus"];
+            /** Format: date-time */
+            tested_at: string | null;
+        };
+        /** @enum {string} */
+        AiConnectionStatus: "untested" | "ok" | "failed";
+        /** @description What an Admin may know about a stored key. */
+        AiCredentialInfo: {
+            /** @description Last four characters of the key, or empty for a short key. */
+            hint: string;
+            /** @description `false`: the key does not decrypt with the current `ENCRYPTION_KEY`. Enter it again. */
+            readable: boolean;
+            /** Format: date-time */
+            set_at: string;
+            /** Format: uuid */
+            set_by: string | null;
+            set_by_username: string | null;
+        };
+        AiCredentialWrite: {
+            /** @description 8 to 512 printable ASCII characters without spaces. Write-only. */
+            api_key: string;
+        };
+        /**
+         * @description The requester's explicit decision on the stored suggestion.
+         * @enum {string}
+         */
+        AiDecision: "solved" | "not_solved";
+        /**
+         * @description Mutually exclusive AI reporting buckets, derived from the Admin attempt
+         *     outcome and the recorded submission route.
+         * @enum {string}
+         */
+        AiDisposition: "solved" | "not_solved" | "provider_failed" | "failed" | "missing_attempt" | "policy_withdrawn" | "processing" | "awaiting_decision" | "cancelled" | "category_exempt" | "ai_disabled" | "requester_skip" | "unknown";
+        AiFailureCount: {
+            /** Format: int64 */
+            count: number;
+            /** @description Stable attempt outcome code (docs/ai-attempts.md). */
+            outcome: string;
+        };
+        /**
+         * @description Why a ticket went to the help desk without a suggestion.
+         * @enum {string}
+         */
+        AiHandoffReason: "timeout" | "requester_skip" | "ai_unavailable" | "ai_failed";
+        /** @description Budgets and operational limits for AI provider calls. */
+        AiLimits: {
+            /**
+             * Format: int32
+             * @description Seconds the circuit stays open before one probe call is allowed (1 to 86400).
+             */
+            breaker_cooldown_seconds: number;
+            /**
+             * Format: int32
+             * @description Consecutive provider failures that open the circuit breaker (1 to 100).
+             */
+            breaker_failure_threshold: number;
+            /**
+             * Format: int32
+             * @description Seconds a call may wait for a free slot before it is refused (0 to 300).
+             */
+            concurrency_wait_seconds: number;
+            /**
+             * Format: int32
+             * @description Provider calls in flight at once (1 to 64).
+             */
+            max_concurrency: number;
+            /**
+             * Format: int32
+             * @description Provider calls per window for the whole organization. `null`: unlimited. 0: none.
+             */
+            org_request_limit: number | null;
+            /**
+             * Format: int64
+             * @description Tokens per window for the whole organization. `null`: unlimited.
+             */
+            org_token_limit: number | null;
+            /**
+             * Format: int32
+             * @description Days usage records are kept (1 to 3650, and never shorter than the window).
+             */
+            retention_days: number;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * Format: int32
+             * @description Provider calls per window for one requester. `null`: unlimited.
+             */
+            user_request_limit: number | null;
+            /**
+             * Format: int64
+             * @description Tokens per window for one requester. `null`: unlimited.
+             */
+            user_token_limit: number | null;
+            /**
+             * Format: int32
+             * @description Budgets count over a rolling window of this many hours (1 to 744).
+             */
+            window_hours: number;
+        };
+        /** @description Every field is required; `null` on a `*_limit` removes that limit. */
+        AiLimitsWrite: {
+            /** Format: int64 */
+            breaker_cooldown_seconds: number;
+            /** Format: int64 */
+            breaker_failure_threshold: number;
+            /** Format: int64 */
+            concurrency_wait_seconds: number;
+            /** Format: int64 */
+            max_concurrency: number;
+            /** Format: int64 */
+            org_request_limit: number | null;
+            /** Format: int64 */
+            org_token_limit: number | null;
+            /** Format: int64 */
+            retention_days: number;
+            /** Format: int64 */
+            user_request_limit: number | null;
+            /** Format: int64 */
+            user_token_limit: number | null;
+            /** Format: int64 */
+            window_hours: number;
+        };
+        /** @description A model the adapters are known to work with. */
+        AiModelInfo: {
+            id: string;
+            /** @description Whether screenshots can be sent to this model as image inputs. */
+            image_input: boolean;
+        };
+        AiOutcomeCount: {
+            /** Format: int64 */
+            count: number;
+            /**
+             * @description Stable code: an adapter failure kind (`timeout`, `rate_limited`, ...),
+             *     `abandoned`, or a refusal (`budget_org_requests`, `circuit_open`, ...).
+             */
+            outcome: string;
+            status: components["schemas"]["AiOutcomeStatus"];
+        };
+        /**
+         * @description `ai_outcome` filter: an [`AiRecordOutcome`], or `none` for submissions that
+         *     never had an AI attempt.
+         * @enum {string}
+         */
+        AiOutcomeFilter: "none" | "processing" | "awaiting_decision" | "solved" | "not_solved" | "skipped" | "failed" | "cancelled";
+        /**
+         * @description AI outcome counts. Period counts come from the immutable ticket events, so a
+         *     denied or repeated request never moves them.
+         */
+        AiOutcomeStats: {
+            /**
+             * Format: int64
+             * @description Tickets with an undecided suggestion right now (not bound to the period).
+             */
+            awaiting_decision: number;
+            /**
+             * Format: int64
+             * @description Cancelled by the requester during an AI stage.
+             */
+            cancelled: number;
+            /**
+             * Format: int64
+             * @description Submissions that bypassed AI because their category is exempt.
+             */
+            category_exempt: number;
+            /** Format: int64 */
+            days: number;
+            /**
+             * Format: int64
+             * @description Handed off without a suggestion (`ai_failed` events).
+             */
+            failed: number;
+            /** @description `failed` by attempt outcome code, most frequent first. */
+            failures: components["schemas"]["AiFailureCount"][];
+            /**
+             * Format: int64
+             * @description Escalated after a suggestion (`ai_not_solved` events).
+             */
+            not_solved: number;
+            /**
+             * Format: int64
+             * @description Tickets waiting for a suggestion right now (not bound to the period).
+             */
+            processing: number;
+            /**
+             * Format: int64
+             * @description Requester skips: while processing (`skip_ai`) or at submission.
+             */
+            skipped: number;
+            /**
+             * Format: int64
+             * @description Requester-confirmed AI resolutions (`ai_solved` events).
+             */
+            solved: number;
+        };
+        /** @enum {string} */
+        AiOutcomeStatus: "failed" | "refused";
+        /** @description What any signed-in account may know: the effective AI policy for new tickets. */
+        AiPolicy: {
+            /** @description New tickets in non-exempt categories get an AI suggestion before human support. */
+            ai_assistance: boolean;
+            /**
+             * @description The requester may skip AI. Always `false` while `ai_assistance` is `false`.
+             *     Only an Admin can change the underlying toggle.
+             */
+            requester_skip_allowed: boolean;
+        };
+        /**
+         * @description The first-release providers. Nothing else is selectable or storable.
+         * @enum {string}
+         */
+        AiProvider: "openai" | "gemini" | "anthropic";
+        AiProviderState: {
+            credential: null | components["schemas"]["AiCredentialInfo"];
+            /** @description The models that can be selected for this provider. Nothing else is accepted. */
+            models: components["schemas"]["AiModelInfo"][];
+            provider: components["schemas"]["AiProvider"];
+        };
+        AiProviderUsage: {
+            circuit: components["schemas"]["AiCircuit"];
+            provider: components["schemas"]["AiProvider"];
+            usage: components["schemas"]["AiUsageCounts"];
+        };
+        /** @description One ticket that went through AI, for Admins. */
+        AiRecord: {
+            attempt_state: components["schemas"]["AiAttemptState"];
+            /**
+             * Format: date-time
+             * @description When the attempt was created (submission).
+             */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When the requester decided (`solved`: the confirmation time).
+             */
+            decided_at: string | null;
+            /**
+             * Format: uuid
+             * @description The attempt.
+             */
+            id: string;
+            model: string;
+            outcome: components["schemas"]["AiRecordOutcome"];
+            /** @description Internal stable code of why there is no suggestion (docs/ai-attempts.md). */
+            outcome_code: string | null;
+            provider: string;
+            /** Format: int64 */
+            reference: number;
+            requester: components["schemas"]["TicketRequester"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /**
+             * Format: uuid
+             * @description Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion.
+             */
+            ticket_id: string;
+        };
+        /**
+         * @description What became of a ticket's AI attempt.
+         * @enum {string}
+         */
+        AiRecordOutcome: "processing" | "awaiting_decision" | "solved" | "not_solved" | "skipped" | "failed" | "cancelled";
+        /** @description Masked configuration. No key, ciphertext, or key length is ever included. */
+        AiSettings: {
+            /** @description The organization toggle "Allow requester to skip AI" (`PUT /api/admin/settings`). */
+            allow_requester_skip: boolean;
+            connection: components["schemas"]["AiConnection"];
+            enabled: boolean;
+            model: string | null;
+            provider: null | components["schemas"]["AiProvider"];
+            /** @description Every supported provider, in a fixed order. */
+            providers: components["schemas"]["AiProviderState"][];
+            /**
+             * @description Whether the stored configuration is usable. With `ready`, new tickets
+             *     in non-exempt categories get an AI suggestion before human support.
+             */
+            status: components["schemas"]["AiStatus"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AiSettingsWrite: {
+            /** @description Enabling needs a provider, a model, and a readable stored key for that provider. */
+            enabled: boolean;
+            /** @description One of the selected provider's `models` that accepts image input. */
+            model?: string | null;
+            provider?: null | components["schemas"]["AiProvider"];
+        };
+        /**
+         * @description Why AI can or cannot run with the stored configuration.
+         * @enum {string}
+         */
+        AiStatus: "disabled" | "credential_missing" | "credential_unreadable" | "model_unsupported" | "ready";
+        /** @description The single AI suggestion of a ticket. */
+        AiSuggestion: {
+            explanation: string;
+            /** @description Ordered steps, 1 to 12. */
+            steps: string[];
+        };
+        AiTestResult: {
+            /** @description The key authenticated and the model accepts image input. */
+            ok: boolean;
+        };
+        /**
+         * @description Counts over the report period. Token sums are exactly what the provider
+         *     reported; `null` means no call in the period reported that value.
+         */
+        AiUsageCounts: {
+            /** Format: int64 */
+            failed: number;
+            /**
+             * Format: int64
+             * @description Screenshots sent with admitted calls.
+             */
+            images: number;
+            /** Format: int64 */
+            input_tokens: number | null;
+            /** Format: int64 */
+            output_tokens: number | null;
+            /**
+             * Format: int64
+             * @description Stopped by a budget, the circuit breaker, or the concurrency limit
+             *     before any provider call.
+             */
+            refused: number;
+            /**
+             * Format: int64
+             * @description Admitted provider calls (succeeded, failed, or in flight).
+             */
+            requests: number;
+            /** Format: int64 */
+            succeeded: number;
+            /**
+             * Format: int64
+             * @description Sum of provider-reported totals. Not every provider reports a total.
+             */
+            total_tokens: number | null;
+            /**
+             * Format: int64
+             * @description Successful calls for which the provider reported no token count at all.
+             */
+            usage_unreported: number;
+        };
+        /** @description AI usage over the report period, and where the budgets stand right now. */
+        AiUsageReport: {
+            /** Format: int32 */
+            days: number;
+            /** @description Failed and refused calls by stable outcome code, most frequent first. */
+            outcomes: components["schemas"]["AiOutcomeCount"][];
+            /** @description Every supported provider, in a fixed order. */
+            providers: components["schemas"]["AiProviderUsage"][];
+            totals: components["schemas"]["AiUsageCounts"];
+            window: components["schemas"]["AiBudgetWindow"];
+        };
+        AiVolume: {
+            /** Format: int64 */
+            count: number;
+            outcome: components["schemas"]["AiDisposition"];
+        };
+        /** @description What an anonymization removed. Counts only. */
+        AnonymizationResult: {
+            /** Format: uuid */
+            account_id: string;
+            /**
+             * Format: int64
+             * @description Audit events whose username snapshot or IP address was removed.
+             */
+            audit_events: number;
+            /** Format: int64 */
+            drafts: number;
+            /** Format: int64 */
+            notifications: number;
+            /** Format: int64 */
+            pending_screenshots: number;
+            /** Format: int64 */
+            saved_views: number;
+            /** Format: int64 */
+            sessions: number;
+            /** @description Content removed from the account's own final tickets, if requested. */
+            ticket_content: components["schemas"]["RetentionCounts"];
+            /** @description The placeholder that replaced the username and display name. */
+            username: string;
+        };
+        AnonymizeAccount: {
+            /**
+             * @description Also remove the content of the account's own tickets that are in a
+             *     final status now (as ticket content retention would later).
+             */
+            purge_ticket_content?: boolean;
+            /** @description The account's current username, typed by the Admin. */
+            username: string;
         };
         AnswerSnapshot: {
             /**
@@ -1328,6 +2217,59 @@ export interface components {
              *     team the caller is not in: further reads are `404`.
              */
             visible: boolean;
+        };
+        AuditAccount: {
+            /** Format: uuid */
+            account_id: string;
+            username: string | null;
+        };
+        AuditActions: {
+            /** @description Every action identifier present in the log, sorted. */
+            actions: string[];
+        };
+        /** @description Who acted, as it was when the event was written. */
+        AuditActor: {
+            /**
+             * Format: uuid
+             * @description `null` when a service acted.
+             */
+            account_id: string | null;
+            role: null | components["schemas"]["Role"];
+            /** @description Set exactly when no account acted: `anonymous` or the background service. */
+            service: string | null;
+            /**
+             * Format: uuid
+             * @description The account's team at the time, if it had one.
+             */
+            team_id: string | null;
+            team_name: string | null;
+            username: string | null;
+        };
+        AuditEvent: {
+            /** @description Stable machine identifier. */
+            action: string;
+            actor: components["schemas"]["AuditActor"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            id: number;
+            /** @description Identifiers, codes, and before/after settings. Never secrets or content. */
+            metadata: Record<string, never>;
+            /**
+             * Format: uuid
+             * @description The request that wrote the event, or that caused the job that wrote it.
+             */
+            request_id: string | null;
+            resource_id: string | null;
+            resource_type: string | null;
+            subject: null | components["schemas"]["AuditAccount"];
+            /** Format: uuid */
+            ticket_id: string | null;
+            /**
+             * Format: int64
+             * @description `null` when the event is not about a ticket.
+             */
+            ticket_reference: number | null;
         };
         /** @enum {string} */
         AuthorKind: "requester" | "staff";
@@ -1467,6 +2409,11 @@ export interface components {
          * @enum {string}
          */
         ClosureReason: "requester_confirmed" | "confirmation_timeout";
+        ClosureVolume: {
+            /** Format: int64 */
+            count: number;
+            resolution: components["schemas"]["SubmissionResolution"];
+        };
         CreateInvitationRequest: {
             /** @description Optional recipient. With SMTP configured the link is emailed there. */
             email?: string | null;
@@ -1494,6 +2441,15 @@ export interface components {
             invitation: components["schemas"]["Invitation"];
             /** @description Single-use acceptance link. Shown only now; only its hash is stored. */
             url: string;
+        };
+        DailyVolume: {
+            /** Format: int64 */
+            count: number;
+            /**
+             * Format: date
+             * @description Calendar date in UTC.
+             */
+            day: string;
         };
         DeliveryFailure: {
             /** Format: int64 */
@@ -1541,17 +2497,24 @@ export interface components {
          * @description Stable machine-readable error codes. Never translated; clients map them to text.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "internal";
+        ErrorCode: "validation_failed" | "invalid_json" | "unknown_field" | "invalid_identifier" | "invalid_query" | "bad_request" | "unsupported_media_type" | "unauthorized" | "invalid_credentials" | "csrf_rejected" | "rate_limited" | "request_timeout" | "setup_already_completed" | "invitation_invalid" | "reset_token_invalid" | "last_active_admin" | "active_team_lead" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "retention_preview_stale" | "export_too_large" | "outbound_disabled" | "restore_mode_blocked" | "smtp_not_configured" | "smtp_auth_failed" | "smtp_tls_failed" | "smtp_network_failed" | "smtp_delivery_failed" | "smtp_credential_unreadable" | "ai_not_configured" | "ai_credential_unreadable" | "ai_provider_auth_failed" | "ai_provider_unreachable" | "ai_provider_rate_limited" | "ai_model_unsupported" | "ai_provider_failed" | "internal";
         ErrorDetails: {
             /** @description Invalid input fields (dotted paths) and their stable error codes. */
             fields: {
                 [key: string]: string[];
             };
+            status?: null | components["schemas"]["TicketStatus"];
         };
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
             /** @description Same value as the `x-request-id` response header. */
             request_id: string;
+        };
+        EventActor: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+            username: string;
         };
         /** @enum {string} */
         FieldKind: "text" | "select";
@@ -1673,6 +2636,13 @@ export interface components {
             id: string;
             name: string;
         };
+        NamedVolume: {
+            /** Format: int64 */
+            count: number;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         NewCategory: {
             /** @description 1-100 characters, unique among active categories. */
             name: string;
@@ -1717,6 +2687,38 @@ export interface components {
             email: boolean;
             in_app: boolean;
         };
+        OperatorTotals: {
+            /** Format: int64 */
+            confirmation_wait_samples: number;
+            /** Format: int64 */
+            first_response_samples: number;
+            /** Format: int64 */
+            initial_closures: number;
+            /** Format: int64 */
+            initial_confirmation_timeout: number;
+            /** Format: int64 */
+            initial_requester_confirmed: number;
+            /** Format: double */
+            mean_first_response_seconds: number | null;
+            /** Format: double */
+            mean_proposal_to_closure_seconds: number | null;
+            /** Format: double */
+            mean_queue_to_closure_seconds: number | null;
+            /** Format: double */
+            mean_queue_to_proposal_seconds: number | null;
+            /** Format: int64 */
+            queued: number;
+            /** Format: int64 */
+            rejected_proposals: number;
+            /** Format: int64 */
+            reopens: number;
+            /** Format: int64 */
+            resolution_samples: number;
+            /** Format: int64 */
+            subsequent_closures: number;
+            /** Format: int64 */
+            time_to_proposal_samples: number;
+        };
         Order: {
             /** @description Every ID of this kind, archived ones included, in the new display order. */
             ids: string[];
@@ -1740,6 +2742,8 @@ export interface components {
         /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_AccountSummary: {
             items: {
+                /** @description The account's identity was removed; it cannot be reactivated. */
+                anonymized: boolean;
                 /** Format: date-time */
                 created_at: string;
                 display_name: string;
@@ -1754,6 +2758,73 @@ export interface components {
                 /** Format: uuid */
                 team_id: string | null;
                 username: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_AiRecord: {
+            items: {
+                attempt_state: components["schemas"]["AiAttemptState"];
+                /**
+                 * Format: date-time
+                 * @description When the attempt was created (submission).
+                 */
+                created_at: string;
+                /**
+                 * Format: date-time
+                 * @description When the requester decided (`solved`: the confirmation time).
+                 */
+                decided_at: string | null;
+                /**
+                 * Format: uuid
+                 * @description The attempt.
+                 */
+                id: string;
+                model: string;
+                outcome: components["schemas"]["AiRecordOutcome"];
+                /** @description Internal stable code of why there is no suggestion (docs/ai-attempts.md). */
+                outcome_code: string | null;
+                provider: string;
+                /** Format: int64 */
+                reference: number;
+                requester: components["schemas"]["TicketRequester"];
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /**
+                 * Format: uuid
+                 * @description Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion.
+                 */
+                ticket_id: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_AuditEvent: {
+            items: {
+                /** @description Stable machine identifier. */
+                action: string;
+                actor: components["schemas"]["AuditActor"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: int64 */
+                id: number;
+                /** @description Identifiers, codes, and before/after settings. Never secrets or content. */
+                metadata: Record<string, never>;
+                /**
+                 * Format: uuid
+                 * @description The request that wrote the event, or that caused the job that wrote it.
+                 */
+                request_id: string | null;
+                resource_id: string | null;
+                resource_type: string | null;
+                subject: null | components["schemas"]["AuditAccount"];
+                /** Format: uuid */
+                ticket_id: string | null;
+                /**
+                 * Format: int64
+                 * @description `null` when the event is not about a ticket.
+                 */
+                ticket_reference: number | null;
             }[];
             next_cursor: string | null;
         };
@@ -1865,6 +2936,40 @@ export interface components {
             next_cursor: string | null;
         };
         /** @description One page of a list. `next_cursor` is null on the last page. */
+        Page_SubmissionSummary: {
+            items: {
+                ai_outcome: null | components["schemas"]["AiRecordOutcome"];
+                assignee_display_name: string | null;
+                /** Format: uuid */
+                category_id: string;
+                /** @description The category name frozen at submission. */
+                category_name: string;
+                closure_reason: null | components["schemas"]["ClosureReason"];
+                /**
+                 * Format: date-time
+                 * @description Submission time.
+                 */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /** @description Current effective priority. */
+                priority_name: string;
+                /** Format: int64 */
+                reference: number;
+                requester: components["schemas"]["TicketRequester"];
+                resolution: components["schemas"]["SubmissionResolution"];
+                resolution_source: null | components["schemas"]["ResolutionSource"];
+                route: null | components["schemas"]["SubmissionRoute"];
+                status: components["schemas"]["TicketStatus"];
+                subject: string;
+                /** @description `null`: the shared general queue, or never human work. */
+                team_name: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor: string | null;
+        };
+        /** @description One page of a list. `next_cursor` is null on the last page. */
         Page_Team: {
             items: {
                 archived: boolean;
@@ -1904,6 +3009,43 @@ export interface components {
                 updated_at: string;
             }[];
             next_cursor: string | null;
+        };
+        /** @description What is stored about one account, as counts. Nothing is changed. */
+        PersonalDataSummary: {
+            /** Format: uuid */
+            account_id: string;
+            /** Format: date-time */
+            anonymized_at: string | null;
+            /**
+             * Format: int64
+             * @description Audit events the account acted in or is the subject of.
+             */
+            audit_events: number;
+            display_name: string;
+            /** Format: int64 */
+            drafts: number;
+            /**
+             * Format: int64
+             * @description Of those, in a final status with their content still stored.
+             */
+            final_tickets_with_content: number;
+            is_active: boolean;
+            /**
+             * Format: int64
+             * @description Of those, not in a final status. Anonymization leaves them open.
+             */
+            open_tickets: number;
+            /** Format: int64 */
+            pending_screenshots: number;
+            role: components["schemas"]["Role"];
+            /** Format: int64 */
+            sessions: number;
+            /**
+             * Format: int64
+             * @description Tickets the account submitted.
+             */
+            tickets: number;
+            username: string;
         };
         Priority: {
             archived: boolean;
@@ -2009,13 +3151,56 @@ export interface components {
         QueueView: "general" | "team" | "mine" | "all";
         Readiness: {
             checks: components["schemas"]["Checks"];
+            /**
+             * @description `true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.
+             *     Older builds omit the field, which restore tooling treats as "unsupported".
+             */
+            restore_mode: boolean;
             /** @description `ready` or `unavailable`. */
             status: string;
         };
         RecoveryRequest: {
             username: string;
         };
-        /** @description Explicit decisions only: replies and views never implicitly accept a proposal. */
+        Report: {
+            /** Format: int64 */
+            ai_attempts: number;
+            ai_outcomes: components["schemas"]["AiVolume"][];
+            /**
+             * Format: int64
+             * @description Solved, not-solved, and recorded failures. Null with a team filter.
+             */
+            ai_rate_denominator: number | null;
+            /**
+             * Format: int64
+             * @description Explicit AI confirmations. Null with a team filter.
+             */
+            ai_rate_numerator: number | null;
+            /** Format: int64 */
+            awaiting_confirmation: number;
+            categories: components["schemas"]["NamedVolume"][];
+            closures: components["schemas"]["ClosureVolume"][];
+            daily: components["schemas"]["DailyVolume"][];
+            /**
+             * Format: int64
+             * @description Submissions excluding cancellations and policy withdrawals. Null with a team filter.
+             */
+            deflection_rate_denominator: number | null;
+            /**
+             * Format: int64
+             * @description Explicit AI confirmations. Null with a team filter.
+             */
+            deflection_rate_numerator: number | null;
+            operator: components["schemas"]["OperatorTotals"];
+            priorities: components["schemas"]["NamedVolume"][];
+            /** Format: int64 */
+            submissions: number;
+            workload: components["schemas"]["Workload"][];
+        };
+        /**
+         * @description Explicit decisions only: replies and views never implicitly accept a proposal
+         *     or an AI suggestion.
+         */
         RequesterAction: {
             /** @enum {string} */
             action: "accept_resolution";
@@ -2033,6 +3218,15 @@ export interface components {
         } | {
             /** @enum {string} */
             action: "reopen";
+        } | {
+            /** @enum {string} */
+            action: "ai_solved";
+        } | {
+            /** @enum {string} */
+            action: "ai_not_solved";
+        } | {
+            /** @enum {string} */
+            action: "skip_ai";
         };
         ResetPasswordRequest: {
             /** @description 12-256 characters. */
@@ -2044,6 +3238,166 @@ export interface components {
          * @enum {string}
          */
         ResolutionSource: "ai" | "operator";
+        /**
+         * @description `resolution_source` filter: `none` is every submission without one (open
+         *     or cancelled).
+         * @enum {string}
+         */
+        ResolutionSourceFilter: "ai" | "operator" | "none";
+        /**
+         * @description Records per category. In a preview: what a run started now would remove.
+         *     In a run: what it has removed so far.
+         */
+        RetentionCounts: {
+            /**
+             * Format: int64
+             * @description AI attempts whose input and suggestion were removed.
+             */
+            ai_content: number;
+            /**
+             * Format: int64
+             * @description Audit events deleted.
+             */
+            audit_events: number;
+            /**
+             * Format: int64
+             * @description Drafts deleted.
+             */
+            drafts: number;
+            /**
+             * Format: int64
+             * @description Screenshot records deleted (their files follow).
+             */
+            screenshots: number;
+            /**
+             * Format: int64
+             * @description Tickets whose text was removed.
+             */
+            ticket_content: number;
+        };
+        /** @description Bounds of the retention periods, in days. */
+        RetentionLimits: {
+            /**
+             * Format: int64
+             * @description The audit log's retention floor.
+             */
+            audit_min_days: number;
+            /** Format: int64 */
+            max_days: number;
+            /** Format: int64 */
+            min_days: number;
+        };
+        /** @description The retention policy, its bounds, and the latest runs. */
+        RetentionOverview: {
+            limits: components["schemas"]["RetentionLimits"];
+            /** @description Newest first, at most 10. */
+            runs: components["schemas"]["RetentionRun"][];
+            settings: components["schemas"]["RetentionSettings"];
+        };
+        /**
+         * @description Retention periods in days. `null` keeps that category for good, which is
+         *     the default for all five.
+         */
+        RetentionPolicy: {
+            /**
+             * Format: int64
+             * @description AI input and suggestion of tickets in a final status.
+             */
+            ai_content_days: number | null;
+            /**
+             * Format: int64
+             * @description Audit events. At least 30 days.
+             */
+            audit_days: number | null;
+            /**
+             * Format: int64
+             * @description Unsubmitted drafts, from their last save.
+             */
+            draft_days: number | null;
+            /**
+             * Format: int64
+             * @description Screenshots of tickets in a final status, from the final status.
+             */
+            screenshot_days: number | null;
+            /**
+             * Format: int64
+             * @description Subject, description, answers, messages, and cancellation reason of
+             *     tickets in a final status. Implies their screenshots and AI content.
+             */
+            ticket_content_days: number | null;
+        };
+        /** @description What a run would remove if it started at `as_of`. */
+        RetentionPreview: {
+            affected: components["schemas"]["RetentionCounts"];
+            /** Format: date-time */
+            as_of: string;
+            policy: components["schemas"]["RetentionPolicy"];
+            /** @description Send this back, with `as_of`, to confirm what this preview showed. */
+            token: string;
+        };
+        /** @description One application of the policy. */
+        RetentionRun: {
+            /**
+             * Format: date-time
+             * @description The clock the periods were measured from.
+             */
+            as_of: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Removed so far (final once `completed`). */
+            deleted: components["schemas"]["RetentionCounts"];
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The periods the run applies, as they were when it started. */
+            policy: components["schemas"]["RetentionPolicy"];
+            /**
+             * Format: uuid
+             * @description The Admin who started it; `null` for an automatic run.
+             */
+            requested_by: string | null;
+            requested_by_username: string | null;
+            state: components["schemas"]["RetentionRunState"];
+        };
+        /** @enum {string} */
+        RetentionRunState: "pending" | "completed";
+        RetentionSettings: {
+            /** @description Whether the worker applies the policy daily. Off by default. */
+            automatic: boolean;
+            policy: components["schemas"]["RetentionPolicy"];
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * Format: int64
+             * @description Bumped by every save. Previews are bound to it.
+             */
+            version: number;
+        };
+        /** @description Every period is required; `null` keeps that category for good. */
+        RetentionSettingsWrite: {
+            /** Format: int64 */
+            ai_content_days: number | null;
+            /** Format: int64 */
+            audit_days: number | null;
+            automatic: boolean;
+            /**
+             * @description Must be `DELETE` when `automatic` is true and any period is set: saving
+             *     then authorizes deletion without a further confirmation.
+             */
+            confirm?: string | null;
+            /** Format: int64 */
+            draft_days: number | null;
+            /**
+             * @description The `token` of a preview of exactly these periods, required together
+             *     with `confirm`: what was confirmed is what was reviewed.
+             */
+            preview_token?: string | null;
+            /** Format: int64 */
+            screenshot_days: number | null;
+            /** Format: int64 */
+            ticket_content_days: number | null;
+        };
         RetryResult: {
             /** Format: int64 */
             retried: number;
@@ -2228,6 +3582,84 @@ export interface components {
          * @enum {string}
          */
         StaleFilter: "view" | "team_id" | "status" | "category_id" | "priority_id" | "q";
+        StartRetentionRun: {
+            /**
+             * Format: date-time
+             * @description The `as_of` of that preview: the run's clock, so it removes what the
+             *     preview counted.
+             */
+            as_of: string;
+            /** @description Must be `DELETE`. */
+            confirm: string;
+            /** @description The `token` of the preview the Admin confirmed. */
+            preview_token: string;
+        };
+        /**
+         * @description The ticket's AI attempt as Admins see it: the stored suggestion, the
+         *     internal outcome code, and the requester's decision.
+         */
+        SubmissionAi: {
+            /** Format: uuid */
+            attempt_id: string;
+            /** @description Retention removed the stored suggestion; `suggestion` is then `null`. */
+            content_removed: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at: string | null;
+            decision: null | components["schemas"]["AiDecision"];
+            /**
+             * Format: int64
+             * @description The decision event in `events` (for `solved`: the confirmation event).
+             */
+            decision_event_id: number | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            language: components["schemas"]["Language"];
+            model: string;
+            outcome: components["schemas"]["AiRecordOutcome"];
+            /** @description Internal stable code of why there is no suggestion (docs/ai-attempts.md). */
+            outcome_code: string | null;
+            provider: string;
+            state: components["schemas"]["AiAttemptState"];
+            suggestion: null | components["schemas"]["AiSuggestion"];
+        };
+        /** @description One submission in full, read-only. */
+        SubmissionDetail: {
+            ai: null | components["schemas"]["SubmissionAi"];
+            /** Format: date-time */
+            confirmation_deadline: string | null;
+            /**
+             * Format: date-time
+             * @description Set when retention removed the ticket's text; the text fields then hold `—`.
+             */
+            content_removed_at: string | null;
+            description: string;
+            /** @description Every event of the ticket, oldest first. */
+            events: components["schemas"]["SubmissionEvent"][];
+            intake_snapshot: null | components["schemas"]["SubmittedIntake"];
+            /**
+             * Format: int64
+             * @description Intake screenshots the retention policy has removed.
+             */
+            removed_screenshots: number;
+            summary: components["schemas"]["SubmissionSummary"];
+        };
+        /**
+         * @description One immutable ticket event: transitions, assignment and priority changes,
+         *     and message events (which carry the message ID only, never its text).
+         */
+        SubmissionEvent: {
+            actor: null | components["schemas"]["EventActor"];
+            /** Format: date-time */
+            created_at: string;
+            event_type: string;
+            from_status: null | components["schemas"]["TicketStatus"];
+            /** Format: int64 */
+            id: number;
+            payload: Record<string, never>;
+            to_status: null | components["schemas"]["TicketStatus"];
+        };
         /**
          * @description Immutable submission receipt. A replay returns the original submitted status;
          *     read `/api/tickets/{id}` for the current status.
@@ -2238,6 +3670,49 @@ export interface components {
             /** Format: int64 */
             reference: number;
             status: components["schemas"]["TicketStatus"];
+        };
+        /**
+         * @description How a submission ended, from its status and closure provenance. Only
+         *     `ai_confirmed` is an AI resolution; an undecided or abandoned suggestion is
+         *     `open` or `cancelled`, never solved.
+         * @enum {string}
+         */
+        SubmissionResolution: "open" | "ai_confirmed" | "requester_confirmed" | "confirmation_timeout" | "cancelled";
+        /**
+         * @description How the submission entered: the `route` of its `submit` event.
+         * @enum {string}
+         */
+        SubmissionRoute: "ai" | "ai_disabled" | "category_exempt" | "requester_skip";
+        /** @description One submission in the Admin list. No ticket text beyond the subject. */
+        SubmissionSummary: {
+            ai_outcome: null | components["schemas"]["AiRecordOutcome"];
+            assignee_display_name: string | null;
+            /** Format: uuid */
+            category_id: string;
+            /** @description The category name frozen at submission. */
+            category_name: string;
+            closure_reason: null | components["schemas"]["ClosureReason"];
+            /**
+             * Format: date-time
+             * @description Submission time.
+             */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Current effective priority. */
+            priority_name: string;
+            /** Format: int64 */
+            reference: number;
+            requester: components["schemas"]["TicketRequester"];
+            resolution: components["schemas"]["SubmissionResolution"];
+            resolution_source: null | components["schemas"]["ResolutionSource"];
+            route: null | components["schemas"]["SubmissionRoute"];
+            status: components["schemas"]["TicketStatus"];
+            subject: string;
+            /** @description `null`: the shared general queue, or never human work. */
+            team_name: string | null;
+            /** Format: date-time */
+            updated_at: string;
         };
         SubmitDraft: {
             /** Format: uuid */
@@ -2287,6 +3762,32 @@ export interface components {
             version: string;
         };
         /**
+         * @description The AI attempt of a ticket, as its requester sees it. Staff who may see the
+         *     ticket get the same data as context.
+         */
+        TicketAi: {
+            /** @description Retention removed the stored suggestion; `suggestion` is then `null`. */
+            content_removed: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description When the decision was committed: the confirmation time of `solved`.
+             */
+            decided_at: string | null;
+            decision: null | components["schemas"]["AiDecision"];
+            /** Format: date-time */
+            finished_at: string | null;
+            /**
+             * @description The language the suggestion was requested in: the requester's language
+             *     at submission. It never changes afterwards.
+             */
+            language: components["schemas"]["Language"];
+            reason: null | components["schemas"]["AiHandoffReason"];
+            state: components["schemas"]["AiAttemptState"];
+            suggestion: null | components["schemas"]["AiSuggestion"];
+        };
+        /**
          * @description Public handling details shown to a ticket's requester. `team_name: null`
          *     means the shared general queue; `assignee_display_name: null` means unassigned.
          */
@@ -2296,6 +3797,7 @@ export interface components {
         };
         /** @description One ticket as the caller may see it. */
         TicketDetail: {
+            ai: null | components["schemas"]["TicketAi"];
             assignment: components["schemas"]["TicketAssignmentView"];
             /** @description Dispatch and assignment history, oldest first; staff view only (empty for the requester). */
             assignment_changes: components["schemas"]["AssignmentChange"][];
@@ -2308,6 +3810,12 @@ export interface components {
              * @description Auto-close time of the pending proposal; set only while `awaiting_confirmation`.
              */
             confirmation_deadline: string | null;
+            /**
+             * Format: date-time
+             * @description Set when retention removed the ticket's text (subject, description,
+             *     answers, messages): those fields then hold the marker `—`.
+             */
+            content_removed_at: string | null;
             /** Format: date-time */
             created_at: string;
             description: string;
@@ -2330,6 +3838,11 @@ export interface components {
              * @description Stable human-facing number.
              */
             reference: number;
+            /**
+             * Format: int64
+             * @description Intake screenshots the retention policy has removed.
+             */
+            removed_screenshots: number;
             requester: null | components["schemas"]["TicketRequester"];
             resolution_source: null | components["schemas"]["ResolutionSource"];
             staff_access: null | components["schemas"]["StaffAccess"];
@@ -2449,6 +3962,21 @@ export interface components {
              */
             lead_account_id?: string | null;
             name: string;
+        };
+        Workload: {
+            /** Format: int64 */
+            active: number;
+            /** Format: uuid */
+            assignee_id: string | null;
+            assignee_name: string | null;
+            assignee_role: null | components["schemas"]["Role"];
+            /** Format: int64 */
+            awaiting_confirmation: number;
+            /** Format: int64 */
+            queued: number;
+            /** Format: uuid */
+            team_id: string | null;
+            team_name: string | null;
         };
     };
     responses: never;
@@ -2667,6 +4195,439 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description `conflict`: the account was anonymized */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    anonymize_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnonymizeAccount"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnonymizationResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `conflict`: a ticket of the account is being changed right now; try again; `restore_mode_blocked`: this copy is in restore mode */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export_personal_data: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConfirmation"];
+            };
+        };
+        responses: {
+            /** @description The export, as an attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `export_too_large`: the account's data exceeds 16 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`username`: `mismatch`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    outcomes: {
+        parameters: {
+            query?: {
+                /** @description Reporting period in days, 1-3650 (default 30). */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiOutcomeStats"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`days`: `out_of_range`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    records: {
+        parameters: {
+            query?: {
+                /** @description Only records with this outcome. */
+                outcome?: components["schemas"]["AiRecordOutcome"];
+                /** @description Page size, 1-100 (default 25). */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AiRecord"];
+                };
+            };
+            /** @description `invalid_query` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query?: {
+                /** @description Acting account ID. */
+                actor?: string;
+                /** @description Acting account's username (case-insensitive, exact). */
+                actor_username?: string;
+                /** @description Action identifier, e.g. `login_failed` or `ticket_ai_solved`. */
+                action?: string;
+                /** @description Resource type, e.g. `ticket`, `account`, `team`, `invitation`. */
+                resource_type?: string;
+                /** @description Resource identifier within its type. */
+                resource_id?: string;
+                /** @description Events about this ticket. */
+                ticket_id?: string;
+                /** @description Events about the ticket with this reference number. */
+                ticket_reference?: number;
+                /** @description Events written by one request, or by the jobs it caused (`x-request-id`, a UUID). */
+                request_id?: string;
+                /** @description Inclusive event time, RFC 3339. */
+                created_from?: string;
+                /** @description Exclusive event time, RFC 3339. */
+                created_before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AuditEvent"];
+                };
+            };
+            /** @description `invalid_query` (unknown parameter, malformed value, or empty time range) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`cursor: invalid_cursor`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    actions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditActions"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query?: {
+                /** @description Acting account ID. */
+                actor?: string;
+                /** @description Acting account's username (case-insensitive, exact). */
+                actor_username?: string;
+                /** @description Action identifier, e.g. `login_failed` or `ticket_ai_solved`. */
+                action?: string;
+                /** @description Resource type, e.g. `ticket`, `account`, `team`, `invitation`. */
+                resource_type?: string;
+                /** @description Resource identifier within its type. */
+                resource_id?: string;
+                /** @description Events about this ticket. */
+                ticket_id?: string;
+                /** @description Events about the ticket with this reference number. */
+                ticket_reference?: number;
+                /** @description Events written by one request, or by the jobs it caused (`x-request-id`, a UUID). */
+                request_id?: string;
+                /** @description Inclusive event time, RFC 3339. */
+                created_from?: string;
+                /** @description Exclusive event time, RFC 3339. */
+                created_before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CSV with a header row. Headers `x-export-rows` and `x-export-truncated`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description `invalid_query` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) or `csrf_rejected` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     delivery_stats: {
@@ -2734,6 +4695,375 @@ export interface operations {
             };
             /** @description `forbidden` */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    personal_data_summary: {
+        parameters: {
+            query: {
+                /** @description Exact username (case-insensitive). Resolves to one account ID. */
+                username: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalDataSummary"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found`: no account has that username */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_report: {
+        parameters: {
+            query: {
+                /** @description Inclusive submission time, RFC 3339. */
+                created_from: string;
+                /** @description Exclusive submission time, RFC 3339. */
+                created_before: string;
+                /** @description Frozen category ID. */
+                category_id?: string;
+                /** @description Current destination team ID. */
+                team_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Report"];
+                };
+            };
+            /** @description Missing, reversed, or over-366-day range */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export_report: {
+        parameters: {
+            query: {
+                /** @description Inclusive submission time, RFC 3339. */
+                created_from: string;
+                /** @description Exclusive submission time, RFC 3339. */
+                created_before: string;
+                /** @description Frozen category ID. */
+                category_id?: string;
+                /** @description Current destination team ID. */
+                team_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Missing, reversed, or over-366-day range */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description More than 10,000 matching rows */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionOverview"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetentionSettingsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `retention_preview_stale`: with `automatic` on, the periods were not previewed or the settings changed since the preview */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (a period: `out_of_range`; `confirm`: `invalid`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    preview_retention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetentionPolicy"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionPreview"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (a period: `out_of_range`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    start_retention_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRetentionRun"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionRun"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending; `restore_mode_blocked`: this copy is in restore mode */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2816,6 +5146,164 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_submissions: {
+        parameters: {
+            query?: {
+                /** @description The ticket's (frozen) category, archived ones included. */
+                category_id?: string;
+                /** @description Current destination team, including archived teams. */
+                team_id?: string;
+                /** @description Current assignee account. */
+                assignee_id?: string;
+                /** @description Whether a recorded transition entered the shared queue. */
+                entered_queue?: boolean;
+                /** @description Current effective priority. */
+                priority_id?: string;
+                /** @description Current closure classification used in Admin reports. */
+                resolution?: components["schemas"]["SubmissionResolution"];
+                /** @description AI reporting bucket, including bypass routes with no attempt. */
+                ai_disposition?: components["schemas"]["AiDisposition"];
+                /** @description Current ticket status. `draft` is not a submission and is rejected. */
+                status?: components["schemas"]["TicketStatus"];
+                resolution_source?: components["schemas"]["ResolutionSourceFilter"];
+                ai_outcome?: components["schemas"]["AiOutcomeFilter"];
+                /** @description Inclusive submission time, RFC 3339. */
+                created_from?: string;
+                /** @description Exclusive submission time, RFC 3339. */
+                created_before?: string;
+                /** @description Page size, 1-100 (default 25). */
+                limit?: number;
+                /** @description `next_cursor` from the previous page. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SubmissionSummary"];
+                };
+            };
+            /** @description `invalid_query` (unknown filter value, `status=draft`, bad or empty date range) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`cursor`: `invalid_cursor`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submission_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionDetail"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` (not an Admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (missing, or a draft) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiPolicy"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3022,6 +5510,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description `outbound_disabled`: restore mode sends no email and creates no token, for every username */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
             /** @description `rate_limited` */
             429: {
@@ -4684,6 +7181,387 @@ export interface operations {
             };
         };
     };
+    get_ai: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_ai: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiSettingsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`provider`: `required`; `model`: `required`, `unsupported`, or `image_input_required`; `enabled`: `credential_required` or `credential_unreadable`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_credential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: components["schemas"]["AiProvider"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiCredentialWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`api_key`: `required`, `invalid`, or `too_long`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_credential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: components["schemas"]["AiProvider"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `not_found` (no key stored for this provider) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiLimits"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiLimitsWrite"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiLimits"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (any field: `out_of_range`; `retention_days`: `shorter_than_window`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    test_ai: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTestResult"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, `ai_model_unsupported`, or `outbound_disabled` (restore mode) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `ai_provider_auth_failed`, `ai_provider_unreachable`, `ai_provider_rate_limited`, or `ai_provider_failed` */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    usage: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Report period in days, 1 to 3650 (default 30). Records older than the
+                 *     retention are gone whatever the period.
+                 */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiUsageReport"];
+                };
+            };
+            /** @description `unauthorized` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `forbidden` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description `validation_failed` (`days`: `out_of_range`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_smtp: {
         parameters: {
             query?: never;
@@ -5169,7 +8047,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description `validation_failed` (input bounds; `screenshot_ids` not own pending uploads) */
+            /** @description `validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5634,7 +8512,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Current policy or actor denies the action */
+            /** @description Current policy or actor denies the action (including `skip_ai`, or `ai_not_solved` before a suggestion exists, while requesters may not skip AI) */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -5651,7 +8529,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Stale state or proposal version */
+            /** @description Stale state or proposal version. For AI decisions `error.details.status` is the committed ticket status */
             409: {
                 headers: {
                     [name: string]: unknown;

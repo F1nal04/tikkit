@@ -1,14 +1,17 @@
 <script lang="ts">
-  import { invalidate } from '$app/navigation'
+  import { goto, invalidate } from '$app/navigation'
   import { tick, untrack } from 'svelte'
   import { ApiError, type Schemas } from '@tikkit/api-client'
   import Alert from '#lib/components/Alert.svelte'
   import Dialog from '#lib/components/Dialog.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import EmptyState from '#lib/components/EmptyState.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
+  import { intakeAi } from '#lib/aiStep.ts'
   import { api as apiClient } from '#lib/api.ts'
+  import { focusFormErrors, type SummaryItem } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import {
     attemptFor,
@@ -29,6 +32,9 @@
   type Draft = Schemas['Draft']
 
   const AUTOSAVE_MS = 1200
+  // After a failed save (offline, 429 budget, 5xx) the input stays here and saving is
+  // tried again on its own, also when the user has stopped typing.
+  const RETRY_MS = 5000
 
   let { data }: PageProps = $props()
   let t = $derived(messages[data.locale])
@@ -41,7 +47,13 @@
   let formError = $state<unknown>(null)
   let notices = $state<Pick<Restored, 'categoryGone' | 'priorityGone' | 'dropped'>>({ categoryGone: false, priorityGone: false, dropped: [] })
   let submitting = $state(false)
-  let receipt = $state<(Schemas['SubmissionReceipt'] & { category: string; priority: string }) | null>(null)
+  let receipt = $state<(Schemas['SubmissionReceipt'] & { category: string; priority: string; noAi: 'exempt' | 'skipped' | null }) | null>(null)
+  // The requester's wish to skip AI. It is offered and sent only while the policy allows it.
+  let skipAi = $state(false)
+  let skipDenied = $state(false)
+  // AI assistance was switched on after this page loaded: the disclosure is shown first.
+  let aiTurnedOn = $state(false)
+  let aiDisclosure = $state<HTMLElement>()
   let receiptHeading = $state<HTMLElement>()
 
   // Draft autosave. `draft` is the saved copy's identity and version; `stale` means another tab or
@@ -74,6 +86,7 @@
   let json = $derived(JSON.stringify(intake))
   // svelte-ignore state_referenced_locally
   let lastSaved = JSON.stringify(intake)
+  let ai = $derived(intakeAi(data.aiPolicy, category, skipAi))
   let available = $derived(catalog.categories.length > 0 && catalog.priorities.length > 0)
 
   // Every field has an answer slot to bind to, including after the catalog is refreshed.
@@ -142,6 +155,10 @@
         saveState = 'idle'
       } else {
         saveState = 'failed'
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          if (alive) flush()
+        }, RETRY_MS)
       }
       return false
     }
@@ -162,6 +179,7 @@
     formError = null
     stale = null
     attempt = null
+    skipAi = false
     setDraft({ id: saved.id, version: saved.version })
     savedAt = new Date(saved.updated_at)
     saveState = 'saved'
@@ -234,16 +252,40 @@
     forceSync = false
     attempt = null
     receipt = null
+    skipAi = false
+    skipDenied = false
     saveState = 'idle'
     lastSaved = JSON.stringify(toIntake(form, catalog))
   }
 
   const errorFor = (key: string) => fieldText(t, errors[key]?.[0])
+  let summaryItems = $derived.by(() => {
+    const labels: Record<string, string> = {
+      category_id: f.category,
+      subject: f.subject,
+      description: f.description,
+      priority_id: f.priority,
+    }
+    const items: SummaryItem[] = []
+    for (const [key, codes] of Object.entries(errors)) {
+      const text = fieldText(t, codes[0])
+      if (!text) continue
+      if (key.startsWith('answers.')) {
+        const id = key.slice('answers.'.length)
+        const field = catalog.fields.find((item) => item.id === id)
+        const other = field?.kind === 'select' && form.answers[id]?.choice === OTHER
+        items.push({ id: other ? `answer-${id}-text` : `answer-${id}`, label: field?.label ?? id, text })
+      } else items.push({ id: key, label: labels[key] ?? key, text })
+    }
+    return items
+  })
+  let summaryTitle = $derived(
+    Object.keys(errors).length ? t.errors.validation_failed : skipDenied ? f.skipDenied : formError ? errorText(t, formError) : '',
+  )
 
-  // The first invalid input in reading order, whichever order the errors arrived in.
+  // The error summary, not the first field: the fields stay linked, and the summary lists the failure.
   async function focusFirstError() {
-    await tick()
-    document.querySelector<HTMLElement>('form [aria-invalid="true"]')?.focus()
+    await focusFormErrors()
   }
 
   async function submit(event: SubmitEvent) {
@@ -251,11 +293,26 @@
     // Nothing else runs while a submission is in flight, so a double click or Enter cannot repeat it.
     if (submitting) return
     formError = null
+    skipDenied = false
     errors = validate(form, catalog)
     if (Object.keys(errors).length) return focusFirstError()
     submitting = true
     let focusErrors = false
     try {
+      // What goes to the AI provider is disclosed before submission. If an Admin switched AI
+      // on while this form was open, show the disclosure and let the requester submit again.
+      if (!untrack(() => ai.applies)) {
+        const fresh = await api().request('get', '/api/ai/policy').catch(() => null)
+        if (!alive) return
+        if (fresh?.ai_assistance) {
+          await invalidate('tikkit:catalog')
+          aiTurnedOn = true
+          await tick()
+          aiDisclosure?.focus()
+          return
+        }
+      }
+      aiTurnedOn = false
       // The draft endpoint submits the saved copy. Write the visible form first when resume
       // dropped answers, so they are not submitted and the idempotency key matches that write.
       if (serverDiffers) forceSync = true
@@ -270,24 +327,33 @@
       } else if (alive) {
         const body = untrack(() => intake)
         const current = savedDraft
-        const fingerprint = `${current?.id}:${current?.version}:${JSON.stringify(body)}`
+        // Sent only as a request under the loaded policy; the lifecycle rechecks it and answers 403.
+        const skip = untrack(() => ai.skip)
+        const requester_skip = skip ? { requester_skip: true } : {}
+        const fingerprint = `${current?.id}:${current?.version}:${skip}:${JSON.stringify(body)}`
         attempt = attemptFor(attempt, fingerprint)
         const sent = current
           ? await api().request('post', '/api/ticket-drafts/{id}/submit', {
               path: { id: current.id },
-              body: { version: current.version, idempotency_key: attempt.key },
+              body: { version: current.version, idempotency_key: attempt.key, ...requester_skip },
             })
-          : await api().request('post', '/api/tickets', { body: { intake: body, idempotency_key: attempt.key } })
+          : await api().request('post', '/api/tickets', { body: { intake: body, idempotency_key: attempt.key, ...requester_skip } })
         if (!alive) return
-        receipt = {
-          ...sent,
-          category: category?.name ?? '',
-          priority: catalog.priorities.find((p) => p.id === form.priority_id)?.name ?? '',
-        }
         if (current) drafts = drafts.filter((d) => d.id !== current.id)
         setDraft(null)
         serverDiffers = false
         clearTimeout(timer)
+        if (sent.status === 'ai_processing' || sent.status === 'awaiting_ai_decision') {
+          // The AI step lives on the ticket page, where a refresh or a later visit resumes it.
+          await goto(`/tickets/${sent.id}`)
+          return
+        }
+        receipt = {
+          ...sent,
+          category: category?.name ?? '',
+          priority: catalog.priorities.find((p) => p.id === form.priority_id)?.name ?? '',
+          noAi: untrack(() => (ai.exempt ? 'exempt' : skip ? 'skipped' : null)),
+        }
         await tick()
         receiptHeading?.focus()
       }
@@ -300,6 +366,11 @@
           await invalidate('tikkit:catalog')
         }
         focusErrors = true
+      } else if (e instanceof ApiError && e.status === 403 && untrack(() => ai.skip)) {
+        // The Admin switched skipping off after this page loaded. Nothing was submitted.
+        skipDenied = true
+        skipAi = false
+        await invalidate('tikkit:catalog')
       } else if (e instanceof ApiError && savedDraft && (e.code === 'conflict' || e.code === 'not_found')) {
         stale = e.code === 'conflict' ? 'changed' : 'gone'
       } else {
@@ -308,8 +379,8 @@
     } finally {
       if (alive) submitting = false
     }
-    // After the fieldset is enabled again; focusing a control inside a disabled fieldset does nothing.
-    if (alive && focusErrors) await focusFirstError()
+    // The summary sits outside the fieldset, so it can take focus as soon as it is rendered.
+    if (alive && (focusErrors || formError || skipDenied)) await focusFirstError()
   }
 
   const time = (d: Date) => new Intl.DateTimeFormat(data.locale, { timeStyle: 'short' }).format(d)
@@ -326,6 +397,7 @@
     <h2 tabindex="-1" bind:this={receiptHeading}>{f.sentTitle}</h2>
     <p>{f.sentText.replace('{reference}', `#${receipt.reference}`)}</p>
     <p>{f.received[receipt.status as keyof typeof f.received] ?? f.received.queued}</p>
+    {#if receipt.noAi}<p>{receipt.noAi === 'exempt' ? f.receiptExempt : f.receiptSkipped}</p>{/if}
     <p><StatusBadge status={receipt.status} label={t.statuses[receipt.status]} /></p>
     <dl>
       <dt>{f.receiptCategory}</dt>
@@ -378,10 +450,8 @@
       </ul>
     </Alert>
   {/if}
-  {#if formError}<Alert kind="error">{errorText(t, formError)}</Alert>{/if}
-  {#if Object.keys(errors).length}<Alert kind="error">{t.errors.validation_failed}</Alert>{/if}
-
   <form novalidate onsubmit={submit} aria-busy={submitting}>
+    {#if summaryTitle}<ErrorSummary title={summaryTitle} items={summaryItems} />{/if}
     <p class="form-state">
       <StatusBadge status="draft" label={t.statuses.draft} />
       {#if saveState === 'saving'}{f.stateSaving}
@@ -458,7 +528,22 @@
       />
 
       <ScreenshotPicker locale={data.locale} bind:ids={form.screenshot_ids} error={errorFor('screenshot_ids')} />
-      <p class="hint">{category?.skip_ai ? f.skipsAi : f.aiNote}</p>
+      {#if ai.applies}
+        <section class="ai-disclosure" aria-labelledby="ai-disclosure-title">
+          <h2 id="ai-disclosure-title" tabindex="-1" bind:this={aiDisclosure}>{f.aiTitle}</h2>
+          {#if aiTurnedOn}<Alert kind="info">{f.aiTurnedOn}</Alert>{/if}
+          {#if ai.exempt}
+            <p>{f.skipsAi}</p>
+          {:else}
+            <p>{f.aiDisclosure}</p>
+            <p class="hint">{f.aiNext}</p>
+            {#if ai.maySkip}
+              <label class="check"><input type="checkbox" name="requester_skip" bind:checked={skipAi} aria-describedby="skip-ai-hint" /><span>{f.skipAi}</span></label>
+              <p class="hint" id="skip-ai-hint">{f.skipAiHint}</p>
+            {/if}
+          {/if}
+        </section>
+      {/if}
     </fieldset>
 
     <div class="form-actions">
@@ -466,7 +551,7 @@
     </div>
   </form>
 
-  <Dialog bind:open={discardOpen} title={f.discardTitle}>
+  <Dialog bind:open={discardOpen} title={f.discardTitle} locale={data.locale}>
     <p>{f.discardText}</p>
     {#snippet actions()}
       <button type="button" class="secondary" onclick={() => (discardOpen = false)}>{t.cancel}</button>
@@ -505,6 +590,28 @@
     gap: 1rem;
     padding-left: 0.75rem;
     border-left: 0.25rem solid var(--line);
+  }
+  .ai-disclosure {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-left: 0.375rem solid var(--accent);
+    border-radius: 0.375rem;
+    background: var(--surface);
+  }
+  .ai-disclosure h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+  }
+  .ai-disclosure p {
+    margin: 0.5rem 0 0;
+  }
+  .ai-disclosure .check {
+    margin-top: 0.75rem;
+    font-weight: 400;
+  }
+  .ai-disclosure input[type='checkbox'] {
+    min-height: 0;
+    flex: none;
   }
   .form-actions button {
     min-width: 12rem;

@@ -35,8 +35,8 @@ written while an enabled SMTP connection exists.
 
 Internal notes (`internal_note_added`) never enqueue anything. The actor is
 never notified of their own action. Admins are notified only about shared-queue
-intake. Authentication mail (invitation, recovery) keeps #28's direct,
-best-effort sending.
+intake. Authentication mail (invitation, recovery) is sent directly and
+best-effort, outside this outbox (see [auth.md](auth.md#email-delivery)).
 
 ## Worker
 
@@ -59,8 +59,9 @@ Recipients are accounts, never addresses: accounts sharing an email each get
 their own message, which names the intended username.
 
 Email uses `mail::deliver` with one SMTP try per row and the idempotency key
-`notification:<id>`; a crash after the relay accepted a message makes the retry a
-recorded no-op, never a second email. Failures retry with 30 s doubling backoff
+`notification:<id>`; a retry after the delivery receipt has committed is a no-op. A relay can
+accept a message before a timeout or crash prevents the receipt from committing.
+SMTP does not guarantee exactly-once delivery for that ambiguous outcome. Failures retry with 30 s doubling backoff
 (max 1 h) up to `MAX_ATTEMPTS` (8), then become `failed`. A failure never rolls
 back portal work; the in-app channel is independent of the email channel. The
 stable error code is kept in `last_error`, logged, and SMTP failures also show on
@@ -85,9 +86,11 @@ link, and access is checked again on arrival.
 - `GET`/`PUT /api/notification-preferences` `{email, in_app}`.
 - Admin: `GET /api/admin/notifications` (counts by status and failure codes) and
   `POST /api/admin/notifications/retry` (re-queues `failed` rows; audited as
-  `notifications_retried`; no duplicates thanks to the idempotency key).
+  `notifications_retried`; recorded keys prevent resends).
 
 ## Not here
 
-SLA/escalation notifications, reply-by-email, digests, push, read-all, and the
-auto-close worker itself (#55).
+SLA/escalation notifications, reply-by-email, digests, push and read-all do not
+exist. The confirmation-timeout auto-close worker is described in
+[lifecycle.md](lifecycle.md#auto-close-worker); it enqueues the closure
+notification through the same outbox as every other ticket event.

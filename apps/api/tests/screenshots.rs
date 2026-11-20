@@ -794,6 +794,15 @@ async fn attached_screenshots_follow_current_ticket_visibility() {
     sqlx::query("UPDATE tickets SET status = 'ai_solved', resolution_source = 'ai', closure_reason = 'requester_confirmed' WHERE id = $1")
         .bind(ticket).execute(pool).await.unwrap();
     check("ai solved", &["requester", "admin"]).await;
+
+    // Recreate the router and database pool with the same private storage as a
+    // restarted application process would. The previous session still works.
+    let path = format!("/api/screenshots/{id}/download");
+    let before = raw(&w.app, "GET", &path, &w.requester, None).await;
+    let restarted = test_app(&TestDb::pool_for(&w.db).await);
+    let after = raw(&restarted, "GET", &path, &w.requester, None).await;
+    assert_eq!(after.status, StatusCode::OK);
+    assert_eq!(after.body, before.body);
     let r = raw(
         &w.app,
         "DELETE",
@@ -906,8 +915,8 @@ async fn storage_failures_leave_no_misleading_records() {
     let blocked = screenshot_dir(&w.db.pool).with_extension("file");
     std::fs::write(&blocked, b"not a directory").unwrap();
     let broken = tikkit_api::app(AppState {
-        pool: w.db.pool.clone(),
         screenshot_dir: blocked.join("screenshots").into(),
+        ..support::test_state(&w.db.pool)
     });
     let r = upload(&broken, &w.requester, "x.png", "image/png", png()).await;
     assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);

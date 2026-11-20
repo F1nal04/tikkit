@@ -1,7 +1,9 @@
 //! Private requester drafts and atomic, idempotent submission. See docs/submission.md.
 use std::collections::BTreeMap;
 
-use axum::{extract::State, http::StatusCode};
+use std::sync::Arc;
+
+use axum::{Extension, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -11,12 +13,11 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
-    AppState,
+    AppState, ai_attempts,
     api::{ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketStatus},
-    auth::{CurrentUser, audit, ident, ident_str},
+    auth::{Auth, CurrentUser, audit, ident, ident_str},
     catalog::{self, IntakeAnswer, IntakeSnapshot},
-    lifecycle::{self, By, Transition},
-    screenshots,
+    lifecycle, screenshots,
 };
 
 pub const SUBJECT_MAX: usize = 200;
@@ -199,12 +200,15 @@ async fn audit_draft(
     Ok(())
 }
 
+/// Unsubmitted drafts one account may keep.
+pub const MAX_OPEN_DRAFTS: i64 = 100;
+
 /// Save incomplete input privately. Retained until the owner deletes or submits it.
 #[utoipa::path(post, path = "/api/ticket-drafts", tag = "tickets", request_body = TicketIntake,
     responses(
         (status = 201, body = Draft),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
-        (status = 422, description = "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)", body = crate::api::ErrorEnvelope),
+        (status = 422, description = "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn create_draft(
     State(state): State<AppState>,
@@ -213,6 +217,26 @@ pub async fn create_draft(
 ) -> Result<(StatusCode, Json<Draft>), ApiError> {
     body.validate(false)?;
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
+    // Bounded storage per account (after the account lock, which refuses an
+    // inactive or anonymized account); the advisory lock serializes the count and insert
+    // across API processes.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('ticket_draft'), hashtext($1))")
+        .bind(user.account_id().to_string())
+        .execute(&mut *tx)
+        .await?;
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ticket_drafts WHERE requester_account_id = $1 AND submitted_ticket_id IS NULL",
+    )
+    .bind(user.account_id())
+    .fetch_one(&mut *tx)
+    .await?;
+    if open >= MAX_OPEN_DRAFTS {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "draft".into(),
+            vec!["too_many"],
+        )])));
+    }
     screenshots::keep_pending(&mut tx, user.account_id(), &body.screenshot_ids).await?;
     let draft: Draft = sqlx::query_as(&format!("INSERT INTO ticket_drafts (requester_account_id, intake) VALUES ($1, $2) RETURNING {DRAFT_COLUMNS}"))
         .bind(user.account_id()).bind(sqlx::types::Json(body)).fetch_one(&mut *tx).await?;
@@ -284,6 +308,7 @@ pub async fn update_draft(
     Json(body): Json<DraftUpdate>,
 ) -> Result<Json<Draft>, ApiError> {
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     lock_draft(&mut tx, user.account_id(), id, body.version).await?;
     body.intake.validate(false)?;
     screenshots::keep_pending(&mut tx, user.account_id(), &body.intake.screenshot_ids).await?;
@@ -351,6 +376,12 @@ async fn replay(
     }))
 }
 
+/// What submission needs to route a ticket through AI and snapshot its input.
+struct AiRouting<'a> {
+    encryption_key: &'a [u8; 32],
+    screenshot_dir: &'a std::path::Path,
+}
+
 async fn persist_submission(
     db: &mut Transaction<'_, Postgres>,
     owner: Uuid,
@@ -358,6 +389,7 @@ async fn persist_submission(
     hash: &[u8],
     intake: TicketIntake,
     requester_skip: bool,
+    ai: AiRouting<'_>,
 ) -> Result<SubmissionReceipt, ApiError> {
     intake.validate(true)?;
     // Catalog edits span several tables. Hold one coherent catalog until the
@@ -383,13 +415,12 @@ async fn persist_submission(
         .bind(owner).bind(snapshot.catalog.category_id).bind(snapshot.catalog.priority_id)
         .bind(&snapshot.subject).bind(&snapshot.description).bind(sqlx::types::Json(&snapshot)).fetch_one(&mut **db).await?;
     screenshots::attach(db, owner, &snapshot.screenshot_ids, id).await?;
-    let status = lifecycle::transition(
-        db,
-        id,
-        By::Account(owner),
-        &Transition::Submit { requester_skip },
-    )
-    .await?;
+    let status = lifecycle::submit(db, id, owner, requester_skip, ai.encryption_key).await?;
+    // The one AI attempt and its immutable input commit with the ticket, so a
+    // ticket is never in `ai_processing` without a job that will end it.
+    if status == TicketStatus::AiProcessing {
+        ai_attempts::create(db, ai.screenshot_dir, id, owner, &snapshot).await?;
+    }
     sqlx::query("INSERT INTO ticket_submission_keys (requester_account_id, idempotency_key, request_hash, ticket_id, submitted_status) VALUES ($1, $2, $3, $4, $5)")
         .bind(owner).bind(key).bind(hash).bind(id).bind(ident_str(status)).execute(&mut **db).await?;
     Ok(SubmissionReceipt {
@@ -410,6 +441,7 @@ async fn persist_submission(
         (status = 422, description = "`validation_failed` (intake/catalog)", body = crate::api::ErrorEnvelope)))]
 pub async fn submit_ticket(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Json(body): Json<SubmitTicket>,
 ) -> Result<(StatusCode, Json<SubmissionReceipt>), ApiError> {
@@ -426,9 +458,16 @@ pub async fn submit_ticket(
         &hash,
         body.intake,
         body.requester_skip,
+        AiRouting {
+            encryption_key: &auth.settings.encryption_key,
+            screenshot_dir: &state.screenshot_dir,
+        },
     )
     .await?;
     tx.commit().await?;
+    if receipt.status == TicketStatus::Queued {
+        state.metrics.event(crate::metrics::Event::DirectIntake, 1);
+    }
     Ok((StatusCode::CREATED, Json(receipt)))
 }
 
@@ -444,6 +483,7 @@ pub async fn submit_ticket(
         (status = 422, description = "`validation_failed` (intake/catalog)", body = crate::api::ErrorEnvelope)))]
 pub async fn submit_draft(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(body): Json<SubmitDraft>,
@@ -462,10 +502,17 @@ pub async fn submit_draft(
         &hash,
         intake,
         body.requester_skip,
+        AiRouting {
+            encryption_key: &auth.settings.encryption_key,
+            screenshot_dir: &state.screenshot_dir,
+        },
     )
     .await?;
     sqlx::query("UPDATE ticket_drafts SET intake = NULL, submitted_ticket_id = $2, version = version + 1, updated_at = now() WHERE id = $1")
         .bind(id).bind(receipt.id).execute(&mut *tx).await?;
     tx.commit().await?;
+    if receipt.status == TicketStatus::Queued {
+        state.metrics.event(crate::metrics::Event::DirectIntake, 1);
+    }
     Ok((StatusCode::CREATED, Json(receipt)))
 }

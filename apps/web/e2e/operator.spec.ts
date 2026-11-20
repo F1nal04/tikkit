@@ -125,7 +125,7 @@ test('a stale page gets a recoverable conflict and keeps the unsent proposal', a
   // Someone else replies after this page loaded.
   expect(await post(page, '/api/test/concurrent', { id: ids.deskClaimed })).toBe(204)
   await page.getByRole('button', { name: 'Propose resolution' }).click()
-  await expect(page.getByRole('alert')).toContainText('changed since you loaded it')
+  await expect(page.locator('#form-errors')).toContainText('changed since you loaded it')
   await expect(status(page)).toHaveText('In progress')
   await expect(page.getByText('Ticket updated.')).toHaveCount(0)
   // The refresh shows the newer reply; the text is intact and resubmitting now works.
@@ -143,7 +143,7 @@ test('a claim taken away mid-session turns the page read-only safely', async ({ 
   expect(await post(page, '/api/test/concurrent', { id: ids.deskClaimed, assignee: 'lead' })).toBe(204)
   await page.getByRole('button', { name: 'Send public reply' }).click()
   // The operator is no longer in charge only if not the assignee; the stub moved the claim to the lead.
-  await expect(page.getByRole('alert')).toContainText('changed since you loaded it')
+  await expect(page.locator('#form-errors')).toContainText('changed since you loaded it')
   await expect(page.getByText(/assigned to someone else/)).toBeVisible()
   await expect(page.getByLabel('Message')).toHaveValue('Draft answer')
   await expect(page.getByLabel(/Resolution summary/)).toHaveValue('Draft proposal')
@@ -197,7 +197,7 @@ test('reopening follows the Admin toggle, including after it is revoked on a loa
   await expect(page.getByRole('button', { name: 'Reopen ticket' })).toBeVisible()
   expect(await post(page, '/api/test/policy', { allow_reopening: false })).toBe(204)
   await page.getByRole('button', { name: 'Reopen ticket' }).click()
-  await expect(page.getByRole('alert')).toContainText('changed since you loaded it')
+  await expect(page.locator('#form-errors')).toContainText('changed since you loaded it')
   await expect(page.getByRole('button', { name: 'Reopen ticket' })).toHaveCount(0)
   await expect(status(page)).toHaveText('Closed')
 

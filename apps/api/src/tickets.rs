@@ -1,7 +1,9 @@
 //! Ticket read API. Status changes go through [`crate::lifecycle`]; visibility
 //! is [`authz::ticket_view`]. See docs/lifecycle.md.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -11,11 +13,12 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
+    ai_attempts::{self, TicketAi},
     api::{
         ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketAssignmentView,
         TicketStatus,
     },
-    auth::{CurrentUser, ident},
+    auth::{Auth, CurrentUser, ident},
     authz::{self, Actor, Permission, TicketScope, TicketView},
     lifecycle::{self, By, ClosureReason, ResolutionSource, Transition},
     submission::SubmittedIntake,
@@ -39,8 +42,11 @@ pub struct TicketDetail {
     pub priority_name: String,
     pub assignment: TicketAssignmentView,
     /// Frozen original intake; null only for legacy records predating submission.
+    /// `screenshot_ids` lists only screenshots that still exist.
     #[schema(required = true)]
     pub intake_snapshot: Option<SubmittedIntake>,
+    /// Intake screenshots the retention policy has removed.
+    pub removed_screenshots: i64,
     /// Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets.
     #[schema(required = true)]
     pub resolution_source: Option<ResolutionSource>,
@@ -72,6 +78,17 @@ pub struct TicketDetail {
     /// What the caller may do as staff; `null` in the requester view.
     #[schema(required = true)]
     pub staff_access: Option<StaffAccess>,
+    /// The ticket's single AI attempt with its stored suggestion and the
+    /// requester's decision; `null` for tickets that never went through AI.
+    /// Staff see it on the tickets they may see (escalated tickets; Admins also
+    /// AI-stage and AI-solved records).
+    #[schema(required = true)]
+    pub ai: Option<TicketAi>,
+    /// Set when retention removed the ticket's text (subject, description,
+    /// answers, messages): those fields then hold the marker `—`.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(value_type = Option<String>, format = DateTime, required = true)]
+    pub content_removed_at: Option<OffsetDateTime>,
 }
 
 /// Affordances for the staff view, from the same rules the write endpoints
@@ -199,6 +216,7 @@ struct DetailRow {
     confirmation_deadline: Option<OffsetDateTime>,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
+    content_purged_at: Option<OffsetDateTime>,
 }
 
 type TransitionRow = (
@@ -256,7 +274,7 @@ pub async fn ticket_detail(
                 r.display_name AS requester_display_name, t.team_id, tm.name AS team_name,
                 t.assignee_account_id, a.display_name AS assignee_display_name,
                 t.resolution_source, t.closure_reason, t.proposal_version,
-                t.confirmation_deadline, t.created_at, t.updated_at
+                t.confirmation_deadline, t.created_at, t.updated_at, t.content_purged_at
          FROM tickets t
          JOIN categories c ON c.id = t.category_id
          JOIN priorities p ON p.id = t.priority_id
@@ -363,6 +381,9 @@ pub async fn ticket_detail(
             created_at: r.created_at,
         })
         .collect();
+    // The requester's own attempt, and for staff who may see the ticket the same
+    // stored suggestion as context (docs/ai-decisions.md).
+    let ai = ai_attempts::view(&mut tx, id).await?;
     let staff_access = if staff {
         let allow_reopen: bool =
             sqlx::query_scalar("SELECT allow_reopening FROM organization WHERE id")
@@ -404,6 +425,8 @@ pub async fn ticket_detail(
             can_handle: can(Permission::ReplyAsStaff),
             can_reopen: allow_reopen
                 && status == TicketStatus::Closed
+                // Nothing is left to work on once retention removed the content.
+                && row.content_purged_at.is_none()
                 && authz::is_staff_writer(&actor, &scope),
             can_dispatch,
             can_claim: can(Permission::ClaimTicket),
@@ -414,6 +437,13 @@ pub async fn ticket_detail(
     } else {
         None
     };
+    let mut intake_snapshot = row.intake_snapshot.map(|s| s.0);
+    let removed_screenshots = match &mut intake_snapshot {
+        Some(intake) => {
+            crate::screenshots::existing_intake(&mut tx, row.id, &mut intake.screenshot_ids).await?
+        }
+        None => 0,
+    };
     Ok(Json(TicketDetail {
         id: row.id,
         reference: row.reference,
@@ -423,7 +453,8 @@ pub async fn ticket_detail(
         description: row.description,
         category_id: row.category_id,
         category_name: row.category_name,
-        intake_snapshot: row.intake_snapshot.map(|s| s.0),
+        intake_snapshot,
+        removed_screenshots,
         priority_id: row.priority_id,
         priority_name: row.priority_name,
         assignment: TicketAssignmentView {
@@ -445,6 +476,8 @@ pub async fn ticket_detail(
         priority_changes,
         assignment_changes,
         staff_access,
+        ai,
+        content_removed_at: row.content_purged_at,
     }))
 }
 
@@ -566,14 +599,33 @@ pub struct OwnTicketsQuery {
     pub cursor: Option<String>,
 }
 
-/// Explicit decisions only: replies and views never implicitly accept a proposal.
+/// Explicit decisions only: replies and views never implicitly accept a proposal
+/// or an AI suggestion.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RequesterAction {
-    AcceptResolution { proposal_version: i32 },
-    RejectResolution { proposal_version: i32 },
-    Cancel { reason: String },
-    Reopen,
+    AcceptResolution {
+        proposal_version: i32,
+    },
+    RejectResolution {
+        proposal_version: i32,
+    },
+    Cancel {
+        reason: String,
+    },
+    // Empty struct variants, not unit variants: serde only rejects unknown
+    // fields (a chat message, a "regenerate" flag) on struct variants.
+    Reopen {},
+    /// The stored AI suggestion solved it: `awaiting_ai_decision` → `ai_solved`
+    /// (final, never operator work). Repeating it returns the committed state.
+    AiSolved {},
+    /// Still need help after the stored suggestion: `awaiting_ai_decision` →
+    /// `queued` in the shared general queue, once. Repeating it returns the
+    /// committed state.
+    AiNotSolved {},
+    /// Skip AI while the suggestion is being prepared: `ai_processing` →
+    /// `queued`. Only while the Admin allows requesters to skip AI.
+    SkipAi {},
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -583,16 +635,23 @@ pub struct ActionResult {
 
 /// Apply one lifecycle decision atomically. Stale/duplicate proposal decisions
 /// return 409; policy is read again by the lifecycle inside the transaction.
+///
+/// The AI decisions (`ai_solved`, `ai_not_solved`, `skip_ai`) are idempotent:
+/// repeating the decision that was committed for the ticket returns `200` with
+/// the ticket's current status and writes nothing. Any other AI decision on a
+/// ticket that already left that stage is `409 conflict` with the committed
+/// status in `error.details.status`. See docs/ai-decisions.md.
 #[utoipa::path(post, path = "/api/tickets/{id}/actions", tag = "tickets",
     params(("id" = Uuid, Path)), request_body = RequesterAction,
     responses((status = 200, body = ActionResult),
         (status = 401, body = crate::api::ErrorEnvelope),
-        (status = 403, description = "Current policy or actor denies the action", body = crate::api::ErrorEnvelope),
+        (status = 403, description = "Current policy or actor denies the action (including `skip_ai`, or `ai_not_solved` before a suggestion exists, while requesters may not skip AI)", body = crate::api::ErrorEnvelope),
         (status = 404, body = crate::api::ErrorEnvelope),
-        (status = 409, description = "Stale state or proposal version", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "Stale state or proposal version. For AI decisions `error.details.status` is the committed ticket status", body = crate::api::ErrorEnvelope),
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn requester_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<RequesterAction>,
@@ -605,13 +664,103 @@ pub async fn requester_action(
             Transition::RejectResolution { proposal_version }
         }
         RequesterAction::Cancel { reason } => Transition::Cancel { reason },
-        RequesterAction::Reopen => Transition::Reopen,
+        RequesterAction::Reopen {} => Transition::Reopen,
+        RequesterAction::AiSolved {} => Transition::AiSolved,
+        RequesterAction::AiNotSolved {} => Transition::AiNotSolved,
+        RequesterAction::SkipAi {} => Transition::SkipAi,
+    };
+    use crate::metrics::Event as Metric;
+    let metric = match transition {
+        Transition::AcceptResolution { .. } => Some(Metric::HumanConfirmed),
+        Transition::AiSolved => Some(Metric::AiConfirmed),
+        Transition::AiNotSolved | Transition::SkipAi => Some(Metric::AiHandoff),
+        _ => None,
+    };
+    let failure = |error: &ApiError| {
+        if matches!(metric, Some(Metric::AiHandoff)) && matches!(error, ApiError::Internal) {
+            tracing::error!(
+                error_code = "ai_requester_handoff_failed",
+                "requester handoff did not commit"
+            );
+        }
     };
     let mut tx = state.pool.begin().await?;
-    let status =
-        lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await?;
-    tx.commit().await?;
-    Ok(Json(ActionResult { status }))
+    let result =
+        lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await;
+    let result = match result {
+        Ok(status) => {
+            tx.commit()
+                .await
+                .map_err(ApiError::from)
+                .inspect_err(failure)?;
+            if let Some(metric) = metric {
+                state.metrics.event(metric, 1);
+            }
+            Ok(status)
+        }
+        Err(ApiError::Conflict)
+            if matches!(
+                transition,
+                Transition::AiSolved | Transition::AiNotSolved | Transition::SkipAi
+            ) =>
+        {
+            // Releases the ticket lock; whoever held it before us has committed.
+            drop(tx);
+            ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await
+        }
+        Err(error) => {
+            failure(&error);
+            drop(tx);
+            Err(error)
+        }
+    };
+    if let Err(error) = &result {
+        // Denied cancellations and reopens, and any attempt to change an
+        // AI-solved record, are recorded without touching the ticket.
+        let attempted = transition.event_type();
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, attempted, error).await;
+    }
+    Ok(Json(ActionResult { status: result? }))
+}
+
+/// An AI decision that could not be applied because the ticket is no longer (or
+/// not yet) at that stage. The lifecycle has already established that the
+/// caller is the ticket's requester. If the same decision is the one committed
+/// for this ticket, this is a retry: return the current status. Otherwise the
+/// caller lost to another outcome and gets `409` with the committed status.
+async fn ai_decision_after_conflict(
+    pool: &PgPool,
+    id: Uuid,
+    requester: Uuid,
+    transition: &Transition,
+) -> Result<TicketStatus, ApiError> {
+    let (status, committed, skip_allowed): (String, Option<String>, bool) = sqlx::query_as(
+        "SELECT t.status::text,
+                (SELECT e.event_type FROM ticket_events e
+                 WHERE e.ticket_id = t.id AND e.actor_account_id = t.requester_account_id
+                   AND e.event_type IN ('ai_solved', 'ai_not_solved', 'skip_ai')
+                 ORDER BY e.id LIMIT 1),
+                (SELECT allow_requester_ai_skip FROM organization WHERE id)
+         FROM tickets t WHERE t.id = $1 AND t.requester_account_id = $2",
+    )
+    .bind(id)
+    .bind(requester)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let status: TicketStatus = ident(status)?;
+    if committed.as_deref() == Some(transition.event_type()) {
+        return Ok(status);
+    }
+    // "Still need help" before a suggestion exists would bypass mandatory AI.
+    if *transition == Transition::AiNotSolved
+        && status == TicketStatus::AiProcessing
+        && !skip_allowed
+    {
+        return Err(ApiError::Forbidden);
+    }
+    Err(ApiError::ConflictWith(status))
 }
 
 /// Staff work on a ticket. Every action carries the `updated_at` the client last
@@ -650,6 +799,19 @@ pub enum StaffAction {
     },
 }
 
+impl StaffAction {
+    /// The stable name of the attempted action, for the audit log.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::StartWork { .. } => "start_work",
+            Self::RequestInformation { .. } => "request_information",
+            Self::ProposeResolution { .. } => "propose_resolution",
+            Self::Reopen { .. } => "reopen",
+            Self::SetPriority { .. } => "set_priority",
+        }
+    }
+}
+
 /// Staff status work and priority changes. Thin over [`lifecycle::transition`]
 /// (visibility, self-handling, claimed-ticket and policy rules live there and in
 /// [`authz::authorize_ticket`]); stale clients get `409` and nothing is written.
@@ -663,18 +825,42 @@ pub enum StaffAction {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn staff_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<StaffAction>,
 ) -> Result<Json<ActionResult>, ApiError> {
-    authz::require_permission(&user, Permission::ReplyAsStaff)?;
-    let status = apply_staff_action(&state.pool, user.account_id(), id, action).await?;
+    if let Err(error) = authz::require_permission(&user, Permission::ReplyAsStaff) {
+        // A role that can never do staff work still leaves a trace when it
+        // aims at an AI-solved record or tries to reopen a ticket.
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, action.name(), &error).await;
+        return Err(error);
+    }
+    let status = apply_staff_action(&state.pool, &auth, user.account_id(), id, action).await?;
     Ok(Json(ActionResult { status }))
 }
 
 /// One staff action in its own transaction: the single-ticket endpoint and each
 /// item of a bulk action (`bulk.rs`) run exactly this.
 pub(crate) async fn apply_staff_action(
+    pool: &PgPool,
+    auth: &Auth,
+    account_id: Uuid,
+    id: Uuid,
+    action: StaffAction,
+) -> Result<TicketStatus, ApiError> {
+    let attempted = action.name();
+    let result = staff_action_in_transaction(pool, account_id, id, action).await;
+    if let Err(error) = &result {
+        // The transaction is gone: denied reopens and attempts on AI-solved
+        // records are recorded on their own, and the ticket stays untouched.
+        crate::audit::ticket_denied(pool, auth, account_id, id, attempted, error).await;
+    }
+    result
+}
+
+async fn staff_action_in_transaction(
     pool: &PgPool,
     account_id: Uuid,
     id: Uuid,
@@ -775,8 +961,8 @@ pub(crate) async fn apply_staff_action(
             .execute(&mut *tx)
             .await?;
             sqlx::query(
-                "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload)
-                 VALUES ($1, $2, 'priority_changed', $3)",
+                "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, request_id)
+                 VALUES ($1, $2, 'priority_changed', $3, $4)",
             )
             .bind(id)
             .bind(actor.id)
@@ -784,6 +970,7 @@ pub(crate) async fn apply_staff_action(
                 "previous_priority_id": priority_id, "previous_priority_name": previous_name,
                 "priority_id": next, "priority_name": next_name,
             }))
+            .bind(crate::telemetry::request_id())
             .execute(&mut *tx)
             .await?;
             scope.status

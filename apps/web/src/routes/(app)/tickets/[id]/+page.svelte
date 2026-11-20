@@ -1,15 +1,20 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation'
   import { ApiError, type Schemas } from '@tikkit/api-client'
+  import { aiStep, aiStepPolls, AI_POLL_MS } from '#lib/aiStep.ts'
   import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
   import ScreenshotPicker from '#lib/ScreenshotPicker.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { messages, errorText, fieldText } from '#lib/i18n.ts'
   import { attemptFor, type Attempt } from '#lib/intake.ts'
+  import { poll } from '#lib/poll.ts'
   import { requesterActions, publicText, isAiStage } from '#lib/requester.ts'
+  import AiStep from './AiStep.svelte'
   import type { PageProps } from './$types'
 
   let { data }: PageProps = $props()
@@ -24,6 +29,7 @@
   let reason = $state('')
   let cancelling = $state(false)
   let busy = $state(false)
+  let deciding = $state(false)
   let failure = $state<unknown>(null)
   let fields = $state<Record<string, string[]>>({})
   let feedback = $state<'reply' | 'action' | null>(null)
@@ -46,6 +52,31 @@
   // A refresh restarts conversation pagination; it does not discard unsent form input.
   $effect(() => { data.conversation; more = []; moreCursor = undefined })
 
+  // The AI step moves on without the requester (suggestion ready, automatic handoff, another tab),
+  // so the page follows the server while that step is undecided and stops once it is settled.
+  // An unavailable reload keeps the timer it had, so a short outage does not strand the wait.
+  let watched = false
+  $effect.pre(() => { if (ticket) watched = aiStepPolls(aiStep(ticket).kind) })
+  let polling = $derived(ticket ? aiStepPolls(aiStep(ticket).kind) : data.unavailable && watched)
+  $effect(() => {
+    if (!polling) return
+    return poll(async (current) => {
+      if (!current() || busy || deciding) return
+      if (!data.ticket || !data.activity) return refresh()
+      let version: string
+      try {
+        ;({ version } = await api(data.locale).request('get', '/api/tickets/{id}/activity', { path: { id: data.ticket.id } }))
+      } catch (e) {
+        if (!current()) return
+        // Signed out or no longer visible: the reload turns the page into that answer.
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500) return refresh()
+        throw e
+      }
+      if (!current() || busy || deciding || version === data.activity.version) return
+      await refresh()
+    }, AI_POLL_MS)
+  })
+
   const when = (iso: string) => new Date(iso).toLocaleString(data.locale, { timeZone: 'UTC', timeZoneName: 'short' })
   function start() { failure = null; fields = {}; feedback = null; changed = false }
   async function refresh() {
@@ -59,29 +90,34 @@
     }
   }
   async function act(action: Schemas['RequesterAction']) {
-    if (busy || !ticket) return
+    if (busy || deciding || !ticket) return
     start(); busy = true
+    let errored = false
     try {
       await api(data.locale).request('post', '/api/tickets/{id}/actions', { path: { id: ticket.id }, body: action })
       feedback = 'action'; cancelling = false; reason = ''
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    // After the buttons work again, so a retry is not swallowed by the in-flight guard.
+    if (errored) await focusFormErrors()
   }
   async function send() {
     if (busy || uploading || !ticket || !actions?.reply) return
     start()
-    if (!body.trim()) { fields = { body: ['required'] }; return }
-    if ([...body].length > 10000) { fields = { body: ['too_long'] }; return }
+    if (!body.trim()) { fields = { body: ['required'] }; await focusFormErrors(); return }
+    if ([...body].length > 10000) { fields = { body: ['too_long'] }; await focusFormErrors(); return }
     busy = true
     const input = { body, screenshot_ids: screenshots }
     attempt = attemptFor(attempt, JSON.stringify({ ticket: ticket.id, ...input }))
+    let errored = false
     try {
       await api(data.locale).request('post', '/api/tickets/{id}/replies', {
         path: { id: ticket.id }, body: { ...input, idempotency_key: attempt.key },
       })
       body = ''; screenshots = []; attempt = null; feedback = 'reply'
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function loadMore() {
     if (loadingMore || !cursor || !ticket) return
@@ -101,10 +137,18 @@
   <button onclick={refresh}>{h.refresh}</button>
 {:else}
   <h1>#{ticket.reference} · {ticket.subject}</h1>
-  <div class="actions"><StatusBadge status={ticket.status} label={t.ticketStatuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{h.refresh}</button></div>
+  {#if ticket.content_removed_at}<Alert kind="info">{t.retention.contentRemoved}</Alert>{:else if ticket.ai?.content_removed}<Alert kind="info">{t.retention.aiContentRemoved}</Alert>{/if}
+  <div class="actions"><StatusBadge status={ticket.status} label={t.ticketStatuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy || deciding}>{h.refresh}</button></div>
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? h.replySent : h.actionSaved}</Alert>{/if}
-  {#if changed}<Alert>{h.changed}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}
+  {#if changed}<ErrorSummary title={h.changed} />
+  {:else if failure || Object.keys(fields).length}
+    <ErrorSummary
+      title={Object.keys(fields).length && !failure ? t.errors.validation_failed : errorText(t, failure)}
+      items={fieldItems(fields, { reason: h.reason, body: h.message }, (code) => fieldText(t, code))}
+    />
+  {/if}
   {#if ticket.closure_reason}<p>{t.closureReasons[ticket.closure_reason]}</p>{/if}
+  <AiStep {ticket} policy={data.aiPolicy} locale={data.locale} disabled={busy} bind:busy={deciding} />
 
   <dl class="facts">
     <div><dt>{h.team}</dt><dd>{ticket.assignment.team_name ?? (isAiStage(ticket.status) ? h.noHumanTeam : h.generalQueue)}</dd></div>
@@ -123,12 +167,8 @@
     </dl>
     <p class="prose">{ticket.intake_snapshot?.description ?? ticket.description}</p>
     <ScreenshotGallery ids={ticket.intake_snapshot?.screenshot_ids ?? []} locale={data.locale} />
+    {#if ticket.removed_screenshots > 0}<p class="hint" data-testid="screenshots-removed">{t.retention.screenshotsRemoved.replace('{count}', String(ticket.removed_screenshots))}</p>{/if}
   </section>
-
-  {#if ticket.status === 'ai_solved'}
-    <section aria-labelledby="ai-title"><h2 id="ai-title">{h.aiSolution}</h2><p>{h.noSolution}</p></section>
-    <Alert kind="info">{h.aiFinal}</Alert>
-  {/if}
 
   {#if actions?.resolution}
     <section aria-labelledby="resolution-title">
@@ -143,11 +183,11 @@
     </section>
   {/if}
   {#if actions?.reopen}<p><button disabled={busy} onclick={() => act({ action: 'reopen' })}>{h.reopen}</button></p>{/if}
-  {#if actions?.cancel}<p><button class="secondary" disabled={busy} aria-expanded={cancelling} onclick={() => (cancelling = !cancelling)}>{h.cancel}</button></p>{/if}
+  {#if actions?.cancel}<p><button class="secondary" disabled={busy || deciding} aria-expanded={cancelling} onclick={() => (cancelling = !cancelling)}>{h.cancel}</button></p>{/if}
   {#if cancelling}
     <form aria-label={h.cancel} onsubmit={(e) => { e.preventDefault(); act({ action: 'cancel', reason }) }} novalidate>
       <Field name="reason" label={h.reason} hint={h.reasonHint} multiline required bind:value={reason} error={fieldText(t, fields.reason?.[0])} />
-      <div class="actions"><button disabled={busy || !actions?.cancel}>{h.confirmCancel}</button><button type="button" class="secondary" disabled={busy} onclick={() => (cancelling = false)}>{h.keep}</button></div>
+      <div class="actions"><button disabled={busy || deciding || !actions?.cancel}>{h.confirmCancel}</button><button type="button" class="secondary" disabled={busy} onclick={() => (cancelling = false)}>{h.keep}</button></div>
     </form>
   {/if}
 

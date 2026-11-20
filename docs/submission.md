@@ -7,7 +7,8 @@ accepted from a body or compared by email. Errors use the stable codes in
 
 ## Drafts
 
-- `POST /api/ticket-drafts` saves a `TicketIntake` and returns `201 Draft`.
+- `POST /api/ticket-drafts` saves a `TicketIntake` and returns `201 Draft`. An
+  account keeps at most 100 unsubmitted drafts (`422 draft: too_many`).
 - `GET /api/ticket-drafts` lists this account's editable drafts using standard
   `limit`/`cursor` pagination; `GET /api/ticket-drafts/{id}` resumes one.
 - `PATCH /api/ticket-drafts/{id}` takes `{version, intake}`. `intake` replaces
@@ -30,16 +31,17 @@ subject, 20,000 for the description, 100 answers, and 500 characters per draft
 answer. NUL characters are invalid. Catalog validity is checked at submission,
 so a renamed or archived category does not destroy unsent input.
 
-**Retention policy:** editable drafts are retained without automatic expiry
-until their owner deletes or submits them. Deletion removes saved input and
+**Retention policy:** editable drafts are retained until their owner deletes
+or submits them, or until the Admin-set draft retention period expires them
+(not set by default: no automatic expiry; [retention.md](retention.md)). Deletion removes saved input and
 records a `draft_deleted` audit event (ID and version, no form text). Creation
 and edits record `draft_created`/`draft_updated` with the same safe metadata.
 Submission clears the saved input and retains an ID/version/ticket tombstone
-for stale-write detection. Submitted snapshots, receipts, tombstones, and audit
-records have no automatic expiry in this milestone. Backups can retain deleted
-draft input under the deployment's backup retention policy; deleting a draft
-does not rewrite backups. Scheduled retention/anonymization belongs to the
-later retention work, not this endpoint.
+for stale-write detection. Receipts and tombstones hold no content and are kept. Submitted
+snapshots and audit records follow the ticket content and audit periods of
+[retention.md](retention.md), which are not set by default. Backups can retain
+deleted draft input under the deployment's backup retention policy; deleting a
+draft does not rewrite backups ([retention.md](retention.md#backups)).
 
 ## Submission
 
@@ -77,14 +79,18 @@ Legacy tickets predating this endpoint may have a null snapshot.
 Catalog tables are share-locked until commit to keep validation, names,
 conditional applicability, and category routing coherent with concurrent Admin
 edits. A stable ticket UUID/reference is inserted in the transaction before
-`lifecycle::transition(..., Submit { requester_skip })` runs. This is the only
+`lifecycle::submit(...)` (`Transition::Submit { requester_skip }`) runs. This is the only
 status mutation. The existing lifecycle rechecks the current account and
 server policy, writes the attributable transition, and chooses the route.
-With AI unavailable in this milestone, all submissions enter `queued` with
+With AI unavailable (disabled, no key, or an unreadable key; see
+[ai-configuration.md](ai-configuration.md)), all submissions enter `queued` with
 `payload.route = ai_disabled`, no team, no assignee, and zero provider calls.
 This global check precedes category exemption and requester-skip handling.
-When AI settings arrive, the lifecycle retains authority over mandatory AI,
-category exemption, and the separate requester-skip toggle. Client policy,
+With AI ready, the lifecycle decides mandatory AI, category exemption, and the
+separate requester-skip toggle. A ticket routed to AI enters `ai_processing`
+and, in the same transaction, gets its one AI attempt with the immutable input
+snapshot ([ai-attempts.md](ai-attempts.md)); the receipt status is
+`ai_processing`. Client policy,
 status, ownership, and assignment fields are rejected as unknown fields.
 
 `screenshot_ids` lists up to 10 distinct pending uploads of the signed-in
@@ -93,8 +99,8 @@ from expiring; submission attaches them to the new ticket in the same
 transaction. Another account's upload, an unknown, deleted, or already
 attached ID, or a duplicate returns `422 validation_failed`
 (`screenshot_ids: invalid`; over 10 is `too_many`); it can neither smuggle
-another account's image nor silently omit one. No provider integration is
-implemented here. Original intake has no requester PATCH/delete
+another account's image nor silently omit one. Submission itself never calls a
+provider. Original intake has no requester PATCH/delete
 API; draft endpoints remain restricted to unsubmitted drafts. Later replies and
 screenshots belong to separate append-only timeline endpoints.
 
@@ -131,8 +137,9 @@ Admin gets only their own submissions here. Rows include reference, status,
 subject, category name, effective priority name, timestamps, and the public
 `TicketAssignmentView`; no staff IDs, internal notes, or requester identity.
 `GET /api/tickets/{id}` retains the lifecycle visibility policy and now includes
-the frozen intake. Full requester UI, filtering, replies and actions are #20;
-staff queues are #22.
+the frozen intake. The requester pages are described in
+[frontend.md](frontend.md#requester-history-and-detail) and the staff queues in
+[queues.md](queues.md).
 
 Own history now also accepts `status`, `created_from` (inclusive RFC 3339
 instant), and `created_before` (exclusive RFC 3339 instant). Invalid dates,

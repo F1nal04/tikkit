@@ -56,6 +56,61 @@ Add `mod support;` to a new `apps/api/tests/*.rs` file to use:
 - `fixtures::team(&pool, "Name", lead) -> Result<Uuid>`: team plus lead
   membership in one transaction; `fixtures::member(&pool, team, account)`
 
+### Security boundary and authorization matrix
+
+`tests/authz_matrix.rs` enumerates every operation of the OpenAPI document
+(cross-checked against the router) for signed out and the five roles; a new
+route fails `every_route_has_a_matrix_row` until it gets a row.
+`tests/boundary.rs` covers the origin policy, cookies, headers, proxy trust,
+budgets, and injection edges. See [security.md](security.md).
+
+## AI provider tests
+
+`apps/api/tests/ai_providers.rs` drives the three adapters against an in-process
+mock HTTP server on loopback (`Endpoint::Override` with
+`allow_private_network: true`). It needs no database, credential, or network
+access. See [ai-providers.md](ai-providers.md).
+
+The mock lives in `tests/support/provider_mock.rs` (`serve(replies) -> Mock`,
+scripted `Reply`s, recorded requests). `test_app` never reaches a real provider:
+its AI endpoint is a closed loopback port. To exercise a route that calls a
+provider (the Admin connection test in `tests/ai_config.rs`), start a mock and
+build the app with `test_app_with_provider(&pool, &mock.url)`.
+
+`apps/api/tests/retention.rs` covers data retention
+([retention.md](retention.md#tests)). It places the run's clock (`as_of`)
+exactly on a boundary with `retention::start_run`, drives the worker with
+`retention::step`, and simulates crashes with `retention::claim` /
+`retention::process` on a transaction it rolls back or commits itself.
+
+`apps/api/tests/ai_guard.rs` covers the usage safeguards
+([ai-usage.md](ai-usage.md)) against PostgreSQL and the same mock: budget
+races and bursts (`Mock::max_in_flight()` is the most requests the mock ever
+answered at once), the circuit breaker, failure outcomes, retention, and what
+reaches storage and logs. `TestDb::pool_for(&db)` opens a second pool on the
+test database to stand in for a second process. Tests move time by editing
+rows (`ai_usage.started_at`, `ai_circuit.open_until`), never by sleeping
+through a window.
+
+`apps/api/tests/ai_attempts.rs` covers suggestion attempts end to end
+([ai-attempts.md](ai-attempts.md)): it submits through the HTTP API and drives
+the worker step by step with `ai_attempts::process_one(&worker)` and
+`ai_attempts::sweep_one(&worker)`; one test runs the background loop itself to
+check shutdown (it is the only one that calls `stop_workers`). The worker
+is built with `Worker::with(&test_state(&pool), guard, key)` and short
+`WorkerOptions` (lease, heartbeat, saturation retry). A delayed mock reply
+(`Reply::after`) keeps a provider call in flight while the test changes
+configuration, cancels, or aborts the worker task.
+
+`apps/api/tests/ai_decisions.rs` covers the requester's decisions
+([ai-decisions.md](ai-decisions.md)) without a provider: tickets are put into
+`ai_processing` or `awaiting_ai_decision` through the lifecycle with
+`fixtures::ai_attempt(db, ticket, state)`, which inserts the attempt row a
+submission and the worker would have stored. Use the same fixture in any test
+that applies `AiSolved` or `AiNotSolved`: both need a `suggestion_ready`
+attempt. Concurrency tests send real concurrent HTTP requests on a
+multi-threaded runtime and assert the stored result, not which request won.
+
 ## Browser tests
 
 ```sh
@@ -64,7 +119,11 @@ bun run test:e2e                                              # builds, then run
 ```
 
 `apps/web/playwright.config.ts` runs `e2e/*.spec.ts` in desktop Chromium and
-`e2e/shell.spec.ts` again at phone size (Pixel 7); it starts the production server
+`e2e/shell.spec.ts` again at phone size (Pixel 7). `e2e/a11y.spec.ts` scans
+every route with axe-core (WCAG 2.2 A/AA) in English and German at mobile,
+tablet, and desktop widths, and fails when a new `+page.svelte` is not in that
+list. `e2e/keyboard.spec.ts` and `e2e/recovery.spec.ts` cover keyboard use and
+failed requests. See [accessibility.md](accessibility.md). The config starts the production server
 (`node build/index.js`) twice: on :4173 with `API_ORIGIN` pointing at a stub
 API (`e2e/stub-api.mjs`, :4175; sign in as `requester`, `operator`, `specialist`,
 `lead`, or `admin` with `correct horse battery`; it also serves `/api/queue`, `/api/queue/counts`, and `/api/catalog` from fixed queue data; `e2e/support.ts` routes browser
@@ -91,3 +150,67 @@ validation with retained input, Admin promotion without membership, lead
 eligibility and complete paginated selector options. `e2e/admin.spec.ts` covers
 both languages at mobile width, account identity/role controls and denied deep
 links against the browser stub; Rust tests use real PostgreSQL.
+
+## Full browser workflows
+
+`bun run test:e2e:full` runs the built Node app through a same-origin loopback
+gateway, with the real Axum application router, PostgreSQL, and the AI,
+notification, and confirmation-timeout workers. Playwright uses a fresh
+deployment for first-admin bootstrap and its organization-wide policy changes.
+The test entry point in `apps/api/tests/workflow_server/main.rs` creates its own
+migrated database through `TestDb`. EOF on the launcher pipe, SIGINT, SIGTERM, or SIGHUP
+trigger bounded shutdown and drop the database and screenshot directory. A
+forced kill of the API process can bypass cleanup, as for other database tests.
+This Cargo test target ships in neither application. Its only AI destination is the local provider
+mock, and mail goes to the existing local STARTTLS capture.
+
+Start dev PostgreSQL and install Chromium as for the other suites. On a shared
+machine, run under the same browser lock as the stub suite:
+
+```sh
+export TEST_DATABASE_URL=postgres://tikkit:tikkit@127.0.0.1:5432/tikkit
+# Optional warm-up, also used in CI.
+timeout 900 cargo test --locked -p tikkit-api --test workflow_server --no-run
+until mkdir /tmp/tikkit-e2e.lock 2>/dev/null; do sleep 10; done
+trap 'rmdir /tmp/tikkit-e2e.lock' EXIT
+CI=1 bun run test:e2e:full
+```
+
+Set `WORKFLOW_SETUP_LANGUAGE=de` to run the complete browser workflow in German.
+CI runs the English and German scenarios against separate fresh databases.
+
+Local ports are 18500 (gateway), 18501 (API), 18502 (built portal), and 18503
+(SMTP). The in-process provider mock binds an ephemeral loopback port. The
+scenarios use the gateway origin for API calls and links. The launcher
+reports occupied ports before it builds the test API or creates a database.
+
+### Production Compose workflows
+
+Build the production images with the commands in [deployment.md](deployment.md).
+Point the test runner at their tags:
+
+```sh
+WORKFLOW_API_IMAGE=tikkit-api:local WORKFLOW_WEB_IMAGE=tikkit-web:local \
+  bash ops/compose/workflows.sh
+```
+
+The script claims project `tikkit-m4-48`, binds loopback ports 18544 and 18580,
+runs the browser under the shared lock, and deletes the project and its
+volumes on exit. It verifies Caddy with the generated portal CA before handing
+`WORKFLOW_BASE_URL` to Playwright. Only the disposable Compose browser context
+accepts that private TLS certificate. Set `WORKFLOW_SETUP_LANGUAGE=de` to run its
+German scenario.
+
+The test-only overlay isolates Compose interpolation with the backup drill's
+`dc` helper and uses `10.99.48.0/24` for trusted proxy traffic. The unchanged
+production API keeps the official OpenAI URL and public-address resolver.
+Ordinary private aliases are refused by that resolver. For this test, an
+AS112 address is assigned on a dedicated **internal** Docker bridge, where
+`api.openai.com` resolves to the test HTTPS peer. The API has only internal
+networks and is verified as such before the suite starts. Only that API
+container receives the generated provider CA through `SSL_CERT_FILE`.
+The peer is mounted read-only and runs as the runner's UID. Its responses
+cover both AI decisions and an explicit 401 handoff, without a real key,
+external provider connection, or SMTP. The browser test recreates the API
+and web containers and verifies persistent data. See
+[workflow-coverage.md](workflow-coverage.md) for the assertions.

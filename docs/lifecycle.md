@@ -26,8 +26,8 @@ tx.commit().await?;
 | `ai_suggestion_ready` | `ai_processing` | system | `awaiting_ai_decision` |
 | `ai_failed` | `ai_processing` | system | `queued` |
 | `skip_ai` | `ai_processing` | requester, only if "Allow requester to skip AI" | `queued` |
-| `ai_solved` | `awaiting_ai_decision` | requester | `ai_solved` (final) |
-| `ai_not_solved` | `awaiting_ai_decision` | requester | `queued` |
+| `ai_solved` | `awaiting_ai_decision` | requester, a suggestion is stored | `ai_solved` (final) |
+| `ai_not_solved` | `awaiting_ai_decision` | requester, a suggestion is stored | `queued` |
 | `start_work` | `queued`, `waiting_for_requester` | staff writer (`reply_as_staff`) | `in_progress` |
 | `request_information` | `in_progress` | staff writer (`reply_as_staff`) | `waiting_for_requester` |
 | `requester_responded` | `waiting_for_requester` | requester | `in_progress` |
@@ -38,7 +38,10 @@ tx.commit().await?;
 | `reopen` | `closed` | requester or staff writer, only if reopening is enabled | `in_progress` |
 | `cancel` | `ai_processing` … `awaiting_confirmation` (submitted, open) | requester, under the cancellation policy | `cancelled` (final) |
 
-Nothing leaves `ai_solved` or `cancelled`. "Staff writer" is the ticket policy
+Nothing leaves `ai_solved` or `cancelled`. `ai_solved`, `ai_not_solved`, and
+`skip_ai` record the attempt they refer to in `payload.attempt_id`; the two
+decisions need the ticket's `suggestion_ready` attempt, read under the ticket
+lock (`409` without one). See [ai-decisions.md](ai-decisions.md). "Staff writer" is the ticket policy
 in [authorization.md](authorization.md): the actor sees the ticket as staff, it
 belongs to a team, and it is unclaimed or the actor is its assignee, the team's
 Lead, or an Admin. The requester never acts as staff on their own ticket, in any
@@ -59,6 +62,12 @@ organization toggle allows it, otherwise `403`; else `ai_processing` (route
 `ai`). The route is the event's `payload.route`; later entries record
 `ai_failed`, `requester_skip`, or `not_solved`. Rust decides the route from the
 current policy and the category; nothing the client sends can force it.
+
+A ticket routed to `ai` gets its one AI attempt in the same transaction. The
+attempt worker ends `ai_processing` with `ai_suggestion_ready` (the suggestion
+is stored) or `ai_failed` (handoff to operators, exactly once); an Admin
+configuration change, the attempt deadline, a requester skip, and a requester
+cancellation end it too. See [ai-attempts.md](ai-attempts.md).
 
 Tickets before human support and AI-solved records never have a team
 (`tickets_pre_triage_unrouted`), so every entry into `queued` lands in the
@@ -81,7 +90,9 @@ Closures record `resolution_source` (`operator`, or `ai` for `ai_solved`) and
 ticket and in the event. A timeout is never an acceptance; replies, views, and
 silence never close anything. Rejection keeps the team and assignee and is
 allowed with reopening disabled. Reopening clears both columns; the events keep
-the history.
+the history. A closed ticket whose content the retention policy has removed
+(`content_removed_at`, [retention.md](retention.md)) cannot be reopened: the
+reopen is `409 conflict`.
 
 ## Auto-close worker
 
@@ -116,7 +127,9 @@ The requester cancels a submitted open ticket with a reason. Policy
 `anytime_while_open` (default), `before_work_starts` (no `in_progress` event
 was ever recorded; unassignment or transfer does not reset that), or
 `disabled`. The ticket keeps its team, history, and reference; the confirmation
-deadline is cleared, and late AI results or timeouts get `409`.
+deadline is cleared, and late AI results or timeouts get `409`. Cancelling
+during `ai_processing` ends the AI attempt; it never sends the ticket to
+operators.
 
 ## Policy
 
@@ -124,8 +137,14 @@ deadline is cleared, and late AI results or timeouts get `409`.
 row: `allow_reopening`, `requester_cancellation_policy`,
 `resolution_confirmation_hours`, `allow_requester_ai_skip`) `FOR SHARE` in the
 transition's transaction, so a concurrent settings change waits until the
-transition that relied on the old values commits. AI stays unavailable until AI
-configuration is persisted.
+transition that relied on the old values commits. `Policy::ai_available` comes
+from `ai_config::ai_available` (enabled, a key stored for the selected provider,
+and that key decrypts), which needs the deployment's encryption key. Only
+`lifecycle::submit` supplies it; it is the entry point for
+`Transition::Submit` and the only transition that routes on AI availability. A
+`Submit` through plain `lifecycle::transition` treats AI as unavailable and
+queues for operators
+([ai-configuration.md](ai-configuration.md#how-availability-reaches-the-lifecycle)).
 
 ## Concurrency
 
@@ -151,8 +170,9 @@ while `awaiting_confirmation`; `resolution_source`/`closure_reason` match
 `closed`/`ai_solved` and are NULL otherwise; pre-triage and AI-solved tickets
 have no team. A trigger (`restrict_violation`, `23001`) rejects changing the
 requester, editing subject/description/category or returning to `draft` after
-submission, and any status/team/assignee change of an `ai_solved` or
-`cancelled` ticket. The one exception is clearing the assignee when that
+submission, any status/team/assignee change of an `ai_solved` or `cancelled`
+ticket, and (migration `0023_ai_decisions.sql`) any change at all to an
+`ai_solved` ticket row. The one exception is clearing the assignee when that
 account is deactivated or leaves the team: the assignee is a foreign key to
 the team membership, and the attributed `assignment_changed` event keeps the
 history.
@@ -170,15 +190,26 @@ AI-solved records are `404` for operators; Admins see everything but drafts.
 
 `POST /api/tickets/{id}/actions` accepts one explicit tagged decision:
 `{action: "accept_resolution" | "reject_resolution", proposal_version}`,
-`{action: "cancel", reason}`, or `{action: "reopen"}`. It calls the same
-transactional lifecycle and returns `{status}` only after commit. A duplicate,
-stale proposal, or finished state returns `409`; a policy denial returns `403`;
-invisible tickets return `404`. Reopen retains the lifecycle's requester-or-
-authorized-staff rule. No AI escalation, general state setter, or intake edit
-is exposed by this endpoint.
+`{action: "cancel", reason}`, `{action: "reopen"}`, or one of the AI decisions
+`{action: "ai_solved"}`, `{action: "ai_not_solved"}`, `{action: "skip_ai"}`. It
+calls the same transactional lifecycle and returns `{status}` only after
+commit. A duplicate, stale proposal, or finished state returns `409`; a policy
+denial returns `403`; invisible tickets return `404`. Reopen retains the
+lifecycle's requester-or-authorized-staff rule. No general state setter or
+intake edit is exposed by this endpoint, and actions without parameters accept
+no other field (`422`).
 
-The persisted AI suggestion belongs to the AI attempt records (#35) and is not
-exposed yet; AI-solved history shows an explicit unavailable-suggestion message.
+The AI decisions are idempotent ([ai-decisions.md](ai-decisions.md#repeats-and-races)):
+repeating the committed decision returns `200` with the current status and
+writes nothing; any other AI decision on a ticket past that stage is `409` with
+the committed status in `error.details.status`.
+
+The persisted AI suggestion belongs to the AI attempt record. `TicketDetail.ai`
+carries its state, the stored suggestion with its language, the handoff reason,
+and the requester's decision ([ai-decisions.md](ai-decisions.md#ai-context-in-ticketdetailai)),
+for the requester and for staff who may see the ticket. A `cancel` or `skip_ai`
+from `ai_processing` also ends the attempt in the same transaction, so late
+provider output is ignored.
 
 ## Staff HTTP actions
 
@@ -186,7 +217,7 @@ exposed yet; AI-solved history shows an explicit unavailable-suggestion message.
 `expected_updated_at` the client loaded (`TicketDetail.updated_at`):
 `start_work`, `request_information`, `propose_resolution {summary}`, `reopen`,
 or `set_priority {priority_id}`. Status actions call `lifecycle::transition`
-(so authorization precedes the source-status check, as in #16); there is no staff
+(so authorization precedes the source-status check, as for every staff write); there is no staff
 action that accepts, rejects, or closes. A newer reply, status, or priority change
 makes `expected_updated_at` stale: `409 conflict`, nothing written. Private
 notes do not move `updated_at`. Checks run in the same order as assignment:
@@ -214,7 +245,7 @@ The staff endpoint first requires a staff capability, then applies the order
 above, including for `reopen`. Requesters of any role use `/actions`. Ordinary
 staff work on finished tickets returns `403`, because `authorize_ticket`
 requires open human work before the lifecycle checks the transition's source
-status. This preserves #16 and the conversation API's authorization order. An
+status. This keeps the same authorization order as the conversation API. An
 authorized writer attempting an invalid transition between open states (or
 reopening a non-closed team ticket) gets `409`. Stale authorized writes return
 `409` and roll back both state and events.

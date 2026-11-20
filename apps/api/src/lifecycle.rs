@@ -21,6 +21,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
+    ai_attempts, ai_config,
     api::{ApiError, FieldErrors, TicketStatus},
     auth::{ident, ident_str},
     authz::{self, Actor, Permission, TeamScope, TicketScope, TicketView},
@@ -60,18 +61,28 @@ impl Default for Policy {
 
 /// The current organization settings, read `FOR SHARE` so a concurrent
 /// settings change waits for the transition that relied on them.
-pub async fn policy(db: &mut PgConnection) -> Result<Policy, ApiError> {
+///
+/// AI availability needs the deployment's encryption key (the stored provider
+/// key must decrypt). Without one the policy says AI is unavailable, which only
+/// ever sends a submission to operators; [`submit`] is the caller that has it.
+pub async fn policy(
+    db: &mut PgConnection,
+    encryption_key: Option<&[u8; 32]>,
+) -> Result<Policy, ApiError> {
     let (allow_requester_skip, allow_reopen, cancellation, hours): (bool, bool, String, i32) =
         sqlx::query_as(
             "SELECT allow_requester_ai_skip, allow_reopening, requester_cancellation_policy,
                     resolution_confirmation_hours
              FROM organization WHERE id FOR SHARE",
         )
-        .fetch_one(db)
+        .fetch_one(&mut *db)
         .await?;
+    let ai_available = match encryption_key {
+        Some(key) => ai_config::ai_available(db, key).await?,
+        None => false,
+    };
     Ok(Policy {
-        // ponytail: AI stays unavailable until AI configuration (#33) is persisted.
-        ai_available: false,
+        ai_available,
         allow_requester_skip,
         allow_reopen,
         cancellation: ident(cancellation)?,
@@ -311,7 +322,10 @@ pub fn decide(
             resolution = Some((ResolutionSource::Ai, ClosureReason::RequesterConfirmed));
             (
                 S::AiSolved,
-                json!({ "resolution_source": ResolutionSource::Ai }),
+                json!({
+                    "resolution_source": ResolutionSource::Ai,
+                    "closure_reason": ClosureReason::RequesterConfirmed,
+                }),
             )
         }
         Transition::AiNotSolved => queue("not_solved"),
@@ -427,7 +441,47 @@ pub async fn transition(
     by: By,
     t: &Transition,
 ) -> Result<TicketStatus, ApiError> {
-    transition_with(tx, ticket_id, by, t, None).await
+    run(tx, ticket_id, by, t, None, None, None).await
+}
+
+/// [`Transition::AiFailed`] for the attempt machinery: ends the ticket's
+/// attempt with its stable `outcome` code under the ticket lock, just before
+/// the handoff event is written. The event payload stays `{"route":
+/// "ai_failed"}` (requesters read it and only ever see coarse reasons); the
+/// audit mirror of the event reads the outcome from the attempt.
+pub(crate) async fn ai_failed(
+    tx: &mut Transaction<'_, Postgres>,
+    ticket_id: Uuid,
+    outcome: &str,
+    usage_id: Option<Uuid>,
+) -> Result<TicketStatus, ApiError> {
+    let t = Transition::AiFailed;
+    let end = Some((outcome, usage_id));
+    run(tx, ticket_id, By::System, &t, None, None, end).await
+}
+
+/// Submits the requester's draft ticket: [`Transition::Submit`] with the real AI
+/// availability. Submission is the only transition that routes on it, and
+/// checking it needs `encryption_key`; a `Submit` through plain [`transition`]
+/// treats AI as unavailable and always queues for operators.
+pub async fn submit(
+    tx: &mut Transaction<'_, Postgres>,
+    ticket_id: Uuid,
+    requester: Uuid,
+    requester_skip: bool,
+    encryption_key: &[u8; 32],
+) -> Result<TicketStatus, ApiError> {
+    let t = Transition::Submit { requester_skip };
+    run(
+        tx,
+        ticket_id,
+        By::Account(requester),
+        &t,
+        None,
+        Some(encryption_key),
+        None,
+    )
+    .await
 }
 
 /// [`transition`] with a fixed policy instead of the current one, for tests of
@@ -439,6 +493,18 @@ pub async fn transition_with(
     by: By,
     t: &Transition,
     fixed_policy: Option<Policy>,
+) -> Result<TicketStatus, ApiError> {
+    run(tx, ticket_id, by, t, fixed_policy, None, None).await
+}
+
+async fn run(
+    tx: &mut Transaction<'_, Postgres>,
+    ticket_id: Uuid,
+    by: By,
+    t: &Transition,
+    fixed_policy: Option<Policy>,
+    encryption_key: Option<&[u8; 32]>,
+    end_attempt: Option<(&str, Option<Uuid>)>,
 ) -> Result<TicketStatus, ApiError> {
     let conn = &mut **tx;
     let actor = match by {
@@ -458,7 +524,7 @@ pub async fn transition_with(
     let row = row.ok_or(ApiError::NotFound)?;
     let policy = match fixed_policy {
         Some(p) => p,
-        None => policy(conn).await?,
+        None => policy(conn, encryption_key).await?,
     };
     // A fresh statement sees events committed by a previous ticket lock holder;
     // the clock is read after locking, not at the start of a possibly old transaction.
@@ -481,7 +547,45 @@ pub async fn transition_with(
         work_started,
         category_skip_ai: row.skip_ai,
     };
-    let out = decide(&state, actor.as_ref(), t, &policy, now)?;
+    let mut out = decide(&state, actor.as_ref(), t, &policy, now)?;
+    // Retention removed this ticket's content (docs/retention.md): there is
+    // nothing left to work on, so it stays closed.
+    if matches!(t, Transition::Reopen) {
+        let purged: bool =
+            sqlx::query_scalar("SELECT content_purged_at IS NOT NULL FROM tickets WHERE id = $1")
+                .bind(ticket_id)
+                .fetch_one(&mut *conn)
+                .await?;
+        if purged {
+            return Err(ApiError::Conflict);
+        }
+    }
+    // The transition is accepted and the ticket is locked: a failed attempt
+    // ends now, so its outcome is stored when the event below is audited.
+    if let Some((outcome, usage_id)) = end_attempt {
+        ai_attempts::close(conn, ticket_id, "handed_off", outcome, usage_id).await?;
+    }
+    // A decision applies to the ticket's one stored suggestion and records which
+    // attempt it answered. Without a stored suggestion there is nothing to decide.
+    // A skip names the attempt it ended, if there is one.
+    let attempt_state = match t {
+        Transition::AiSolved | Transition::AiNotSolved => Some("suggestion_ready"),
+        Transition::SkipAi => Some("processing"),
+        _ => None,
+    };
+    if let Some(attempt_state) = attempt_state {
+        let attempt: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM ai_attempts WHERE ticket_id = $1 AND state = $2")
+                .bind(ticket_id)
+                .bind(attempt_state)
+                .fetch_optional(&mut *conn)
+                .await?;
+        match attempt {
+            Some(id) => out.payload["attempt_id"] = json!(id),
+            None if matches!(t, Transition::SkipAi) => {}
+            None => return Err(ApiError::Conflict),
+        }
+    }
     sqlx::query(
         "UPDATE tickets SET status = $2, proposal_version = proposal_version + $3,
                 confirmation_deadline = $4, resolution_source = $5, closure_reason = $6,
@@ -498,8 +602,8 @@ pub async fn transition_with(
     .execute(&mut *conn)
     .await?;
     sqlx::query(
-        "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, from_status, to_status, payload, created_at, request_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(ticket_id)
     .bind(actor.map(|a| a.id))
@@ -508,8 +612,21 @@ pub async fn transition_with(
     .bind(ident_str(out.to))
     .bind(&out.payload)
     .bind(now)
+    .bind(crate::telemetry::request_id())
     .execute(&mut *conn)
     .await?;
+    // A requester who cancels or skips while AI is processing ends the attempt
+    // here, under the ticket lock: its late provider result is then ignored.
+    if state.scope.status == TicketStatus::AiProcessing {
+        let ended = match t {
+            Transition::Cancel { .. } => Some(("cancelled", ai_attempts::REQUESTER_CANCELLED)),
+            Transition::SkipAi => Some(("handed_off", ai_attempts::REQUESTER_SKIP)),
+            _ => None,
+        };
+        if let Some((attempt_state, outcome)) = ended {
+            ai_attempts::close(conn, ticket_id, attempt_state, outcome, None).await?;
+        }
+    }
     Ok(out.to)
 }
 

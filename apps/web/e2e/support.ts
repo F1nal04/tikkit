@@ -11,11 +11,17 @@ export const PASSWORD = 'correct horse battery'
 export async function proxyApi(page: Page) {
   await page.route('**/api/**', async (route) => {
     const { pathname, search } = new URL(route.request().url())
-    const response = await route.fetch({
-      url: `${STUB}${pathname}${search}`,
-      headers: await route.request().allHeaders(),
-    })
-    await route.fulfill({ response })
+    try {
+      const response = await route.fetch({
+        url: `${STUB}${pathname}${search}`,
+        headers: await route.request().allHeaders(),
+      })
+      await route.fulfill({ response })
+    } catch {
+      // A background poll still in flight when the test ends would otherwise fail it.
+      // Anything else surfaces in the page as a failed request.
+      await route.abort().catch(() => {})
+    }
   })
 }
 

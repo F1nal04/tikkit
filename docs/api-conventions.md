@@ -31,8 +31,14 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 - `details.fields` maps dotted field paths to stable field codes such as
   `required`, `invalid`, `unknown_field`, `invalid_cursor`. More specific codes
   are added per feature.
-- `request_id` equals the `x-request-id` response header. Clients may send their
-  own `x-request-id`; otherwise the API generates a UUID. Logs carry it.
+- `details.status` appears only on a `conflict` about an AI decision: the
+  ticket's committed status ([ai-decisions.md](ai-decisions.md#repeats-and-races)).
+  `details.fields` is then an empty object.
+- `request_id` equals the `x-request-id` response header. The internal SSR server
+  sends a hyphenated UUIDv4 as `x-request-id`. The public proxy strips incoming
+  request IDs before forwarding, so the API generates them for public calls.
+  Logs carry the UUID and the matched route template, and audit events store
+  it ([audit.md](audit.md)), so an Admin can find everything one request changed.
 
 | Situation | Status | Code |
 | --- | --- | --- |
@@ -43,10 +49,13 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Malformed path identifier, e.g. a bad UUID | 400 | `invalid_identifier` |
 | Unparsable query parameter | 400 | `invalid_query` |
 | JSON body over 1 MiB | 413 | `payload_too_large` |
+| Personal-data export over its byte budget ([retention.md](retention.md#personal-data-export)) | 413 | `export_too_large` |
+| Retention confirmation whose preview no longer matches the stored policy | 409 | `retention_preview_stale` |
 | Not signed in | 401 | `unauthorized` |
 | Login failed (any reason) | 401 | `invalid_credentials` |
-| State-changing request without `X-Requested-With: tikkit` | 403 | `csrf_rejected` |
-| Too many login/setup attempts (`Retry-After` header set) | 429 | `rate_limited` |
+| State-changing request without `X-Requested-With: tikkit`, or from another origin | 403 | `csrf_rejected` |
+| Too many sign-in attempts or over a route's per-account budget (`Retry-After` header set) | 429 | `rate_limited` |
+| Request still running after 60 seconds | 503 | `request_timeout` |
 | First-admin setup already done | 409 | `setup_already_completed` |
 | Invitation token unknown, expired, revoked, or used | 410 | `invitation_invalid` |
 | Password reset token unknown, expired, or used | 410 | `reset_token_invalid` |
@@ -63,6 +72,13 @@ Every non-2xx response (except the `/api/ready` probe body) is:
 | Mail server DNS, connect, or timeout | 502 | `smtp_network_failed` |
 | Mail server refused the message | 502 | `smtp_delivery_failed` |
 | Stored mail password cannot be decrypted | 502 | `smtp_credential_unreadable` |
+| AI provider, model, or its key is not stored | 409 | `ai_not_configured` |
+| Stored AI key cannot be decrypted | 409 | `ai_credential_unreadable` |
+| Model not supported, not image-capable, or not offered to the key | 409 | `ai_model_unsupported` |
+| AI provider rejected the key | 502 | `ai_provider_auth_failed` |
+| AI provider DNS, connect, TLS, timeout, or outage | 502 | `ai_provider_unreachable` |
+| AI provider rate limit or quota | 502 | `ai_provider_rate_limited` |
+| Any other AI provider failure | 502 | `ai_provider_failed` |
 | Anything unexpected (logged with the request ID) | 500 | `internal` |
 
 **Denied access does not reveal existence.** When the caller may not see a
@@ -81,9 +97,10 @@ In Rust: return `api::ApiError`, extract with `api::Json`, `api::Path`,
 
 Sessions are the HttpOnly `tikkit_session` cookie (see [auth.md](auth.md)).
 Every `POST`/`PUT`/`PATCH`/`DELETE` under `/api/` must carry
-`X-Requested-With: tikkit`, otherwise `403 csrf_rejected`. Browsers cannot add
-custom headers to cross-site requests without a CORS preflight, which the API
-never grants. `@tikkit/api-client` sends the header on every request.
+`X-Requested-With: tikkit`, otherwise `403 csrf_rejected`; a browser's `Origin`
+/ `Sec-Fetch-Site`, when present, must also be the portal's own. Browsers cannot
+add custom headers to cross-site requests without a CORS preflight, which the
+API never grants ([security.md](security.md)). `@tikkit/api-client` sends the header on every request.
 Handlers take `auth::CurrentUser` to require a session (`401 unauthorized` otherwise).
 
 ## Lists: pagination, ordering, filtering
@@ -113,7 +130,7 @@ OpenAPI enums. They never change with the interface language. Clients send
 `Accept-Language` for display preferences only; it never affects authorization
 or business rules. Timestamps are RFC 3339 UTC.
 
-## Requester ticket assignment (contract for upcoming ticket endpoints)
+## Requester ticket assignment
 
 Requester-facing ticket responses include `TicketAssignmentView`:
 `team_name` (`null` = shared general queue) and `assignee_display_name`

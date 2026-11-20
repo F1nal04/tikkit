@@ -349,7 +349,7 @@ fn normalize_filename(raw: Option<&str>, kind: Kind) -> Result<String, &'static 
     Ok(format!("{clean}.{}", kind.extensions()[0]))
 }
 
-fn file_path(dir: &FsPath, id: Uuid) -> PathBuf {
+pub(crate) fn file_path(dir: &FsPath, id: Uuid) -> PathBuf {
     dir.join(id.to_string())
 }
 
@@ -411,6 +411,7 @@ pub async fn upload(
     let filename =
         normalize_filename(params.filename.as_deref(), kind).map_err(|c| field("filename", c))?;
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     // Share the quota across API processes, not just the decoding semaphore.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext('screenshot_upload'), hashtext($1))")
         .bind(user.account_id().to_string())
@@ -434,7 +435,7 @@ pub async fn upload(
         i32::try_from(bytes.len()).map_err(|_| field("file", "dimensions_too_large"))?;
     let (written, _permit) = blocking(move || (write_file(&dir, id, &bytes), permit)).await?;
     if let Err(error) = written {
-        tracing::error!(%error, "screenshot storage write failed");
+        tracing::error!(kind = ?error.kind(), "screenshot storage write failed");
         return Err(ApiError::Internal);
     }
     let screenshot: Screenshot = sqlx::query_as(&format!(
@@ -569,7 +570,7 @@ async fn serve(
     let bytes = blocking(move || std::fs::read(path))
         .await?
         .map_err(|error| {
-            tracing::error!(%error, %id, "screenshot file unreadable");
+            tracing::error!(kind = ?error.kind(), screenshot_id = %id, "screenshot file unreadable");
             ApiError::Internal
         })?;
     let name = &screenshot.filename;
@@ -666,9 +667,8 @@ pub async fn delete(
     )
     .await?;
     tx.commit().await?;
-    // A failed removal leaves a stray file for `cleanup`; the record is already gone.
-    let path = file_path(&state.screenshot_dir, id);
-    let _ = blocking(move || std::fs::remove_file(path)).await;
+    // A failed or deferred removal leaves a stray file for `cleanup`; the record is already gone.
+    remove_files(&state.pool, &state.screenshot_dir, &[id]).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -768,6 +768,70 @@ async fn attach_with_message(
     }
 }
 
+/// Reduces the frozen intake's screenshot IDs to those that still exist and
+/// returns how many the retention policy has removed, so views neither link
+/// to missing images nor hide that there were some.
+pub(crate) async fn existing_intake(
+    db: &mut PgConnection,
+    ticket: Uuid,
+    ids: &mut Vec<Uuid>,
+) -> Result<i64, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let stored: HashSet<Uuid> =
+        sqlx::query_scalar("SELECT id FROM screenshots WHERE ticket_id = $1 AND id = ANY($2)")
+            .bind(ticket)
+            .bind(&*ids)
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect();
+    let before = ids.len();
+    ids.retain(|id| stored.contains(id));
+    Ok((before - ids.len()) as i64)
+}
+
+/// Runs `work`, which deletes files from the screenshot directory, unless a
+/// backup holds the file lock: `pg_advisory_lock(screenshot_files_lock_key())`
+/// in some session (docs/retention.md#backups). Every file deletion of the API
+/// goes through here. It takes the lock in shared mode for the duration, so
+/// deletions do not block each other and a backup that asks for the lock waits
+/// until those in flight are done. `None`: deferred, nothing was deleted. The
+/// rows are already gone by then, so the files are strays that [`cleanup`]
+/// removes later. Database work never waits for this lock.
+pub(crate) async fn deleting_files<T>(pool: &PgPool, work: impl Future<Output = T>) -> Option<T> {
+    let mut tx = pool.begin().await.ok()?;
+    let free: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock_shared(screenshot_files_lock_key())")
+            .fetch_one(&mut *tx)
+            .await
+            .ok()?;
+    if !free {
+        return None;
+    }
+    let out = work.await;
+    // Ends the transaction and with it the lock; so does dropping it.
+    let _ = tx.commit().await;
+    Some(out)
+}
+
+/// Deletes the files of screenshot rows that are already gone. Best effort:
+/// returns whether it ran (see [`deleting_files`]); a file that stays behind
+/// has no row and is removed by [`cleanup`].
+pub async fn remove_files(pool: &PgPool, dir: &FsPath, ids: &[Uuid]) -> bool {
+    if ids.is_empty() {
+        return true;
+    }
+    let paths: Vec<PathBuf> = ids.iter().map(|id| file_path(dir, *id)).collect();
+    let work = blocking(move || {
+        for path in paths {
+            let _ = std::fs::remove_file(path);
+        }
+    });
+    deleting_files(pool, work).await.is_some()
+}
+
 /// Delete expired pending uploads (unreferenced by any draft for [`ORPHAN_TTL`])
 /// and stray files without a record (crash between write and insert). Safe to
 /// run concurrently from several API processes. Returns the expired uploads.
@@ -784,19 +848,28 @@ pub async fn cleanup(pool: &PgPool, dir: &FsPath) -> Result<Vec<Uuid>, ApiError>
     .fetch_all(&mut *tx)
     .await?;
     if !expired.is_empty() {
-        audit(
+        crate::audit::system(
             &mut *tx,
+            "screenshot_cleanup",
             "screenshots_expired",
-            None,
-            None,
             json!({"screenshot_ids": expired}),
         )
         .await?;
     }
     tx.commit().await?;
 
+    // Not while a backup copies the volume: the next run does it.
+    match deleting_files(pool, sweep(pool, dir, expired.clone())).await {
+        Some(result) => result?,
+        None => tracing::info!("screenshot file clean-up deferred: a backup holds the file lock"),
+    }
+    Ok(expired)
+}
+
+/// The file half of [`cleanup`]: the files of `gone` rows, then old files
+/// without a row and leftover temp files.
+async fn sweep(pool: &PgPool, dir: &FsPath, gone: Vec<Uuid>) -> Result<(), ApiError> {
     let owned = dir.to_owned();
-    let gone = expired.clone();
     let stale: Vec<(Uuid, PathBuf)> = blocking(move || {
         for id in gone {
             let _ = std::fs::remove_file(file_path(&owned, id));
@@ -834,7 +907,7 @@ pub async fn cleanup(pool: &PgPool, dir: &FsPath) -> Result<Vec<Uuid>, ApiError>
         })
         .await?;
     }
-    Ok(expired)
+    Ok(())
 }
 
 /// Runs [`cleanup`] at startup and then hourly.
@@ -867,10 +940,7 @@ mod tests {
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .connect_lazy("postgres://tikkit@127.0.0.1:1/tikkit")
                 .unwrap();
-            let state = AppState {
-                pool,
-                screenshot_dir: std::env::temp_dir().into(),
-            };
+            let state = AppState::new(pool, std::env::temp_dir().into());
             let body = || Request::new(axum::body::Body::from(vec![0u8; 32]));
             let first = UploadBody::from_request(body(), &state).await.unwrap();
             let second = UploadBody::from_request(body(), &state).await.unwrap();

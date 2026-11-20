@@ -2,8 +2,10 @@
   import { invalidateAll } from '$app/navigation'
   import { ApiError, type Language } from '@tikkit/api-client'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import { api as apiClient } from '#lib/api.ts'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -30,6 +32,7 @@
       prefsState = { ok: true }
     } catch (e) {
       prefsState = { error: e }
+      await focusFormErrors()
     }
   }
   const api = () => apiClient(data.locale)
@@ -51,6 +54,7 @@
       profile = { ok: true }
     } catch (e) {
       profile = failure(e)
+      await focusFormErrors()
     }
   }
 
@@ -64,6 +68,7 @@
       password = { ok: true }
     } catch (e) {
       password = failure(e)
+      await focusFormErrors()
     }
   }
 </script>
@@ -73,6 +78,12 @@
 <h1>{t.profileTitle}</h1>
 <p>{t.username}: <strong>{data.user?.username}</strong> · {t.role}: {data.user && t.roles[data.user.role]}</p>
 <form onsubmit={saveProfile} novalidate>
+  {#if profile.error}
+    <ErrorSummary
+      title={errorText(t, profile.error)}
+      items={fieldItems(profile.fields, { email: t.email, language: t.language }, (code) => fieldText(t, code))}
+    />
+  {/if}
   <Field
     label={t.email}
     name="email"
@@ -84,12 +95,17 @@
   />
   <Field label={t.language} name="language" bind:value={language} options={languages} />
   {#if profile.ok}<Alert kind="success">{t.saved}</Alert>{/if}
-  {#if profile.error}<Alert>{errorText(t, profile.error)}</Alert>{/if}
   <button type="submit">{t.save}</button>
 </form>
 
 <h2>{t.changePassword}</h2>
 <form onsubmit={savePassword} novalidate>
+  {#if password.error}
+    <ErrorSummary
+      title={errorText(t, password.error)}
+      items={fieldItems(password.fields, { current_password: t.currentPassword, new_password: t.newPassword }, (code) => fieldText(t, code))}
+    />
+  {/if}
   <Field
     label={t.currentPassword}
     name="current_password"
@@ -108,18 +124,17 @@
     error={fieldText(t, password.fields?.new_password?.[0])}
   />
   {#if password.ok}<Alert kind="success">{t.passwordChanged}</Alert>{/if}
-  {#if password.error}<Alert>{errorText(t, password.error)}</Alert>{/if}
   <button type="submit">{t.changePassword}</button>
 </form>
 
 {#if data.prefs}
 <h2>{t.notifications.preferences}</h2>
 <form onsubmit={savePrefs} novalidate>
+  {#if prefsState.error}<ErrorSummary title={errorText(t, prefsState.error)} />{/if}
   <p class="checkbox"><label><input type="checkbox" name="email" bind:checked={prefs.email} /> {t.notifications.email}</label></p>
   <p class="checkbox"><label><input type="checkbox" name="in_app" bind:checked={prefs.in_app} /> {t.notifications.inApp}</label></p>
   <p class="hint">{t.notifications.hint}</p>
   {#if prefsState.ok}<Alert kind="success">{t.saved}</Alert>{/if}
-  {#if prefsState.error}<Alert>{errorText(t, prefsState.error)}</Alert>{/if}
   <button type="submit">{t.notifications.savePreferences}</button>
 </form>
 {/if}

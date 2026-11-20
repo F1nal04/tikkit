@@ -1,0 +1,14 @@
+rule_files:
+  - /etc/prometheus/tikkit-alerts.yml
+  # Added by docker-compose.backup-alerts.example.yml; a glob so it may be absent.
+  - /etc/prometheus/tikkit-backup-alerts.y*ml
+
+scrape_config_files:
+  - /etc/prometheus/scrape.d/*.yml
+
+scrape_configs:
+  - job_name: tikkit
+    scrape_interval: 30s
+    scrape_timeout: 8s
+    static_configs:
+      - targets: ["127.0.0.1:9091"]

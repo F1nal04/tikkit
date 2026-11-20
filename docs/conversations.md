@@ -1,7 +1,8 @@
 # Ticket conversations
 
 `apps/api/src/messages.rs` implements append-only public replies and private
-internal notes. Detail pages are separate work (#20 and #23). No message
+internal notes; the requester and staff detail pages use it
+([frontend.md](frontend.md)). No message
 editing/deletion endpoints are supported, for any role. No AI calls, jobs,
 regeneration, automatic routing, or resolution acceptance happen on send.
 
@@ -100,8 +101,8 @@ notification payloads. The message itself preserves author and content.
 Status transition detail queries continue to include only events with
 `to_status`, so note events never enter requester ticket detail/history.
 
-Notification/export workers are separate work. Consumers must select public
-reply events for public notifications, reload the authorized message, and
+The notification worker ([notifications.md](notifications.md)) and any export
+must select public reply events for public notifications, reload the authorized message, and
 recheck **current** ticket/message and recipient access at delivery time.
 Never send internal-note events through requester channels, even without a
 body, and never rely on a historical team or author identity to grant access.

@@ -18,6 +18,8 @@
       "persistent": true,
       "passThroughEnv": [
         "API_ADDR",
+        "METRICS_PORT",
+        "LOG_FORMAT",
         "DATABASE_URL",
         "PUBLIC_ORIGIN",
         "SESSION_SECRET",
@@ -26,6 +28,7 @@
         "SESSION_TTL_HOURS",
         "SESSION_ROTATE_HOURS",
         "TRUST_PROXY_HEADERS",
+        "TRUSTED_PROXIES",
         "ENVIRONMENT",
         "RUST_LOG"
       ]
@@ -44,6 +47,8 @@
       "persistent": true,
       "passThroughEnv": [
         "API_ADDR",
+        "METRICS_PORT",
+        "LOG_FORMAT",
         "DATABASE_URL",
         "PUBLIC_ORIGIN",
         "SESSION_SECRET",
@@ -52,6 +57,7 @@
         "SESSION_TTL_HOURS",
         "SESSION_ROTATE_HOURS",
         "TRUST_PROXY_HEADERS",
+        "TRUSTED_PROXIES",
         "ENVIRONMENT",
         "RUST_LOG"
       ]
@@ -59,7 +65,7 @@
     "@tikkit/web#start": {
       "cache": false,
       "persistent": true,
-      "env": ["HOST", "PORT", "API_ORIGIN", "ORIGIN", "PROTOCOL_HEADER", "HOST_HEADER", "XFF_DEPTH"]
+      "env": ["HOST", "PORT", "API_ORIGIN", "PROTOCOL_HEADER", "HOST_HEADER", "XFF_DEPTH"]
     }
   }
 }

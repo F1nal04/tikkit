@@ -17,9 +17,17 @@ use sqlx::{
     Connection, Executor, PgConnection, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use tikkit_api::{AppState, auth::Settings, config::Config, db};
+use tikkit_api::{
+    AppState,
+    ai::{AiClient, Endpoint},
+    auth::Settings,
+    config::Config,
+    db,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
+
+pub mod provider_mock;
 
 /// A freshly created and migrated database, dropped when this value is dropped
 /// (also on panic). Set TEST_DATABASE_URL (or DATABASE_URL) to a role that may
@@ -44,12 +52,19 @@ impl TestDb {
         conn.execute(format!("CREATE DATABASE {name}").as_str())
             .await
             .unwrap();
-        let pool = PgPoolOptions::new()
-            .connect_with(admin.clone().database(&name))
+        let pool = PgPoolOptions::new().connect_lazy_with(admin.clone().database(&name));
+        // Own cleanup before the first connection/migration can fail.
+        let test = Self { pool, name, admin };
+        db::migrate(&test.pool).await.unwrap();
+        Some(test)
+    }
+
+    /// Another pool on the same database: a second process (the API and a worker).
+    pub async fn pool_for(db: &TestDb) -> PgPool {
+        PgPoolOptions::new()
+            .connect_with(db.admin.clone().database(&db.name))
             .await
-            .unwrap();
-        db::migrate(&pool).await.unwrap();
-        Some(Self { pool, name, admin })
+            .unwrap()
     }
 
     /// Whether a database with this name exists on the test server.
@@ -108,11 +123,35 @@ pub fn test_app(pool: &PgPool) -> Router {
 }
 
 pub fn test_app_with(pool: &PgPool, settings: Settings) -> Router {
+    tikkit_api::app_with(test_state(pool), settings)
+}
+
+/// [`test_app`] whose AI provider calls go to `provider`, a local mock
+/// ([`provider_mock::serve`]).
+pub fn test_app_with_provider(pool: &PgPool, provider: &url::Url) -> Router {
     let state = AppState {
-        pool: pool.clone(),
-        screenshot_dir: screenshot_dir(pool).into(),
+        ai_endpoint: Endpoint::Override {
+            base_url: provider.clone(),
+            allow_private_network: true,
+        },
+        ..test_state(pool)
     };
-    tikkit_api::app_with(state, settings)
+    tikkit_api::app_with(state, Settings::default())
+}
+
+/// Application state on `pool`. Tests never reach a real AI provider: provider
+/// calls go to a closed loopback port unless a mock is set.
+pub fn test_state(pool: &PgPool) -> AppState {
+    AppState {
+        pool: pool.clone(),
+        metrics: Default::default(),
+        screenshot_dir: screenshot_dir(pool).into(),
+        ai_client: AiClient::new(),
+        ai_endpoint: Endpoint::Override {
+            base_url: "http://127.0.0.1:1".parse().unwrap(),
+            allow_private_network: true,
+        },
+    }
 }
 
 /// This test database's private screenshot directory, removed with the [`TestDb`].
@@ -286,6 +325,29 @@ pub mod fixtures {
         Ok(id)
     }
 
+    /// The ticket's one AI attempt, inserted directly in `state` (`processing`,
+    /// `suggestion_ready`, `handed_off`, or `cancelled`): what submission and
+    /// the attempt worker would have stored. Returns the attempt ID.
+    #[allow(dead_code)]
+    pub async fn ai_attempt(db: impl PgExecutor<'_>, ticket: Uuid, state: &str) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO ai_attempts (ticket_id, state, outcome, language, input, provider, model,
+                 credential_set_at, deadline_at, explanation, steps, finished_at)
+             VALUES ($1, $2,
+                 CASE $2 WHEN 'handed_off' THEN 'timeout' WHEN 'cancelled' THEN 'requester_cancelled' END,
+                 'en', '{}', 'openai', 'test-model', now(), now() + interval '5 minutes',
+                 CASE WHEN $2 = 'suggestion_ready' THEN 'Restart the application.' END,
+                 CASE WHEN $2 = 'suggestion_ready' THEN '[\"Close it\", \"Open it again\"]'::jsonb END,
+                 CASE WHEN $2 <> 'processing' THEN now() END)
+             RETURNING id",
+        )
+        .bind(ticket)
+        .bind(state)
+        .fetch_one(db)
+        .await
+        .unwrap()
+    }
+
     /// Adds `account` to `team`. Accepts a pool, connection, or transaction.
     pub async fn member(
         db: impl PgExecutor<'_>,
@@ -302,4 +364,113 @@ pub mod fixtures {
         .await
         .map(drop)
     }
+}
+
+/// Scrape the same private router used by the API binary.
+pub async fn metrics_text(state: &AppState) -> String {
+    let response = tikkit_api::metrics::router(state.clone())
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Default)]
+pub struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Logs {
+    /// One capture per integration test binary. Install process-wide so the
+    /// tracing callsite cache remains enabled when other tests run in parallel.
+    pub fn capture() -> Self {
+        let logs = Self::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .json()
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+        logs
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Wait for transactions to actually contend in this test's private database.
+pub async fn wait_for_lock_waiters(pool: &PgPool, count: i64) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting >= count {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("expected both requests to contend for the database lock");
+}
+
+/// Queue the two requests in a known order while the test holds the relevant lock.
+pub async fn queued_requests<A, B>(
+    pool: &PgPool,
+    gate: sqlx::Transaction<'_, sqlx::Postgres>,
+    first: impl Future<Output = A>,
+    second: impl Future<Output = B>,
+) -> (A, B) {
+    let (start_second, started) = tokio::sync::oneshot::channel();
+    let (a, b, ()) = tokio::join!(
+        first,
+        async {
+            started.await.unwrap();
+            second.await
+        },
+        async {
+            wait_for_lock_waiters(pool, 1).await;
+            start_second.send(()).unwrap();
+            wait_for_lock_waiters(pool, 2).await;
+            gate.commit().await.unwrap();
+        }
+    );
+    (a, b)
+}
+
+pub async fn lock_ticket(pool: &PgPool, id: Uuid) -> sqlx::Transaction<'_, sqlx::Postgres> {
+    let mut gate = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    gate
 }

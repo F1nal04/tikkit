@@ -32,8 +32,16 @@ machine values. A unit test fails if this table and the code disagree.
 - Admins hold every permission except `claim_ticket`: they never join teams or
   become assignees. `assign_ticket` lets them assign other members.
 - Requester actions (replies on own ticket, confirm/reject a resolution,
-  cancellation, reopening) depend on ticket ownership and Admin policy, not on
-  this table.
+  cancellation, reopening, the AI decisions solved / not solved / skip) depend
+  on ticket ownership and Admin policy, not on this table.
+- `view_all_submissions` gates the Admin submission view (every submitted
+  ticket, [admin-submissions.md](admin-submissions.md)) and the Admin list of
+  AI attempts and AI-solved records, `view_reports` the AI outcome statistics
+  ([ai-decisions.md](ai-decisions.md#admin-records-and-statistics)) and the
+  audit log search and export ([audit.md](audit.md#admin-api)).
+  Retention settings, preview, and runs need `manage_settings`; personal-data
+  summary, export, and anonymization need `manage_accounts`
+  ([retention.md](retention.md#admin-api)). Both are Admin only.
 - Ticket permissions are capabilities; each ticket is further checked by the
   ticket policy below.
 
@@ -77,6 +85,23 @@ Assignment targets are checked by the assignment handler (an active staff member
 the ticket's active team, never its requester; see [queues.md](queues.md#dispatch-and-assignment))
 and backed by the schema (assignee is a member of the ticket's team and never its
 requester); `authz::active_team_members` lists eligible accounts.
+
+### AI stages and AI-solved records
+
+`ai_processing`, `awaiting_ai_decision`, and `ai_solved` tickets are not
+operator work. Rule 2 hides them from every staff role but Admin on every path
+that reads or writes a ticket: detail, activity marker, messages, screenshots,
+queues, search, counts, saved views, single and bulk writes, and notifications
+(queued, delivered, and listed). Admins may read them but nobody may change
+them: `authorize_ticket` requires open human work, so every staff write on them
+is `403` for an Admin and `404` for everyone else. The AI decisions belong to
+the requester alone. An `ai_solved` record is final for every role, including
+its requester. The per-endpoint table and the tests are in
+[ai-decisions.md](ai-decisions.md#ai-solved-records-are-final).
+
+After an escalation (`ai_not_solved`, `skip_ai`, `ai_failed`) the ticket is
+general-queue work under rules 3 and 4, and staff who may see it also read the
+stored AI suggestion in `TicketDetail.ai`.
 
 ## Denials
 

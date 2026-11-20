@@ -4,8 +4,10 @@
   import { onMount } from 'svelte'
   import { api } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
   import StatusBadge from '#lib/components/StatusBadge.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { messages, errorText, fieldText } from '#lib/i18n.ts'
   import { attemptFor, type Attempt } from '#lib/intake.ts'
   import ScreenshotGallery from '#lib/ScreenshotGallery.svelte'
@@ -96,6 +98,7 @@
   async function act(input: StaffInput) {
     if (busy || !ticket) return
     start(); busy = true
+    let errored = false
     try {
       await api(data.locale).request('post', '/api/tickets/{id}/staff-actions', {
         path: { id: ticket.id },
@@ -105,11 +108,13 @@
       if (input.action === 'propose_resolution') summary = ''
       if (input.action === 'set_priority') priorityId = ''
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function change(input: AssignmentInput) {
     if (busy || !ticket) return
     start(); busy = true
+    let errored = false
     try {
       const receipt = await api(data.locale).request('post', '/api/tickets/{id}/assignment', {
         path: { id: ticket.id },
@@ -119,24 +124,27 @@
       if (!receipt.visible) { moved = receipt; return }
       feedback = 'action'
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function send() {
     if (busy || uploading || !ticket || !canHandle) return
     start()
-    if (!body.trim()) { fields = { body: ['required'] }; return }
-    if ([...body].length > 10000) { fields = { body: ['too_long'] }; return }
+    if (!body.trim()) { fields = { body: ['required'] }; await focusFormErrors(); return }
+    if ([...body].length > 10000) { fields = { body: ['too_long'] }; await focusFormErrors(); return }
     busy = true
     const input = { body, screenshot_ids: screenshots }
     attempt = attemptFor(attempt, JSON.stringify({ ticket: ticket.id, kind, ...input }))
     const note = kind === 'note'
+    let errored = false
     try {
       await api(data.locale).request('post', note ? '/api/tickets/{id}/notes' : '/api/tickets/{id}/replies', {
         path: { id: ticket.id }, body: { ...input, idempotency_key: attempt.key },
       })
       body = ''; screenshots = []; attempt = null; feedback = note ? 'note' : 'reply'
       await refresh()
-    } catch (e) { await failed(e) } finally { busy = false }
+    } catch (e) { errored = true; await failed(e) } finally { busy = false }
+    if (errored) await focusFormErrors()
   }
   async function loadMore() {
     if (loadingMore || !cursor || !ticket) return
@@ -160,10 +168,24 @@
   <p><a href="/queue">{s.back}</a></p>
 {:else}
   <h1>#{ticket.reference} · {ticket.subject}</h1>
+  {#if ticket.content_removed_at}<Alert kind="info">{t.retention.contentRemoved}</Alert>{:else if ticket.ai?.content_removed}<Alert kind="info">{t.retention.aiContentRemoved}</Alert>{/if}
   <div class="actions"><StatusBadge status={ticket.status} label={t.statuses[ticket.status]} /><button class="secondary" onclick={refresh} disabled={busy}>{s.refresh}</button></div>
   {#if ticket.closure_reason}<p>{t.closureReasons[ticket.closure_reason]}</p>{/if}
   {#if feedback}<Alert kind="success">{feedback === 'reply' ? s.replySent : feedback === 'note' ? s.noteSent : s.actionSaved}</Alert>{/if}
-  {#if changed}<Alert>{s.changed}</Alert>{:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>{:else if failure}<Alert>{errorText(t, failure)}</Alert>{/if}
+  {#if changed}<ErrorSummary title={s.changed} />
+  {:else if elsewhere}<Alert kind="info">{s.updatedElsewhere}</Alert>
+  {:else if failure || Object.keys(fields).length}
+    <ErrorSummary
+      title={Object.keys(fields).length && !failure ? t.errors.validation_failed : errorText(t, failure)}
+      items={fieldItems(fields, {
+        assignee_account_id: s.assignTo,
+        team_id: s.dispatchTeam,
+        summary: s.summary,
+        priority_id: s.newPriority,
+        body: s.message,
+      }, (code) => fieldText(t, code))}
+    />
+  {/if}
   {#if reason}<Alert kind="info">{s.readOnly[reason]}</Alert>{/if}
 
   <dl class="facts">
@@ -213,9 +235,23 @@
     </dl>
     <p class="prose">{ticket.intake_snapshot?.description ?? ticket.description}</p>
     <ScreenshotGallery ids={ticket.intake_snapshot?.screenshot_ids ?? []} locale={data.locale} />
-    {#if route === 'not_solved' || route === 'ai_failed' || ['ai_processing', 'awaiting_ai_decision', 'ai_solved'].includes(ticket.status)}
+    {#if ticket.removed_screenshots > 0}<p class="hint" data-testid="screenshots-removed">{t.retention.screenshotsRemoved.replace('{count}', String(ticket.removed_screenshots))}</p>{/if}
+    {#if ticket.ai}
+      {@const ai = ticket.ai}
       <h3>{s.aiSuggestion}</h3>
-      <p class="prose">{t.history.noSolution}</p>
+      {#if ai.suggestion}
+        <p class="hint">{s.ai.context}</p>
+        <div data-testid="ai-suggestion" lang={ai.language}>
+          <p class="prose">{ai.suggestion.explanation}</p>
+          <ol>{#each ai.suggestion.steps as step, n (n)}<li>{step}</li>{/each}</ol>
+        </div>
+        <p>
+          {#if ai.decision || ticket.status === 'awaiting_ai_decision'}{s.ai.decisions[ai.decision ?? 'pending']}{/if}
+          {#if ai.decided_at}<time datetime={ai.decided_at}>{when(ai.decided_at)}</time>{/if}
+        </p>
+      {:else}
+        <p>{ai.state === 'handed_off' ? s.ai.none[ai.reason ?? 'ai_failed'] : ai.state === 'cancelled' ? s.ai.none.cancelled : s.ai.none.processing}</p>
+      {/if}
     {/if}
   </section>
 
