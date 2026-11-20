@@ -398,7 +398,10 @@ async fn resolve(
                 WHERE id = $1 AND revoked_at IS NULL AND rotated_at IS NULL
                 RETURNING id, account_id, expires_at, user_agent, ip)
              INSERT INTO sessions (account_id, token_hash, expires_at, user_agent, ip, rotated_from)
-             SELECT account_id, $2, expires_at, user_agent, ip, id FROM old RETURNING id",
+             SELECT old.account_id, $2, old.expires_at, old.user_agent, old.ip, old.id
+             FROM old JOIN accounts a ON a.id = old.account_id
+             WHERE a.is_active AND a.anonymized_at IS NULL FOR SHARE OF a
+             RETURNING id",
         )
         .bind(row.session_id)
         .bind(token_hash(&new_token))
@@ -684,6 +687,7 @@ pub async fn change_password(
         })?;
 
     let mut tx = state.pool.begin().await?;
+    lock_active_account(&mut tx, account_id).await?;
     sqlx::query("UPDATE accounts SET password_hash = $2 WHERE id = $1")
         .bind(account_id)
         .bind(&new_hash)
@@ -759,7 +763,31 @@ pub(crate) async fn revoke_all_sessions<'c>(
     .map(|r| r.rows_affected())
 }
 
+/// The write protocol for an account's personal data (docs/retention.md).
+/// Every transaction that stores something for an account (profile, password,
+/// session, draft, upload, saved view) calls this first: it takes a share lock
+/// on the account row and refuses unless the account is active. Anonymization
+/// locks the same row `FOR UPDATE` before it deletes anything, so a request
+/// that was authenticated while the account was still active either commits
+/// before the erasure looks, or waits and is refused; it can never write
+/// after it. (`lifecycle::lock_actor` is the same lock for ticket writes.)
+pub async fn lock_active_account(db: &mut sqlx::PgConnection, id: Uuid) -> Result<(), ApiError> {
+    let active: Option<bool> = sqlx::query_scalar(
+        "SELECT is_active AND anonymized_at IS NULL FROM accounts WHERE id = $1 FOR SHARE",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    if active == Some(true) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
+}
+
 /// Always a brand-new random token: a cookie presented before login is never adopted.
+/// Only for an active account (see [`lock_active_account`]): otherwise
+/// `RowNotFound`.
 pub(crate) async fn create_session(
     tx: &mut sqlx::PgConnection,
     auth: &Auth,
@@ -769,7 +797,8 @@ pub(crate) async fn create_session(
     let token = new_token();
     sqlx::query(
         "INSERT INTO sessions (account_id, token_hash, expires_at, user_agent, ip)
-         VALUES ($1, $2, now() + $3, $4, $5)",
+         SELECT a.id, $2, now() + $3, $4, $5 FROM accounts a
+         WHERE a.id = $1 AND a.is_active AND a.anonymized_at IS NULL FOR SHARE",
     )
     .bind(account_id)
     .bind(token_hash(&token))
@@ -893,11 +922,18 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
     })
 }
 
+/// Usernames starting with this belong to anonymized accounts
+/// (docs/retention.md). Nobody can register one, so the placeholder of an
+/// erased account is always free; the database enforces the same
+/// (`accounts_username_reserved`).
+pub const RESERVED_USERNAME_PREFIX: &str = "anonymized-";
+
 /// `normalized` is `lower(trim(username))`; returns a field error code.
 pub fn check_username(normalized: &str) -> Result<(), &'static str> {
     match normalized.chars().count() {
         0..3 => Err("too_short"),
         65.. => Err("too_long"),
+        _ if normalized.starts_with(RESERVED_USERNAME_PREFIX) => Err("reserved"),
         _ if !normalized
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c)) =>
@@ -974,6 +1010,10 @@ mod tests {
         assert_eq!(check_username("al ice"), Err("invalid"));
         assert_eq!(check_username("alice@example"), Err("invalid"));
         assert_eq!(check_username("älice"), Err("invalid"));
+        assert_eq!(check_username(&norm("Anonymized-1")), Err("reserved"));
+        assert_eq!(check_username("anonymized-"), Err("reserved"));
+        assert_eq!(check_username("anonymized"), Ok(()));
+        assert_eq!(check_username("not-anonymized-1"), Ok(()));
     }
 
     #[test]

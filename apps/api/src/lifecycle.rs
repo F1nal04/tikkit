@@ -548,6 +548,18 @@ async fn run(
         category_skip_ai: row.skip_ai,
     };
     let mut out = decide(&state, actor.as_ref(), t, &policy, now)?;
+    // Retention removed this ticket's content (docs/retention.md): there is
+    // nothing left to work on, so it stays closed.
+    if matches!(t, Transition::Reopen) {
+        let purged: bool =
+            sqlx::query_scalar("SELECT content_purged_at IS NOT NULL FROM tickets WHERE id = $1")
+                .bind(ticket_id)
+                .fetch_one(&mut *conn)
+                .await?;
+        if purged {
+            return Err(ApiError::Conflict);
+        }
+    }
     // The transition is accepted and the ticket is locked: a failed attempt
     // ends now, so its outcome is stored when the event below is audited.
     if let Some((outcome, usage_id)) = end_attempt {

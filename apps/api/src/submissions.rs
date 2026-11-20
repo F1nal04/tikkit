@@ -275,6 +275,8 @@ pub struct SubmissionAi {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(value_type = Option<String>, format = DateTime, required = true)]
     pub finished_at: Option<OffsetDateTime>,
+    /// Retention removed the stored suggestion; `suggestion` is then `null`.
+    pub content_removed: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -311,13 +313,20 @@ pub struct SubmissionDetail {
     pub summary: SubmissionSummary,
     pub description: String,
     /// Frozen original intake; null only for legacy records predating submission.
+    /// `screenshot_ids` lists only screenshots that still exist.
     #[schema(required = true)]
     pub intake_snapshot: Option<SubmittedIntake>,
+    /// Intake screenshots the retention policy has removed.
+    pub removed_screenshots: i64,
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(value_type = Option<String>, format = DateTime, required = true)]
     pub confirmation_deadline: Option<OffsetDateTime>,
     #[schema(required = true)]
     pub ai: Option<SubmissionAi>,
+    /// Set when retention removed the ticket's text; the text fields then hold `—`.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(value_type = Option<String>, format = DateTime, required = true)]
+    pub content_removed_at: Option<OffsetDateTime>,
     /// Every event of the ticket, oldest first.
     pub events: Vec<SubmissionEvent>,
 }
@@ -532,6 +541,7 @@ type AttemptRow = (
     Option<String>,
     Option<i64>,
     Option<OffsetDateTime>,
+    bool,
 );
 
 #[derive(sqlx::FromRow)]
@@ -570,19 +580,29 @@ pub async fn submission_detail(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ApiError::NotFound)?;
-    let (description, intake_snapshot, confirmation_deadline): (
+    let (description, intake_snapshot, confirmation_deadline, content_removed_at): (
         String,
         Option<sqlx::types::Json<SubmittedIntake>>,
         Option<OffsetDateTime>,
+        Option<OffsetDateTime>,
     ) = sqlx::query_as(
-        "SELECT description, intake_snapshot, confirmation_deadline FROM tickets WHERE id = $1",
+        "SELECT description, intake_snapshot, confirmation_deadline, content_purged_at
+         FROM tickets WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;
+    let mut intake_snapshot = intake_snapshot.map(|s| s.0);
+    let removed_screenshots = match &mut intake_snapshot {
+        Some(intake) => {
+            crate::screenshots::existing_intake(&mut tx, id, &mut intake.screenshot_ids).await?
+        }
+        None => 0,
+    };
     let attempt: Option<AttemptRow> = sqlx::query_as(&format!(
         "SELECT a.id, {OUTCOME_SQL}, a.state, a.outcome, a.provider, a.model, a.language, a.explanation,
-                a.steps, a.created_at, a.finished_at, d.event_type, d.id, d.created_at
+                a.steps, a.created_at, a.finished_at, d.event_type, d.id, d.created_at,
+                a.content_purged_at IS NOT NULL
          FROM ai_attempts a
          JOIN tickets t ON t.id = a.ticket_id
          LEFT JOIN ticket_events d ON d.ticket_id = a.ticket_id
@@ -619,6 +639,7 @@ pub async fn submission_detail(
             decision,
             decision_event_id,
             decided_at,
+            content_removed,
         )) => Some(SubmissionAi {
             attempt_id,
             outcome: ident(outcome)?,
@@ -627,12 +648,12 @@ pub async fn submission_detail(
             provider,
             model,
             language: ident(language)?,
-            suggestion: explanation
-                .zip(steps)
-                .map(|(explanation, steps)| AiSuggestion {
+            suggestion: explanation.zip(steps).filter(|_| !content_removed).map(
+                |(explanation, steps)| AiSuggestion {
                     explanation,
                     steps: steps.0,
-                }),
+                },
+            ),
             decision: decision.map(|event| match event.as_str() {
                 "ai_solved" => AiDecision::Solved,
                 _ => AiDecision::NotSolved,
@@ -641,6 +662,7 @@ pub async fn submission_detail(
             decided_at,
             created_at,
             finished_at,
+            content_removed,
         }),
         None => None,
     };
@@ -668,9 +690,11 @@ pub async fn submission_detail(
     Ok(Json(SubmissionDetail {
         summary: summary.try_into()?,
         description,
-        intake_snapshot: intake_snapshot.map(|s| s.0),
+        intake_snapshot,
+        removed_screenshots,
         confirmation_deadline,
         ai,
+        content_removed_at,
         events,
     }))
 }

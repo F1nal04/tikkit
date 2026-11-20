@@ -90,7 +90,9 @@ Closures record `resolution_source` (`operator`, or `ai` for `ai_solved`) and
 ticket and in the event. A timeout is never an acceptance; replies, views, and
 silence never close anything. Rejection keeps the team and assignee and is
 allowed with reopening disabled. Reopening clears both columns; the events keep
-the history.
+the history. A closed ticket whose content the retention policy has removed
+(`content_removed_at`, [retention.md](retention.md)) cannot be reopened: the
+reopen is `409 conflict`.
 
 ## Auto-close worker
 

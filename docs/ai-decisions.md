@@ -105,7 +105,11 @@ ticket cannot get a second attempt. A decision never calls the provider.
 
 For its requester an `ai_solved` ticket is read-only history: listed in
 `GET /api/tickets`, readable with the suggestion in `GET /api/tickets/{id}`.
-No role can change it:
+No role can change it. The only thing that ever touches the record afterwards
+is the Admin retention policy, which removes its stored content (text,
+screenshots, AI input and suggestion) once the configured period has passed,
+exactly as for operator-handled tickets, and leaves the status, the decision
+event, and every statistic as they are ([retention.md](retention.md)):
 
 | Request on an `ai_solved` ticket | Requester | Admin | Operator, Specialist, Team Lead | Another User |
 | --- | --- | --- | --- | --- |

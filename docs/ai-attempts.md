@@ -29,7 +29,10 @@ nothing.
 | `cancelled` | The requester cancelled the ticket while it was processing | `cancelled` |
 
 `processing` is the only state that changes. A finished attempt is immutable,
-and attempts are never deleted (database trigger). An attempt whose suggestion
+and attempts are never deleted (database trigger). The one exception is the
+Admin retention policy, which blanks `input`, `explanation`, and `steps` of a
+finished attempt of a ticket in a final status and sets `content_purged_at`
+([retention.md](retention.md)); state, outcome, provider, model, and times stay. An attempt whose suggestion
 the requester never answered stays `suggestion_ready` on a ticket that is not
 `ai_solved`: abandoned attempts remain visible as such and are never counted as
 solved. Only the explicit requester decision makes a ticket `ai_solved`

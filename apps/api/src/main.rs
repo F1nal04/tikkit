@@ -3,7 +3,7 @@ use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 use anyhow::Context;
 use tikkit_api::{
     AppState, ai_attempts, ai_guard, app_with, auth, autoclose, config::Config, db, metrics,
-    notifications, screenshots, telemetry,
+    notifications, retention, screenshots, telemetry,
 };
 use tokio::{net::TcpListener, sync::watch};
 
@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
     let notifier = tokio::spawn(notifications::worker_loop(state.clone(), settings.clone()));
     let auto_close = tokio::spawn(autoclose::worker_loop(state.clone()));
     let ai_retention = tokio::spawn(ai_guard::retention_loop(pool.clone()));
+    let data_retention = tokio::spawn(retention::worker_loop(state.clone()));
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
@@ -107,7 +108,13 @@ async fn main() -> anyhow::Result<()> {
     // already running commit, and cancelled AI calls free their provider slots
     // and release their attempts, before the pool closes.
     if tokio::time::timeout(Duration::from_secs(5), async {
-        let _ = tokio::join!(notifier, auto_close, ai_retention, ai_worker);
+        let _ = tokio::join!(
+            notifier,
+            auto_close,
+            ai_retention,
+            data_retention,
+            ai_worker
+        );
     })
     .await
     .is_err()

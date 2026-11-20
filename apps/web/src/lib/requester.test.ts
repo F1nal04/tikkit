@@ -16,6 +16,8 @@ test('rejection is independent from reopening; final records have no actions', (
   expect(requesterActions(ticket('awaiting_confirmation'), policy)).toEqual({ reply: true, resolution: true, reopen: false, cancel: true })
   expect(requesterActions(ticket('closed'), policy).reopen).toBe(false)
   expect(requesterActions(ticket('closed'), { ...policy, allow_reopening: true }).reopen).toBe(true)
+  // Content removed by the retention policy: there is nothing to reopen.
+  expect(requesterActions({ ...ticket('closed'), content_removed_at: '2026-11-01T00:00:00Z' }, { ...policy, allow_reopening: true }).reopen).toBe(false)
   for (const status of ['ai_solved', 'cancelled'] as const) {
     expect(requesterActions(ticket(status), { ...policy, allow_reopening: true })).toEqual({ reply: false, resolution: false, reopen: false, cancel: false })
   }

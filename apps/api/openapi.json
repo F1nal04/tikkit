@@ -272,6 +272,200 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "`conflict`: the account was anonymized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{id}/anonymize": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Removes the identity of a deactivated account for good (Admin only). The\naccount ID, role, and every ticket, event, and statistic that refers to it\nstay; see docs/retention.md for the exact policy. The account must be\ndeactivated first, so the last active Admin and an active team's lead can\nnever be anonymized. Irreversible. Writes `account_anonymized`.",
+        "operationId": "anonymize_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnonymizeAccount"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnonymizationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: a ticket of the account is being changed right now; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{id}/personal-data/export": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Exports the personal data of one account as a JSON document (Admin only).\nThe typed `username` must be the account's. Bounded: each section holds at\nmost 10,000 rows and `truncated` names the sections that were cut, and the\nwhole export at most 16 MiB (`413 export_too_large` otherwise). Never\ncontains credentials, hashes, internal notes, or other people's data; see\ndocs/retention.md for the exact contents. Writes `personal_data_exported`.",
+        "operationId": "export_personal_data",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountConfirmation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The export, as an attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`export_too_large`: the account's data exceeds 16 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`username`: `mismatch`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -846,6 +1040,68 @@
         }
       }
     },
+    "/api/admin/personal-data": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Finds one account by username and counts what is stored about it (Admin\nonly). Read-only; the preview before an export or anonymization.",
+        "operationId": "personal_data_summary",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "description": "Exact username (case-insensitive). Resolves to one account ID.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no account has that username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/reports": {
       "get": {
         "tags": [
@@ -1025,6 +1281,248 @@
           },
           "413": {
             "description": "More than 10,000 matching rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/retention": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The retention policy and the latest runs (Admin only).",
+        "operationId": "get_retention",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionOverview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Replaces the retention policy (Admin only). Saving deletes nothing unless\n`automatic` is on; then the worker applies the policy within a day.",
+        "operationId": "put_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionSettingsWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`retention_preview_stale`: with `automatic` on, the periods were not previewed or the settings changed since the preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (a period: `out_of_range`; `confirm`: `invalid`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/retention/preview": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Dry run (Admin only): exact counts per category for the given periods,\nsaved or not. Changes nothing and writes no audit event.",
+        "operationId": "preview_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (a period: `out_of_range`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/retention/runs": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Starts applying the saved policy as previewed (Admin only). The preview must\nbe of the saved periods, made under the current settings, and at most an\nhour old; otherwise `409 retention_preview_stale` and nothing starts. The\nretention worker does the work in batches; `GET /api/admin/retention` shows\nits progress.",
+        "operationId": "start_retention_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRetentionRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -6001,6 +6499,20 @@
           }
         }
       },
+      "AccountConfirmation": {
+        "type": "object",
+        "description": "The typed confirmation of a request about one account.",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "The account's current username, typed by the Admin."
+          }
+        },
+        "additionalProperties": false
+      },
       "AccountSummary": {
         "type": "object",
         "required": [
@@ -6014,9 +6526,14 @@
           "role",
           "language",
           "is_active",
+          "anonymized",
           "created_at"
         ],
         "properties": {
+          "anonymized": {
+            "type": "boolean",
+            "description": "The account's identity was removed; it cannot be reactivated."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -7011,6 +7528,77 @@
             "$ref": "#/components/schemas/AiDisposition"
           }
         }
+      },
+      "AnonymizationResult": {
+        "type": "object",
+        "description": "What an anonymization removed. Counts only.",
+        "required": [
+          "account_id",
+          "username",
+          "sessions",
+          "drafts",
+          "pending_screenshots",
+          "saved_views",
+          "notifications",
+          "audit_events",
+          "ticket_content"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "audit_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audit events whose username snapshot or IP address was removed."
+          },
+          "drafts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "notifications": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending_screenshots": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "saved_views": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ticket_content": {
+            "$ref": "#/components/schemas/RetentionCounts",
+            "description": "Content removed from the account's own final tickets, if requested."
+          },
+          "username": {
+            "type": "string",
+            "description": "The placeholder that replaced the username and display name."
+          }
+        }
+      },
+      "AnonymizeAccount": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "purge_ticket_content": {
+            "type": "boolean",
+            "description": "Also remove the content of the account's own tickets that are in a\nfinal status now (as ticket content retention would later)."
+          },
+          "username": {
+            "type": "string",
+            "description": "The account's current username, typed by the Admin."
+          }
+        },
+        "additionalProperties": false
       },
       "AnswerSnapshot": {
         "type": "object",
@@ -8159,6 +8747,8 @@
           "method_not_allowed",
           "conflict",
           "payload_too_large",
+          "retention_preview_stale",
+          "export_too_large",
           "smtp_not_configured",
           "smtp_auth_failed",
           "smtp_tls_failed",
@@ -8970,9 +9560,14 @@
                 "role",
                 "language",
                 "is_active",
+                "anonymized",
                 "created_at"
               ],
               "properties": {
+                "anonymized": {
+                  "type": "boolean",
+                  "description": "The account's identity was removed; it cannot be reactivated."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -9862,6 +10457,82 @@
           }
         }
       },
+      "PersonalDataSummary": {
+        "type": "object",
+        "description": "What is stored about one account, as counts. Nothing is changed.",
+        "required": [
+          "account_id",
+          "username",
+          "display_name",
+          "role",
+          "is_active",
+          "anonymized_at",
+          "tickets",
+          "open_tickets",
+          "final_tickets_with_content",
+          "drafts",
+          "pending_screenshots",
+          "sessions",
+          "audit_events"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "anonymized_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "audit_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audit events the account acted in or is the subject of."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "drafts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "final_tickets_with_content": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, in a final status with their content still stored."
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "open_tickets": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, not in a final status. Anonymization leaves them open."
+          },
+          "pending_screenshots": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tickets": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tickets the account submitted."
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "Priority": {
         "type": "object",
         "required": [
@@ -10416,6 +11087,335 @@
           "none"
         ]
       },
+      "RetentionCounts": {
+        "type": "object",
+        "description": "Records per category. In a preview: what a run started now would remove.\nIn a run: what it has removed so far.",
+        "required": [
+          "drafts",
+          "screenshots",
+          "ai_content",
+          "ticket_content",
+          "audit_events"
+        ],
+        "properties": {
+          "ai_content": {
+            "type": "integer",
+            "format": "int64",
+            "description": "AI attempts whose input and suggestion were removed."
+          },
+          "audit_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audit events deleted."
+          },
+          "drafts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Drafts deleted."
+          },
+          "screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Screenshot records deleted (their files follow)."
+          },
+          "ticket_content": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tickets whose text was removed."
+          }
+        }
+      },
+      "RetentionLimits": {
+        "type": "object",
+        "description": "Bounds of the retention periods, in days.",
+        "required": [
+          "min_days",
+          "max_days",
+          "audit_min_days"
+        ],
+        "properties": {
+          "audit_min_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The audit log's retention floor."
+          },
+          "max_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "min_days": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RetentionOverview": {
+        "type": "object",
+        "description": "The retention policy, its bounds, and the latest runs.",
+        "required": [
+          "settings",
+          "limits",
+          "runs"
+        ],
+        "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/RetentionLimits"
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetentionRun"
+            },
+            "description": "Newest first, at most 10."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RetentionSettings"
+          }
+        }
+      },
+      "RetentionPolicy": {
+        "type": "object",
+        "description": "Retention periods in days. `null` keeps that category for good, which is\nthe default for all five.",
+        "required": [
+          "draft_days",
+          "screenshot_days",
+          "ai_content_days",
+          "ticket_content_days",
+          "audit_days"
+        ],
+        "properties": {
+          "ai_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "AI input and suggestion of tickets in a final status."
+          },
+          "audit_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Audit events. At least 30 days."
+          },
+          "draft_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unsubmitted drafts, from their last save."
+          },
+          "screenshot_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Screenshots of tickets in a final status, from the final status."
+          },
+          "ticket_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Subject, description, answers, messages, and cancellation reason of\ntickets in a final status. Implies their screenshots and AI content."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RetentionPreview": {
+        "type": "object",
+        "description": "What a run would remove if it started at `as_of`.",
+        "required": [
+          "as_of",
+          "policy",
+          "affected",
+          "token"
+        ],
+        "properties": {
+          "affected": {
+            "$ref": "#/components/schemas/RetentionCounts"
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy"
+          },
+          "token": {
+            "type": "string",
+            "description": "Send this back, with `as_of`, to confirm what this preview showed."
+          }
+        }
+      },
+      "RetentionRun": {
+        "type": "object",
+        "description": "One application of the policy.",
+        "required": [
+          "id",
+          "state",
+          "requested_by",
+          "requested_by_username",
+          "created_at",
+          "as_of",
+          "finished_at",
+          "policy",
+          "deleted"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The clock the periods were measured from."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted": {
+            "$ref": "#/components/schemas/RetentionCounts",
+            "description": "Removed so far (final once `completed`)."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy",
+            "description": "The periods the run applies, as they were when it started."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The Admin who started it; `null` for an automatic run."
+          },
+          "requested_by_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RetentionRunState"
+          }
+        }
+      },
+      "RetentionRunState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "completed"
+        ]
+      },
+      "RetentionSettings": {
+        "type": "object",
+        "required": [
+          "policy",
+          "automatic",
+          "version",
+          "updated_at"
+        ],
+        "properties": {
+          "automatic": {
+            "type": "boolean",
+            "description": "Whether the worker applies the policy daily. Off by default."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bumped by every save. Previews are bound to it."
+          }
+        }
+      },
+      "RetentionSettingsWrite": {
+        "type": "object",
+        "description": "Every period is required; `null` keeps that category for good.",
+        "required": [
+          "draft_days",
+          "screenshot_days",
+          "ai_content_days",
+          "ticket_content_days",
+          "audit_days",
+          "automatic"
+        ],
+        "properties": {
+          "ai_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "audit_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "automatic": {
+            "type": "boolean"
+          },
+          "confirm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Must be `DELETE` when `automatic` is true and any period is set: saving\nthen authorizes deletion without a further confirmation."
+          },
+          "draft_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "preview_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `token` of a preview of exactly these periods, required together\nwith `confirm`: what was confirmed is what was reviewed."
+          },
+          "screenshot_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ticket_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "RetryResult": {
         "type": "object",
         "required": [
@@ -10925,6 +11925,30 @@
           "q"
         ]
       },
+      "StartRetentionRun": {
+        "type": "object",
+        "required": [
+          "confirm",
+          "preview_token",
+          "as_of"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The `as_of` of that preview: the run's clock, so it removes what the\npreview counted."
+          },
+          "confirm": {
+            "type": "string",
+            "description": "Must be `DELETE`."
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "The `token` of the preview the Admin confirmed."
+          }
+        },
+        "additionalProperties": false
+      },
       "SubmissionAi": {
         "type": "object",
         "description": "The ticket's AI attempt as Admins see it: the stored suggestion, the\ninternal outcome code, and the requester's decision.",
@@ -10941,12 +11965,17 @@
           "decision_event_id",
           "decided_at",
           "created_at",
-          "finished_at"
+          "finished_at",
+          "content_removed"
         ],
         "properties": {
           "attempt_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "content_removed": {
+            "type": "boolean",
+            "description": "Retention removed the stored suggestion; `suggestion` is then `null`."
           },
           "created_at": {
             "type": "string",
@@ -11026,8 +12055,10 @@
           "summary",
           "description",
           "intake_snapshot",
+          "removed_screenshots",
           "confirmation_deadline",
           "ai",
+          "content_removed_at",
           "events"
         ],
         "properties": {
@@ -11048,6 +12079,14 @@
             ],
             "format": "date-time"
           },
+          "content_removed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when retention removed the ticket's text; the text fields then hold `—`."
+          },
           "description": {
             "type": "string"
           },
@@ -11065,9 +12104,14 @@
               },
               {
                 "$ref": "#/components/schemas/SubmittedIntake",
-                "description": "Frozen original intake; null only for legacy records predating submission."
+                "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
               }
             ]
+          },
+          "removed_screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Intake screenshots the retention policy has removed."
           },
           "summary": {
             "$ref": "#/components/schemas/SubmissionSummary"
@@ -11428,9 +12472,14 @@
           "created_at",
           "finished_at",
           "decision",
-          "decided_at"
+          "decided_at",
+          "content_removed"
         ],
         "properties": {
+          "content_removed": {
+            "type": "boolean",
+            "description": "Retention removed the stored suggestion; `suggestion` is then `null`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -11530,6 +12579,7 @@
           "priority_name",
           "assignment",
           "intake_snapshot",
+          "removed_screenshots",
           "resolution_source",
           "closure_reason",
           "proposal_version",
@@ -11541,7 +12591,8 @@
           "priority_changes",
           "assignment_changes",
           "staff_access",
-          "ai"
+          "ai",
+          "content_removed_at"
         ],
         "properties": {
           "ai": {
@@ -11591,6 +12642,14 @@
             "format": "date-time",
             "description": "Auto-close time of the pending proposal; set only while `awaiting_confirmation`."
           },
+          "content_removed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when retention removed the ticket's text (subject, description,\nanswers, messages): those fields then hold the marker `—`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -11609,7 +12668,7 @@
               },
               {
                 "$ref": "#/components/schemas/SubmittedIntake",
-                "description": "Frozen original intake; null only for legacy records predating submission."
+                "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
               }
             ]
           },
@@ -11636,6 +12695,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Stable human-facing number."
+          },
+          "removed_screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Intake screenshots the retention policy has removed."
           },
           "requester": {
             "oneOf": [

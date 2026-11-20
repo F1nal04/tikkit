@@ -356,6 +356,27 @@ pub async fn anonymize_account(
         .await
 }
 
+/// [`purge_before`] for at most `limit` events, oldest first, so a long
+/// history is deleted in bounded transactions. Call it until it returns 0.
+/// Each call that deletes something appends its own `audit_retention_purged`.
+pub async fn purge_batch(
+    tx: &mut sqlx::PgConnection,
+    cutoff: OffsetDateTime,
+    who: Who,
+    limit: i32,
+) -> Result<i64, sqlx::Error> {
+    let admin = match who {
+        Who::Account(id) => Some(id),
+        Who::Service(_) => None,
+    };
+    sqlx::query_scalar("SELECT audit_retention_purge($1, $2, $3)")
+        .bind(cutoff)
+        .bind(admin)
+        .bind(limit)
+        .fetch_one(tx)
+        .await
+}
+
 // ------------------------------------------------------------------ read side
 
 /// Filters of the audit search and export. All are optional and combine with AND.

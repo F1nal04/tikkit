@@ -422,6 +422,8 @@ pub struct TicketAi {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(value_type = Option<String>, format = DateTime, required = true)]
     pub decided_at: Option<OffsetDateTime>,
+    /// Retention removed the stored suggestion; `suggestion` is then `null`.
+    pub content_removed: bool,
 }
 
 /// The public reason for a stored outcome code. Requesters do not learn budget,
@@ -451,6 +453,7 @@ type ViewRow = (
     Option<OffsetDateTime>,
     Option<String>,
     Option<OffsetDateTime>,
+    bool,
 );
 
 /// The ticket's attempt, or `None` if the ticket never went through AI. The
@@ -458,7 +461,7 @@ type ViewRow = (
 pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<TicketAi>, ApiError> {
     let row: Option<ViewRow> = sqlx::query_as(
         "SELECT a.state, a.outcome, a.language, a.explanation, a.steps, a.created_at,
-                a.finished_at, d.event_type, d.created_at
+                a.finished_at, d.event_type, d.created_at, a.content_purged_at IS NOT NULL
          FROM ai_attempts a
          LEFT JOIN ticket_events d ON d.ticket_id = a.ticket_id
               AND d.event_type IN ('ai_solved', 'ai_not_solved')
@@ -477,6 +480,7 @@ pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<Ticke
         finished_at,
         decision,
         decided_at,
+        content_removed,
     )) = row
     else {
         return Ok(None);
@@ -489,18 +493,19 @@ pub async fn view(db: &mut PgConnection, ticket_id: Uuid) -> Result<Option<Ticke
     Ok(Some(TicketAi {
         state,
         language: ident(language)?,
-        suggestion: explanation
-            .zip(steps)
-            .map(|(explanation, steps)| AiSuggestion {
+        suggestion: explanation.zip(steps).filter(|_| !content_removed).map(
+            |(explanation, steps)| AiSuggestion {
                 explanation,
                 steps: steps.0,
-            }),
+            },
+        ),
         reason: (state == AiAttemptState::HandedOff)
             .then(|| public_reason(outcome.as_deref().unwrap_or_default())),
         created_at,
         finished_at,
         decision,
         decided_at,
+        content_removed,
     }))
 }
 

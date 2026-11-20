@@ -42,7 +42,8 @@ export function requesterActions(ticket: TicketDetail, policy: Schemas['Organiza
   return {
     reply: own && REPLY_STATUSES.includes(ticket.status),
     resolution: own && ticket.status === 'awaiting_confirmation',
-    reopen: own && ticket.status === 'closed' && policy.allow_reopening,
+    // Nothing is left to work on once the retention policy removed the content; the API refuses it too.
+    reopen: own && ticket.status === 'closed' && policy.allow_reopening && !ticket.content_removed_at,
     cancel: own && open && (policy.requester_cancellation_policy === 'anytime_while_open' || (policy.requester_cancellation_policy === 'before_work_starts' && !started)),
   }
 }

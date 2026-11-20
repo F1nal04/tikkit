@@ -60,6 +60,11 @@ pub enum ApiError {
     /// the ticket's committed status, so the losing caller knows the outcome.
     ConflictWith(TicketStatus),
     PayloadTooLarge,
+    /// A retention confirmation whose preview no longer matches the stored
+    /// policy (another Admin changed it, or the preview is too old).
+    RetentionPreviewStale,
+    /// A personal-data export over its byte budget.
+    ExportTooLarge,
     /// No outbound SMTP connection has been saved.
     SmtpNotConfigured,
     /// The relay rejected the username or password.
@@ -114,6 +119,8 @@ pub enum ErrorCode {
     MethodNotAllowed,
     Conflict,
     PayloadTooLarge,
+    RetentionPreviewStale,
+    ExportTooLarge,
     SmtpNotConfigured,
     SmtpAuthFailed,
     SmtpTlsFailed,
@@ -268,6 +275,16 @@ impl ApiError {
                 StatusCode::PAYLOAD_TOO_LARGE,
                 ErrorCode::PayloadTooLarge,
                 "The request body is too large.",
+            ),
+            RetentionPreviewStale => (
+                StatusCode::CONFLICT,
+                ErrorCode::RetentionPreviewStale,
+                "The retention policy changed since this preview; preview again.",
+            ),
+            ExportTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::ExportTooLarge,
+                "This account's data is too large to export in one file.",
             ),
             SmtpNotConfigured => (
                 StatusCode::CONFLICT,

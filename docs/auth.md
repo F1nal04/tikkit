@@ -85,7 +85,9 @@ After setup, accounts are created only from Admin invitations.
   in. The invitation row is locked (`FOR UPDATE`) and marked used in the same
   transaction as the account insert, so validation errors, a taken username, or a
   failed transaction leave it usable, and concurrent acceptance has one winner.
-  Unknown fields such as `role` are rejected (`422 unknown_field`).
+  Unknown fields such as `role` are rejected (`422 unknown_field`). A username
+  starting with `anonymized-` is `422 username: reserved`, here and at setup:
+  that namespace belongs to anonymized accounts ([retention.md](retention.md#anonymizing-an-account)).
 - Unknown, expired, revoked, and used tokens are all `410 invitation_invalid`.
 - An existing account with the same email is never reused, linked, or upgraded.
 

@@ -87,9 +87,13 @@ Each item (`SubmissionSummary`): `id`, `reference`, `subject`, `status`,
 | `failed` | Failed: no suggestion, sent to the help desk |
 | `cancelled` | Abandoned: cancelled before any decision |
 
-Retention is not applied here: every persisted submission is listed. Expiry and
-deletion belong to the retention work ([#43](https://github.com/F1nal04/tikkit/issues/43)),
-which removes records from this view by deleting them.
+Retention never removes a submission from this list. When the ticket content
+period expires ([retention.md](retention.md)), the ticket keeps its row,
+status, outcome, and events, so it stays listed and counted; its subject,
+description, answers, and messages hold the marker `—`, the detail carries
+`content_removed_at` (and `ai.content_removed` when the suggestion is gone),
+and the page shows a notice. There is no "non-expired" filter because nothing
+expires out of the cohort.
 
 ## Detail: `GET /api/admin/submissions/{id}`
 

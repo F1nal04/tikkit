@@ -590,7 +590,15 @@ pub async fn request_recovery(
     .bind(found.as_ref().map_or(Uuid::nil(), |f| f.0))
     .fetch_one(&mut *tx)
     .await?;
-    let found = found.filter(|_| !cooling);
+    let mut found = found.filter(|_| !cooling);
+    // Deactivated since the lookup: as if the username were unknown.
+    if let Some((id, ..)) = &found
+        && crate::auth::lock_active_account(&mut tx, *id)
+            .await
+            .is_err()
+    {
+        found = None;
+    }
     let recovery_hash = token_hash(&token);
     if let Some((id, ..)) = &found {
         sqlx::query(&format!(
@@ -705,6 +713,9 @@ pub async fn reset_password(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::ResetTokenInvalid)?;
+    crate::auth::lock_active_account(&mut tx, account_id)
+        .await
+        .map_err(|_| ApiError::ResetTokenInvalid)?;
     // Rejected here, the transaction rolls back and the token stays usable.
     check_password(&body.new_password, &username.trim().to_lowercase())
         .map_err(|code| field_error("new_password", code))?;
@@ -763,6 +774,9 @@ pub async fn update_profile(
         .filter_map(|(name, set)| set.then_some(name))
         .collect();
     let mut tx = state.pool.begin().await?;
+    // The session was checked before this transaction; the account may have
+    // been deactivated and anonymized since.
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     sqlx::query(
         "UPDATE accounts SET email = coalesce($2, email), language = coalesce($3, language)
          WHERE id = $1",
@@ -802,6 +816,8 @@ pub struct AccountSummary {
     pub role: Role,
     pub language: Language,
     pub is_active: bool,
+    /// The account's identity was removed; it cannot be reactivated.
+    pub anonymized: bool,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
@@ -833,11 +849,13 @@ pub async fn list_accounts(
         Option<String>,
         Option<Uuid>,
         bool,
+        bool,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, username, display_name, email, role::text, language, is_active, created_at, expertise,
          (SELECT team_id FROM team_memberships WHERE account_id=accounts.id),
-         EXISTS (SELECT 1 FROM teams WHERE lead_account_id=accounts.id AND archived_at IS NULL)
+         EXISTS (SELECT 1 FROM teams WHERE lead_account_id=accounts.id AND archived_at IS NULL),
+         anonymized_at IS NOT NULL
          FROM accounts WHERE ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $1",
     )
@@ -861,6 +879,7 @@ pub async fn list_accounts(
                 expertise: r.8,
                 team_id: r.9,
                 is_team_lead: r.10,
+                anonymized: r.11,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -900,6 +919,7 @@ pub async fn deactivate_account(
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden` (not an Admin)", body = crate::api::ErrorEnvelope),
         (status = 404, description = "`not_found`", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`conflict`: the account was anonymized", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn reactivate_account(
     State(state): State<AppState>,
@@ -919,6 +939,16 @@ async fn set_active(
     let mut tx = crate::management::transaction(state, user).await?;
     // The last-admin and team-lead rules are database constraints that `?` maps
     // to `last_active_admin` / `active_team_lead`. Do not pre-lock Admin rows here.
+    // An anonymized account stays deactivated for good (docs/retention.md).
+    let anonymized: bool = sqlx::query_scalar(
+        "SELECT COALESCE((SELECT anonymized_at IS NOT NULL FROM accounts WHERE id = $1), false)",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if active && anonymized {
+        return Err(ApiError::Conflict);
+    }
     let changed =
         sqlx::query("UPDATE accounts SET is_active = $2 WHERE id = $1 AND is_active <> $2")
             .bind(id)

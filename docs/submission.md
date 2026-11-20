@@ -30,16 +30,17 @@ subject, 20,000 for the description, 100 answers, and 500 characters per draft
 answer. NUL characters are invalid. Catalog validity is checked at submission,
 so a renamed or archived category does not destroy unsent input.
 
-**Retention policy:** editable drafts are retained without automatic expiry
-until their owner deletes or submits them. Deletion removes saved input and
+**Retention policy:** editable drafts are retained until their owner deletes
+or submits them, or until the Admin-set draft retention period expires them
+(not set by default: no automatic expiry; [retention.md](retention.md)). Deletion removes saved input and
 records a `draft_deleted` audit event (ID and version, no form text). Creation
 and edits record `draft_created`/`draft_updated` with the same safe metadata.
 Submission clears the saved input and retains an ID/version/ticket tombstone
-for stale-write detection. Submitted snapshots, receipts, tombstones, and audit
-records have no automatic expiry in this milestone. Backups can retain deleted
-draft input under the deployment's backup retention policy; deleting a draft
-does not rewrite backups. Scheduled retention/anonymization belongs to the
-later retention work, not this endpoint.
+for stale-write detection. Receipts and tombstones hold no content and are kept. Submitted
+snapshots and audit records follow the ticket content and audit periods of
+[retention.md](retention.md), which are not set by default. Backups can retain
+deleted draft input under the deployment's backup retention policy; deleting a
+draft does not rewrite backups ([retention.md](retention.md#backups)).
 
 ## Submission
 

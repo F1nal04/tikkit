@@ -69,6 +69,12 @@ its AI endpoint is a closed loopback port. To exercise a route that calls a
 provider (the Admin connection test in `tests/ai_config.rs`), start a mock and
 build the app with `test_app_with_provider(&pool, &mock.url)`.
 
+`apps/api/tests/retention.rs` covers data retention
+([retention.md](retention.md#tests)). It places the run's clock (`as_of`)
+exactly on a boundary with `retention::start_run`, drives the worker with
+`retention::step`, and simulates crashes with `retention::claim` /
+`retention::process` on a transaction it rolls back or commits itself.
+
 `apps/api/tests/ai_guard.rs` covers the usage safeguards
 ([ai-usage.md](ai-usage.md)) against PostgreSQL and the same mock: budget
 races and bursts (`Mock::max_in_flight()` is the most requests the mock ever
