@@ -189,6 +189,14 @@ category, the number of rows; written by the database). Files and drafts: `scree
 log itself: `audit_exported`, `audit_retention_purged`,
 `audit_account_anonymized`, `audit_ticket_text_redacted`.
 
+Restore ([backup-restore.md](backup-restore.md#the-email-cutover)):
+`notifications_suppressed_on_restore`, written by the API image's
+`suppress-restored-email` command under the named service `restore` (no account,
+no request ID), with the cutoff and the counts of suppressed email rows, pending
+email rows after the cutoff and pending in-portal rows, never content. It goes
+through `audit::system` like any job event, so the append-only guard applies.
+`credentials-check` and `restore-check` write nothing.
+
 ## Append-only, retention, and anonymization
 
 `UPDATE`, `DELETE`, and `TRUNCATE` on `audit_events` raise `restrict_violation`

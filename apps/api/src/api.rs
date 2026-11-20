@@ -67,6 +67,10 @@ pub enum ApiError {
     RetentionPreviewStale,
     /// A personal-data export over its byte budget.
     ExportTooLarge,
+    /// Restore mode: this copy sends nothing to mail relays or AI providers.
+    OutboundDisabled,
+    /// Restore mode: destructive jobs (retention runs, anonymization) are refused.
+    RestoreModeBlocked,
     /// No outbound SMTP connection has been saved.
     SmtpNotConfigured,
     /// The relay rejected the username or password.
@@ -124,6 +128,8 @@ pub enum ErrorCode {
     PayloadTooLarge,
     RetentionPreviewStale,
     ExportTooLarge,
+    OutboundDisabled,
+    RestoreModeBlocked,
     SmtpNotConfigured,
     SmtpAuthFailed,
     SmtpTlsFailed,
@@ -323,6 +329,16 @@ impl ApiError {
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::SmtpCredentialUnreadable,
                 "The stored mail password could not be read. Enter it again.",
+            ),
+            OutboundDisabled => (
+                StatusCode::CONFLICT,
+                ErrorCode::OutboundDisabled,
+                "This restored copy is in restore mode and sends nothing to mail servers or AI providers.",
+            ),
+            RestoreModeBlocked => (
+                StatusCode::CONFLICT,
+                ErrorCode::RestoreModeBlocked,
+                "This copy is in restore mode and is under verification: retention runs and anonymization are refused until it leaves restore mode.",
             ),
             AiNotConfigured => (
                 StatusCode::CONFLICT,

@@ -139,4 +139,6 @@ the lock too. The contract is described in
 [retention.md](retention.md#backups) and the procedure that uses it in
 [backup-restore.md](backup-restore.md). Files newer than the dump are harmless
 extras that the stray-file sweep removes after 24 hours; restoring an older
-directory than the dump leaves rows whose previews fail with `500`.
+directory than the dump leaves rows whose previews fail with `500`. The
+[backup sidecar and restore script](backup-restore.md) follow this order and
+report rows without files.

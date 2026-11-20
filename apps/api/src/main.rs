@@ -9,10 +9,32 @@ use tokio::{net::TcpListener, sync::watch};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let migrate_only = match std::env::args_os().skip(1).collect::<Vec<_>>().as_slice() {
-        [] => false,
-        [command] if command == "migrate" => true,
-        _ => anyhow::bail!("usage: tikkit-api [migrate]"),
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let (migrate_only, restore_check, suppress_before) = match args.as_slice() {
+        [] => (false, false, None),
+        [command] if command == "migrate" => (true, false, None),
+        [command] if command == "restore-check" => (false, true, None),
+        [command] if command == "credentials-check" => {
+            let config = Config::from_env()?;
+            let pool = db::connect(&config.database_url)
+                .await
+                .context("cannot connect to PostgreSQL")?;
+            let (ai, smtp) =
+                tikkit_api::restore::credentials_status(&pool, &config.encryption_key).await?;
+            pool.close().await;
+            println!("ai_credentials={ai} smtp_credentials={smtp}");
+            return Ok(());
+        }
+        [command, flag, before] if command == "suppress-restored-email" && flag == "--before" => {
+            let before = before.to_str().unwrap_or_default();
+            let before =
+                time::OffsetDateTime::parse(before, &time::format_description::well_known::Rfc3339)
+                    .context("--before must be an RFC 3339 time such as 2026-11-18T03:15:00Z")?;
+            (false, false, Some(before))
+        }
+        _ => anyhow::bail!(
+            "usage: tikkit-api [migrate | restore-check | credentials-check | suppress-restored-email --before <RFC 3339 time>]"
+        ),
     };
 
     // Development convenience: load ./.env (or a parent's) without overriding real
@@ -22,6 +44,22 @@ async fn main() -> anyhow::Result<()> {
     }
     let config = Config::from_env()?;
     telemetry::init_logging(config.json_logs);
+    if restore_check {
+        // Capability probe for restore tooling: an image without this command
+        // fails the usage check above, so it is refused before it can serve.
+        anyhow::ensure!(
+            config.restore_mode,
+            "RESTORE_MODE is not on in this environment"
+        );
+        println!("restore_mode=on");
+        return Ok(());
+    }
+    if suppress_before.is_some() {
+        anyhow::ensure!(
+            config.restore_mode,
+            "suppress-restored-email only runs while RESTORE_MODE is on"
+        );
+    }
 
     let pool = db::connect(&config.database_url).await.map_err(|error| {
         let sqlstate = error.as_database_error().and_then(|db| db.code());
@@ -45,13 +83,32 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Database migrations complete");
         return Ok(());
     }
+    if let Some(before) = suppress_before {
+        let done = tikkit_api::restore::suppress_pending_email(&pool, before).await?;
+        pool.close().await;
+        println!(
+            "email_suppressed={} email_pending_after_cutoff={} in_app_pending={}",
+            done.email_suppressed, done.email_pending_after_cutoff, done.in_app_pending
+        );
+        return Ok(());
+    }
 
     std::fs::create_dir_all(&config.screenshot_dir)
         .context("cannot create SCREENSHOT_DIR (see docs/configuration.md)")?;
-    tokio::spawn(screenshots::cleanup_loop(
-        pool.clone(),
-        config.screenshot_dir.clone(),
-    ));
+    // Restore mode: a restored copy under verification runs no background job
+    // (no mail, no AI calls, no timeouts, no file sweeps) until an operator
+    // restarts it without RESTORE_MODE. See docs/backup-restore.md.
+    let workers = !config.restore_mode;
+    if config.restore_mode {
+        tracing::warn!(
+            "RESTORE_MODE is on: background jobs are not running and nothing is sent to mail relays or AI providers"
+        );
+    } else {
+        tokio::spawn(screenshots::cleanup_loop(
+            pool.clone(),
+            config.screenshot_dir.clone(),
+        ));
+    }
 
     let listener = TcpListener::bind(config.api_addr)
         .await
@@ -66,11 +123,13 @@ async fn main() -> anyhow::Result<()> {
     };
     tracing::info!(address = %listener.local_addr()?, "Tikkit API listening");
     let state = AppState::new(pool.clone(), config.screenshot_dir.as_path().into());
+    state.metrics.set_restore_mode(config.restore_mode);
     let settings = auth::Settings::from(&config);
-    let notifier = tokio::spawn(notifications::worker_loop(state.clone(), settings.clone()));
-    let auto_close = tokio::spawn(autoclose::worker_loop(state.clone()));
-    let ai_retention = tokio::spawn(ai_guard::retention_loop(pool.clone()));
-    let data_retention = tokio::spawn(retention::worker_loop(state.clone()));
+    let notifier =
+        workers.then(|| tokio::spawn(notifications::worker_loop(state.clone(), settings.clone())));
+    let auto_close = workers.then(|| tokio::spawn(autoclose::worker_loop(state.clone())));
+    let ai_retention = workers.then(|| tokio::spawn(ai_guard::retention_loop(pool.clone())));
+    let data_retention = workers.then(|| tokio::spawn(retention::worker_loop(state.clone())));
 
     // Stop accepting on SIGTERM/Ctrl+C, then give in-flight requests a bounded drain window.
     let (stopping, mut stopped) = watch::channel(false);
@@ -89,10 +148,12 @@ async fn main() -> anyhow::Result<()> {
     };
     // AI suggestion attempts. At shutdown the calls in flight are cancelled and
     // their attempts released for the next start to take over.
-    let ai_worker = tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
-        &state,
-        settings.encryption_key,
-    )));
+    let ai_worker = workers.then(|| {
+        tokio::spawn(ai_attempts::worker_loop(ai_attempts::Worker::new(
+            &state,
+            settings.encryption_key,
+        )))
+    });
     let app = app_with(state, settings);
     let server = axum::serve(
         listener,
@@ -120,13 +181,18 @@ async fn main() -> anyhow::Result<()> {
     // already running commit, and cancelled AI calls free their provider slots
     // and release their attempts, before the pool closes.
     if tokio::time::timeout(Duration::from_secs(5), async {
-        let _ = tokio::join!(
+        for worker in [
             notifier,
             auto_close,
             ai_retention,
             data_retention,
-            ai_worker
-        );
+            ai_worker,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = worker.await;
+        }
     })
     .await
     .is_err()

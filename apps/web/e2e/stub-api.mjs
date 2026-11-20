@@ -690,6 +690,9 @@ createServer(async (req, res) => {
   st.messages ??= new Map()
   // What the retention policy did to a ticket (docs/retention.md): { id, content_removed_at?, removed_screenshots? }.
   if (route === 'POST /api/test/retention-ticket') { const { id, ...flags } = await readBody(req); const t = st.tickets.find((t) => t.id === id); if (!t) return fail(res, 404, 'not_found'); Object.assign(t, flags); if (flags.content_removed_at) Object.assign(t, { subject: '—', description: '—' }); return reply(res, 204) }
+  // Restore mode of this session's API, as /api/ready reports it (docs/backup-restore.md).
+  if (route === 'POST /api/test/restore-mode') { st.restoreMode = !!(await readBody(req)).on; return reply(res, 204) }
+  if (route === 'GET /api/ready') return reply(res, 200, { status: 'ready', checks: { database: 'ok', migrations: 'ok' }, restore_mode: !!st.restoreMode })
   if (route === 'POST /api/test/policy') { Object.assign(st.policy, await readBody(req)); return reply(res, 204) }
   if (route === 'POST /api/test/assignment') { const input = await readBody(req); const t = st.tickets.find((t) => t.id === input.id); if (!t) return fail(res, 404, 'not_found'); t.assignment = input.assignment; return reply(res, 204) }
   if (route === 'POST /api/test/history') return reply(res, 200, seedHistory(st, user))

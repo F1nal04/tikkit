@@ -383,7 +383,11 @@ described with the backup tooling; this is the retention side of it):
   - With "apply automatically" on, the worker removes the expired data again
     within a day of the restore (the periods are in the restored database; if
     the policy was changed after the backup, set it again first).
-  - Otherwise start a run after every restore.
+  - Otherwise start a run after every restore. A restored copy is brought up
+    in restore mode, which refuses runs and anonymization (`409
+    restore_mode_blocked`) and starts no worker, so do it after leaving restore
+    mode and before opening the copy to users
+    ([backup-restore.md](backup-restore.md#post-restore-checklist-before-any-live-work)).
   - **Anonymizations are not replayed automatically.** Keep a record outside
     the database of the account IDs anonymized since the oldest backup you
     retain (the `account_anonymized` audit events list them; note them before
@@ -395,7 +399,8 @@ described with the backup tooling; this is the retention side of it):
   expired upload, a deleted pending upload, an anonymization), the dump still
   has the row and the copy lacks the file: after a restore that screenshot's
   preview fails. The backup prevents this with the contract below; the
-  procedure that uses it is in [backup-restore.md](backup-restore.md).
+  procedure that uses it, including how a restore is verified and what to redo
+  afterwards, is in [backup-restore.md](backup-restore.md).
 
   **Contract.** While any database session holds
 

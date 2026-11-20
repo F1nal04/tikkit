@@ -356,7 +356,7 @@
             }
           },
           "409": {
-            "description": "`conflict`: a ticket of the account is being changed right now; try again",
+            "description": "`conflict`: a ticket of the account is being changed right now; try again; `restore_mode_blocked`: this copy is in restore mode",
             "content": {
               "application/json": {
                 "schema": {
@@ -1512,7 +1512,7 @@
             }
           },
           "409": {
-            "description": "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending",
+            "description": "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending; `restore_mode_blocked`: this copy is in restore mode",
             "content": {
               "application/json": {
                 "schema": {
@@ -2136,6 +2136,16 @@
         "responses": {
           "202": {
             "description": "Accepted; identical for unknown usernames"
+          },
+          "409": {
+            "description": "`outbound_disabled`: restore mode sends no email and creates no token, for every username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           },
           "429": {
             "description": "`rate_limited`",
@@ -4574,7 +4584,7 @@
             }
           },
           "409": {
-            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported`",
+            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, `ai_model_unsupported`, or `outbound_disabled` (restore mode)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8750,6 +8760,8 @@
           "payload_too_large",
           "retention_preview_stale",
           "export_too_large",
+          "outbound_disabled",
+          "restore_mode_blocked",
           "smtp_not_configured",
           "smtp_auth_failed",
           "smtp_tls_failed",
@@ -10806,11 +10818,16 @@
         "type": "object",
         "required": [
           "status",
-          "checks"
+          "checks",
+          "restore_mode"
         ],
         "properties": {
           "checks": {
             "$ref": "#/components/schemas/Checks"
+          },
+          "restore_mode": {
+            "type": "boolean",
+            "description": "`true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.\nOlder builds omit the field, which restore tooling treats as \"unsupported\"."
           },
           "status": {
             "type": "string",

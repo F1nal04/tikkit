@@ -31,6 +31,9 @@ pub struct Config {
     pub trusted_proxies: TrustedProxies,
     /// Private directory for screenshot files (a persistent volume in production).
     pub screenshot_dir: PathBuf,
+    /// Restored copy under verification: no background jobs, no outbound dispatch
+    /// (docs/backup-restore.md). Off in every normal deployment.
+    pub restore_mode: bool,
 }
 
 /// Every configuration problem found, one actionable line each. Never contains values.
@@ -62,6 +65,7 @@ impl fmt::Debug for Config {
             .field("session_rotate", &self.session_rotate)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("screenshot_dir", &self.screenshot_dir)
+            .field("restore_mode", &self.restore_mode)
             .finish()
     }
 }
@@ -204,6 +208,15 @@ impl Config {
             );
         }
 
+        let restore_mode = match var("RESTORE_MODE").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => {
+                fail("RESTORE_MODE must be `true` or `false`");
+                false
+            }
+        };
+
         match (public_origin, session_secret, encryption_key) {
             (Some(public_origin), Some(session_secret), Some(encryption_key))
                 if errors.is_empty() =>
@@ -222,6 +235,7 @@ impl Config {
                     session_rotate,
                     trusted_proxies,
                     screenshot_dir,
+                    restore_mode,
                 })
             }
             _ => Err(ConfigError(errors)),
@@ -279,6 +293,7 @@ mod tests {
         assert_eq!(c.session_rotate, Duration::from_secs(24 * 3600));
         assert!(c.trusted_proxies.is_empty());
         assert_eq!(c.screenshot_dir, PathBuf::from("data/screenshots"));
+        assert!(!c.restore_mode);
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
     }
@@ -299,9 +314,10 @@ mod tests {
             ("SESSION_ROTATE_HOURS", "soon"),
             ("TRUST_PROXY_HEADERS", "true"),
             ("TRUSTED_PROXIES", "0.0.0.0/0"),
+            ("RESTORE_MODE", "maybe"),
         ])
         .unwrap_err();
-        assert_eq!(err.0.len(), 13, "{err}");
+        assert_eq!(err.0.len(), 14, "{err}");
         let text = err.to_string();
         assert!(!text.contains("hunter2") && !text.contains("c2hvcnQ="));
     }
@@ -326,6 +342,12 @@ mod tests {
         let c = config(&[("TRUSTED_PROXIES", "172.30.0.0/24,10.0.0.5")]).unwrap();
         assert!(c.trusted_proxies.contains("172.30.0.200".parse().unwrap()));
         assert!(!c.trusted_proxies.contains("172.31.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn restore_mode_is_an_explicit_boolean() {
+        assert!(config(&[("RESTORE_MODE", "true")]).unwrap().restore_mode);
+        assert!(!config(&[("RESTORE_MODE", "false")]).unwrap().restore_mode);
     }
 
     #[test]

@@ -18,7 +18,9 @@
 
 use std::path::Path as FsPath;
 
-use axum::{extract::State, http::StatusCode};
+use std::sync::Arc;
+
+use axum::{Extension, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -31,7 +33,7 @@ use crate::{
     AppState,
     api::{ApiError, FieldErrors, Json},
     audit::{self, Entry, Who},
-    auth::CurrentUser,
+    auth::{Auth, CurrentUser},
     authz::{Permission, require_permission},
     metrics::{Metrics, Worker},
     notifications::poll_loop,
@@ -980,15 +982,20 @@ pub struct StartRetentionRun {
         (status = 202, body = RetentionRun),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
         (status = 403, description = "`forbidden`", body = crate::api::ErrorEnvelope),
-        (status = 409, description = "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending", body = crate::api::ErrorEnvelope),
+        (status = 409, description = "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending; `restore_mode_blocked`: this copy is in restore mode", body = crate::api::ErrorEnvelope),
         (status = 422, description = "`validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn start_retention_run(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Json(body): Json<StartRetentionRun>,
 ) -> Result<(StatusCode, Json<RetentionRun>), ApiError> {
     require_permission(&user, Permission::ManageSettings)?;
+    // A restored copy under verification starts no destructive job (docs/backup-restore.md).
+    if auth.settings.restore_mode {
+        return Err(ApiError::RestoreModeBlocked);
+    }
     let invalid = |field: &str, code| ApiError::Validation([(field.to_owned(), vec![code])].into());
     if !confirmed(Some(&body.confirm)) {
         return Err(invalid("confirm", "invalid"));

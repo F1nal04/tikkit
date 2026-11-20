@@ -110,6 +110,11 @@ requesters and staff. Configure your teams and intake catalog before
 accepting tickets. AI and SMTP start disabled and require no provider key
 or relay credentials for setup, readiness or ticket handling.
 
+Before accepting real tickets, set up [encrypted backups and an off-host
+copy](backup-restore.md) and run the restore drill once. The deployment is
+not recoverable without them, and the backup decryption key and
+`ENCRYPTION_KEY` must be stored apart from the host.
+
 ### PostgreSQL initialized without the application login
 
 If PostgreSQL started but stays unhealthy, inspect `compose logs postgres`.
@@ -228,25 +233,21 @@ version of the Compose/config files, and a verified backup. Use the same
 project name and keep `postgres-data` and `screenshots-data` together.
 They contain users, tickets, history, AI records/statistics, and uploads.
 Keep the deployment configuration and an independent copy of the encryption
-key. To make a consistent backup, quiesce application writes, take a
-PostgreSQL 17 dump and archive the screenshot volume during the same
-maintenance window. The reference stack exposes these backup streams:
-
-```sh
-compose exec -T postgres pg_dump -U postgres -d tikkit -Fc
-compose run --rm -T --no-deps --entrypoint tar api -C /var/lib/tikkit/screenshots -cf - .
-```
-
-Pipe each stream into your encrypted backup storage. Copy the backup
-off-host and restore into an isolated project with its own volumes.
-Keep delivery disabled in the restore environment. See
+key. Take a verified backup before every upgrade with the
+[encrypted backup sidecar](backup-restore.md#set-up-scheduled-backups): run it
+on demand (`exec backup /opt/tikkit-backup/entrypoint.sh run`) and copy the
+result off the host. It dumps PostgreSQL and then archives the screenshot
+volume with the non-secret configuration, so the two stay consistent
+without stopping the application. Restore into an isolated project with
+[ops/backup/restore.sh](backup-restore.md#isolated-restore), and see
 [screenshot storage and restore](screenshots.md#storage-backup-and-restore).
 
 1. Record the old image references and review the target's release notes and
    migration changes. Change the two image references in `.env.production`
    and pull them before taking the service offline (`compose pull api web`).
 2. Stop public traffic and writers (`compose stop proxy web api`). Take the
-   pre-upgrade backup before running the new migration command.
+   pre-upgrade backup before running the new migration command (a final
+   on-demand backup after the writers stopped has no recovery-point gap).
 3. Run `compose run --rm --no-deps api migrate`. On success run
    `compose up -d --wait`, verify both public probes, and check sign-in,
    existing ticket history, and a screenshot. Recreate the Prometheus
@@ -265,39 +266,23 @@ If the migration set and stored data remain compatible with the previous
 release, stop the app services, restore the previous image references and
 deployment configuration, run the previous image's `api migrate` as a
 compatibility check, then start and probe it. If migrations advanced or
-data changed incompatibly, restore the pre-upgrade database and screenshots
-together into fresh volumes with the previous versions and secret settings
+data changed incompatibly, restore the pre-upgrade backup (database and screenshots
+together) into fresh volumes with the previous versions and secret settings
 before switching traffic back. This restore loses writes after the backup.
 Keep the newer volumes for investigation. Never edit migration history to
 force a rollback. A PostgreSQL **major** upgrade requires a separate
 database upgrade/restore procedure.
 
-### Manual restore to fresh volumes
+### Restore to fresh volumes
 
-Use the database dump and screenshot archive from the same backup. In a
-separate deployment directory, prepare a protected `.env.restore` with the
-previous image references and recovered secrets, including the encryption key.
-Keep its proxy unpublished during the restore and block API egress before
-starting restored workers so they cannot send mail or call AI providers.
-Use a fresh project name so Compose creates separate volumes. With the
-decrypted backup streams available as `tikkit.pg` and `screenshots.tar`:
-
-```sh
-restore() {
-  docker compose --env-file .env.restore -f docker-compose.prod.example.yml -p tikkit-restore "$@"
-}
-
-restore up -d --wait postgres
-restore exec -T postgres pg_restore -U postgres -d tikkit --exit-on-error --single-transaction < tikkit.pg
-restore run --rm -T --no-deps --entrypoint tar api \
-  --no-same-owner -C /var/lib/tikkit/screenshots -xf - < screenshots.tar
-restore run --rm -T --no-deps api migrate
-```
-
-The fresh PostgreSQL bootstrap creates the same `tikkit` owner before the
-restore. Keep the dump and archive protected, and verify the restored
-deployment privately before switching traffic. The encrypted backup and
-restore documentation from #47 supersedes this manual procedure when available.
+Use [ops/backup/restore.sh](../ops/backup/restore.sh) with the encrypted backup
+from the same run: it restores the database and the screenshot files together
+into a new, isolated Compose project, verifies checksums and consistency, and
+starts the copy in restore mode, so nothing is mailed or sent to an AI provider.
+The full procedure, key custody, the post-restore checklist and the recovery
+objectives are in [Backup, restore and disaster recovery](backup-restore.md).
+Never edit migration history to force a rollback, and keep the newer volumes
+for investigation.
 
 See the [release pipeline](ci.md#release-images) for component tags and
 image provenance. Release Please creates the tags from `main`. The image
