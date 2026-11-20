@@ -1,6 +1,8 @@
 <script lang="ts">
   import { auditHref, exportAudit, hasMetadata, metadataText, type AuditExport } from '#lib/audit.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
+  import { focusFormErrors } from '#lib/a11y.ts'
   import Table from '#lib/components/Table.svelte'
   import { errorText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
@@ -37,6 +39,7 @@
       exported = result
     } catch (e) {
       error = e
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -72,10 +75,10 @@
 {/if}
 
 <div class="export">
+  {#if error}<ErrorSummary title={errorText(t, error)} />{/if}
   <button type="button" onclick={download} disabled={busy} aria-busy={busy}>{s.export}</button>
   <span>{s.exportHint}</span>
 </div>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
 {#if exported}
   <Alert kind="success">{(exported.truncated ? s.exportedTruncated : s.exported).replace('{rows}', String(exported.rows))}</Alert>
 {/if}

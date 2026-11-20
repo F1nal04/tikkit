@@ -3,7 +3,9 @@
   import { ApiError, type Schemas } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import Table from '#lib/components/Table.svelte'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import { CONFIRM, COUNTS, PERIODS, exportPersonalData, keepsEverything, periodForm, policyOf, samePolicy, totalOf } from '#lib/retention.ts'
@@ -32,6 +34,7 @@
 
   let busy = $state('')
   let error = $state<unknown>(null)
+  let errorOn = $state('')
   let fields = $state<Record<string, string[]>>({})
   let notice = $state('')
   // A confirmation is bound to this preview: its token and clock go back to the server, which
@@ -57,11 +60,13 @@
     error = null
     fields = {}
     notice = ''
+    errorOn = name
     try {
       await work()
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
       if (e instanceof ApiError && e.code === 'retention_preview_stale') await reload().catch(() => {})
     } finally {
       busy = ''
@@ -142,7 +147,15 @@
 
 <h1>{s.title}</h1>
 <p>{s.intro}</p>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
+{#if error}
+  <ErrorSummary
+    title={errorText(t, error)}
+    items={fieldItems(fields, { ...s.periods, confirm: fill(s.typeToConfirm, { word: CONFIRM }), username: s.username }, (code) => fieldText(t, code), {
+      confirm: errorOn === 'run' ? 'run_confirm' : 'save_confirm',
+      username: 'lookup',
+    })}
+  />
+{/if}
 {#if notice}<Alert kind="success">{notice}</Alert>{/if}
 
 <section aria-labelledby="policy-heading">

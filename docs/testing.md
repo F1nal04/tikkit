@@ -119,7 +119,11 @@ bun run test:e2e                                              # builds, then run
 ```
 
 `apps/web/playwright.config.ts` runs `e2e/*.spec.ts` in desktop Chromium and
-`e2e/shell.spec.ts` again at phone size (Pixel 7); it starts the production server
+`e2e/shell.spec.ts` again at phone size (Pixel 7). `e2e/a11y.spec.ts` scans
+every route with axe-core (WCAG 2.2 A/AA) in English and German at mobile,
+tablet, and desktop widths, and fails when a new `+page.svelte` is not in that
+list. `e2e/keyboard.spec.ts` and `e2e/recovery.spec.ts` cover keyboard use and
+failed requests. See [accessibility.md](accessibility.md). The config starts the production server
 (`node build/index.js`) twice: on :4173 with `API_ORIGIN` pointing at a stub
 API (`e2e/stub-api.mjs`, :4175; sign in as `requester`, `operator`, `specialist`,
 `lead`, or `admin` with `correct horse battery`; it also serves `/api/queue`, `/api/queue/counts`, and `/api/catalog` from fixed queue data; `e2e/support.ts` routes browser

@@ -71,7 +71,7 @@ test('a stale proposal is a recoverable conflict: nothing is claimed saved and t
   show()
   await fireEvent.input(screen.getByLabelText(/Resolution summary/), { target: { value: 'Replaced the roller' } })
   await fireEvent.click(screen.getByRole('button', { name: 'Propose resolution' }))
-  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('changed since you loaded it'))
+  await waitFor(() => expect(document.getElementById('form-errors')!.textContent).toContain('changed since you loaded it'))
   expect(bodyOf(fetch)).toEqual({ action: 'propose_resolution', summary: 'Replaced the roller', expected_updated_at: '2026-10-02T10:00:00.123456Z' })
   expect(invalidateAll).toHaveBeenCalled()
   expect((screen.getByLabelText(/Resolution summary/) as HTMLTextAreaElement).value).toBe('Replaced the roller')

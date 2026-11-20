@@ -368,7 +368,13 @@ createServer(async (req, res) => {
   const { pathname } = new URL(req.url, 'http://stub')
   const route = `${req.method} ${pathname}`
   if (route === 'GET /api/health') return reply(res, 200, { status: 'ok' })
-  if (route === 'GET /api/setup') return reply(res, 200, { setup_required: false })
+  if (route === 'GET /api/setup') {
+    const required = /(?:^|;\s*)tikkit_setup=1/.test(req.headers.cookie ?? '')
+    return reply(res, 200, { setup_required: required })
+  }
+  if (route === 'POST /api/invitations/lookup') {
+    return reply(res, 200, { role: 'operator', language: 'en', email: 'new@example.com', expires_at: '2026-12-01T00:00:00Z' })
+  }
   if (route === 'POST /api/test/expire') return void (sessions.delete(tokenOf(req)), reply(res, 204))
   if (route === 'POST /api/auth/login') {
     const { username, password } = await readBody(req)
@@ -391,6 +397,43 @@ createServer(async (req, res) => {
     return reply(res, 200, account(user, tokenOf(req)))
   }
   if (route === 'GET /api/organization') return reply(res, 200, { ...settings, ...stateOf(req).policy })
+  if (route === 'GET /api/notifications') {
+    return reply(res, 200, {
+      items: [{
+        id: '80000000-0000-4000-8000-000000000001',
+        title: 'Your ticket was updated',
+        body: 'A reply was added.',
+        href: '/',
+        ticket_id: '30000000-0000-4000-8000-000000000001',
+        created_at: '2026-10-20T08:00:00Z',
+        read_at: null,
+      }],
+      next_cursor: null,
+    })
+  }
+  if (route === 'GET /api/notification-preferences') return reply(res, 200, { email: true, in_app: true })
+  if (route === 'GET /api/admin/ai/outcomes') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    return reply(res, 200, {
+      days: 30, solved: 1, not_solved: 1, skipped: 0, failed: 1, category_exempt: 0, cancelled: 0,
+      processing: 1, awaiting_decision: 1, failures: [{ outcome: 'provider_error', count: 1 }],
+    })
+  }
+  if (route === 'GET /api/admin/ai/records') {
+    if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')
+    return reply(res, 200, {
+      items: [{
+        id: '81000000-0000-4000-8000-000000000001',
+        ticket_id: '60000000-0000-4000-8000-000000000301',
+        reference: 301,
+        subject: 'Solved by the AI suggestion',
+        requester: { id: '40000000-0000-4000-8000-000000000001', username: 'requester', display_name: 'requester' },
+        outcome: 'solved', outcome_code: null, status: 'ai_solved', provider: 'openai', model: 'openai-vision',
+        created_at: '2026-10-20T08:00:00Z', decided_at: '2026-10-20T08:05:00Z',
+      }],
+      next_cursor: null,
+    })
+  }
   if (route === 'GET /api/ai/policy') return reply(res, 200, aiPolicy(stateOf(req)))
   if (route === 'GET /api/settings/ai') {
     if (ROLES[user] !== 'admin') return fail(res, 403, 'forbidden')

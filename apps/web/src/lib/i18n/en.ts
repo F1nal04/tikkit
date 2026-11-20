@@ -205,6 +205,8 @@ export default {
   restoreModeBanner:
     'Restore mode is on: this is a restored copy. No email is sent, no AI provider is called and no background job runs. Finish the post-restore checklist, then restart without RESTORE_MODE.',
   loading: 'Loading…',
+  dialogOpened: 'Dialog opened: {title}',
+  dialogClosed: 'Dialog closed.',
   menu: 'Menu',
   mainNavigation: 'Main navigation',
   account: 'Account',
@@ -377,6 +379,7 @@ export default {
     first: 'First page',
     next: 'Next page',
     retry: 'Try again',
+    refreshed: 'The queue was updated.',
     search: 'Search',
     searchHint: 'A ticket number, or at least 3 characters from the subject, description, category, requester, or messages.',
     savedViews: 'Saved views',

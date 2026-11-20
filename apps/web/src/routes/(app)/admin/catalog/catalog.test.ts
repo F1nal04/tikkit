@@ -89,5 +89,5 @@ test('reorders with the complete list and shows errors in German', async () => {
   const [url, init] = fetch.mock.calls[0]
   expect([url, init.method]).toEqual(['/api/categories/order', 'PUT'])
   expect(JSON.parse(init.body)).toEqual({ ids: ['c2', 'c1'] })
-  expect((await screen.findByRole('alert')).textContent).toContain('inzwischen geändert')
+  await waitFor(() => expect(document.getElementById('form-errors')?.textContent).toContain('inzwischen geändert'))
 })

@@ -115,7 +115,7 @@ test('an operator searches, saves the view, and claims in bulk with a per-ticket
   const search = page.getByRole('searchbox', { name: 'Search' })
   await search.fill('de')
   await page.getByRole('button', { name: 'Apply', exact: true }).click()
-  await expect(page.getByText('This value is too short.')).toBeVisible()
+  await expect(page.getByText('This value is too short.', { exact: true })).toBeVisible()
   await expect(search).toHaveAttribute('aria-invalid', 'true')
   await search.fill('desk')
   await page.getByRole('button', { name: 'Apply', exact: true }).click()

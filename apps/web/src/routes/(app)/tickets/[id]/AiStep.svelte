@@ -47,7 +47,9 @@
   async function keepFocus() {
     await tick()
     const active = document.activeElement
-    if (!active || active === document.body || section?.contains(active)) heading?.focus()
+    // Client navigation lands on the page heading (or `#main` from the skip link).
+    const landing = document.querySelector('main h1')
+    if (!active || active === document.body || active.id === 'main' || active === landing || section?.contains(active)) heading?.focus()
   }
 
   /**
@@ -92,7 +94,7 @@
 {/snippet}
 
 {#if view.kind !== 'none'}
-  <section class="ai-step" aria-labelledby="ai-step-title" data-ai-step={view.kind} bind:this={section}>
+  <section class="ai-step" aria-labelledby="ai-step-title" aria-busy={view.kind === 'processing' || busy ? true : undefined} data-ai-step={view.kind} bind:this={section}>
     <p class="sr-only" role="status" data-testid="ai-announcement">{announcement}</p>
     {#if failure}
       <Alert>
@@ -104,7 +106,7 @@
 
     {#if view.kind === 'processing'}
       <h2 id="ai-step-title" tabindex="-1" bind:this={heading}>{a.processingTitle}</h2>
-      <p class="waiting"><span class="spinner" aria-hidden="true"></span>{a.processingStatus}</p>
+      <p class="waiting" role="status"><span class="spinner" aria-hidden="true"></span>{a.processingStatus}</p>
       <p>{a.processingText.replace('{reference}', reference)}</p>
       <p class="hint">{a.processingWait}</p>
       {#if policy?.requester_skip_allowed}
@@ -122,7 +124,7 @@
         <button type="button" disabled={busy || disabled} aria-describedby="ai-solved-hint" onclick={() => decide('ai_solved')}>{a.solved}</button>
         <button type="button" class="secondary" disabled={busy || disabled} aria-describedby="ai-help-hint" onclick={() => decide('ai_not_solved')}>{a.needHelp}</button>
       </div>
-      {#if busy}<p class="waiting"><span class="spinner" aria-hidden="true"></span>{a.sending}</p>{/if}
+      {#if busy}<p class="waiting" role="status"><span class="spinner" aria-hidden="true"></span>{a.sending}</p>{/if}
       <p class="hint" id="ai-solved-hint">{a.solvedHint}</p>
       <p class="hint" id="ai-help-hint">{a.needHelpHint}</p>
       <p class="hint">{a.noRush}</p>
