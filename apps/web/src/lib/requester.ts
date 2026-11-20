@@ -5,19 +5,26 @@ export const isAiStage = (status: TicketStatus) => ['ai_processing', 'awaiting_a
 export const REPLY_STATUSES: TicketStatus[] = ['queued', 'in_progress', 'waiting_for_requester', 'awaiting_confirmation']
 export type HistoryFilters = { status: string; from: string; until: string; cursor: string }
 
-const date = (value: string | null) => {
+/** A valid `YYYY-MM-DD` calendar date, or `''`. */
+export const calendarDate = (value: string | null) => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return ''
   const parsed = new Date(`${value}T00:00:00Z`)
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value ? value : ''
 }
 export function historyFilters(q: URLSearchParams): HistoryFilters {
-  return { status: HISTORY_STATUSES.includes(q.get('status') as TicketStatus) ? q.get('status')! : '', from: date(q.get('from')), until: date(q.get('until')), cursor: q.get('cursor') ?? '' }
+  return { status: HISTORY_STATUSES.includes(q.get('status') as TicketStatus) ? q.get('status')! : '', from: calendarDate(q.get('from')), until: calendarDate(q.get('until')), cursor: q.get('cursor') ?? '' }
+}
+/** Inclusive UTC calendar dates as the API's `created_from` / exclusive `created_before`. */
+export function dayRange(from: string, until: string) {
+  return {
+    created_from: from ? `${from}T00:00:00Z` : undefined,
+    created_before: until ? new Date(new Date(`${until}T00:00:00Z`).valueOf() + 86_400_000).toISOString() : undefined,
+  }
 }
 export function historyQuery(f: HistoryFilters) {
   return {
     status: (f.status || undefined) as TicketStatus | undefined,
-    created_from: f.from ? `${f.from}T00:00:00Z` : undefined,
-    created_before: f.until ? new Date(new Date(`${f.until}T00:00:00Z`).valueOf() + 86_400_000).toISOString() : undefined,
+    ...dayRange(f.from, f.until),
     cursor: f.cursor || undefined,
     limit: 25,
   }
@@ -35,7 +42,8 @@ export function requesterActions(ticket: TicketDetail, policy: Schemas['Organiza
   return {
     reply: own && REPLY_STATUSES.includes(ticket.status),
     resolution: own && ticket.status === 'awaiting_confirmation',
-    reopen: own && ticket.status === 'closed' && policy.allow_reopening,
+    // Nothing is left to work on once the retention policy removed the content; the API refuses it too.
+    reopen: own && ticket.status === 'closed' && policy.allow_reopening && !ticket.content_removed_at,
     cancel: own && open && (policy.requester_cancellation_policy === 'anytime_while_open' || (policy.requester_cancellation_policy === 'before_work_starts' && !started)),
   }
 }

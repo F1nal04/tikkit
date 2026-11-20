@@ -5,7 +5,7 @@ import { aiAnnouncement, aiFailure, aiStep, aiStepPolls, intakeAi } from './aiSt
 type Ai = NonNullable<TicketDetail['ai']>
 const attempt = (over: Partial<Ai> = {}): Ai => ({
   state: 'processing', language: 'en', suggestion: null, reason: null,
-  created_at: '2026-11-16T10:00:00Z', finished_at: null, decision: null, decided_at: null, ...over,
+  created_at: '2026-11-16T10:00:00Z', finished_at: null, decision: null, decided_at: null, content_removed: false, ...over,
 })
 const suggestion = { explanation: 'Restart it.', steps: ['Close Word', 'Open Word'] }
 const ticket = (status: TicketDetail['status'], ai: Ai | null, route?: string) =>

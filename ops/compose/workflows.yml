@@ -1,0 +1,40 @@
+# Workflow tests only. The API uses its official HTTPS URL and public-address
+# policy. This test bridge is isolated, and the name resolves only inside it.
+services:
+  api:
+    environment:
+      TRUSTED_PROXIES: 10.99.48.0/24
+      SSL_CERT_FILE: /workflow-trust/stub-ca.crt
+    volumes:
+      - ${WORKFLOW_TLS_DIR:?set by workflows.sh}/stub-ca.crt:/workflow-trust/stub-ca.crt:ro
+    networks: !override [providers, app, db]
+
+  provider:
+    image: ${TIKKIT_WEB_IMAGE:?set by workflows.sh}
+    user: "${WORKFLOW_UID:?set by workflows.sh}:${WORKFLOW_GID:?set by workflows.sh}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    command: ["node", "/workflow/provider.mjs"]
+    volumes:
+      - ./ops/compose/workflow-provider.mjs:/workflow/provider.mjs:ro
+      - ${WORKFLOW_TLS_DIR:?set by workflows.sh}:/workflow-tls:ro
+    networks:
+      providers:
+        ipv4_address: 192.31.196.2
+        aliases: [api.openai.com]
+
+networks:
+  app:
+    ipam:
+      config: !override
+        - subnet: 10.99.48.0/24
+  providers:
+    internal: true
+    ipam:
+      config:
+        # A small slice of the AS112 special-purpose prefix. Addresses in this
+        # isolated bridge satisfy the application's public-address policy.
+        - subnet: 192.31.196.0/29

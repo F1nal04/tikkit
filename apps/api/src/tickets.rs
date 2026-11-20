@@ -1,7 +1,9 @@
 //! Ticket read API. Status changes go through [`crate::lifecycle`]; visibility
 //! is [`authz::ticket_view`]. See docs/lifecycle.md.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -16,7 +18,7 @@ use crate::{
         ApiError, Cursor, FieldErrors, Json, Page, Pagination, Path, Query, TicketAssignmentView,
         TicketStatus,
     },
-    auth::{CurrentUser, ident},
+    auth::{Auth, CurrentUser, ident},
     authz::{self, Actor, Permission, TicketScope, TicketView},
     lifecycle::{self, By, ClosureReason, ResolutionSource, Transition},
     submission::SubmittedIntake,
@@ -40,8 +42,11 @@ pub struct TicketDetail {
     pub priority_name: String,
     pub assignment: TicketAssignmentView,
     /// Frozen original intake; null only for legacy records predating submission.
+    /// `screenshot_ids` lists only screenshots that still exist.
     #[schema(required = true)]
     pub intake_snapshot: Option<SubmittedIntake>,
+    /// Intake screenshots the retention policy has removed.
+    pub removed_screenshots: i64,
     /// Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets.
     #[schema(required = true)]
     pub resolution_source: Option<ResolutionSource>,
@@ -79,6 +84,11 @@ pub struct TicketDetail {
     /// AI-stage and AI-solved records).
     #[schema(required = true)]
     pub ai: Option<TicketAi>,
+    /// Set when retention removed the ticket's text (subject, description,
+    /// answers, messages): those fields then hold the marker `—`.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(value_type = Option<String>, format = DateTime, required = true)]
+    pub content_removed_at: Option<OffsetDateTime>,
 }
 
 /// Affordances for the staff view, from the same rules the write endpoints
@@ -206,6 +216,7 @@ struct DetailRow {
     confirmation_deadline: Option<OffsetDateTime>,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
+    content_purged_at: Option<OffsetDateTime>,
 }
 
 type TransitionRow = (
@@ -263,7 +274,7 @@ pub async fn ticket_detail(
                 r.display_name AS requester_display_name, t.team_id, tm.name AS team_name,
                 t.assignee_account_id, a.display_name AS assignee_display_name,
                 t.resolution_source, t.closure_reason, t.proposal_version,
-                t.confirmation_deadline, t.created_at, t.updated_at
+                t.confirmation_deadline, t.created_at, t.updated_at, t.content_purged_at
          FROM tickets t
          JOIN categories c ON c.id = t.category_id
          JOIN priorities p ON p.id = t.priority_id
@@ -414,6 +425,8 @@ pub async fn ticket_detail(
             can_handle: can(Permission::ReplyAsStaff),
             can_reopen: allow_reopen
                 && status == TicketStatus::Closed
+                // Nothing is left to work on once retention removed the content.
+                && row.content_purged_at.is_none()
                 && authz::is_staff_writer(&actor, &scope),
             can_dispatch,
             can_claim: can(Permission::ClaimTicket),
@@ -424,6 +437,13 @@ pub async fn ticket_detail(
     } else {
         None
     };
+    let mut intake_snapshot = row.intake_snapshot.map(|s| s.0);
+    let removed_screenshots = match &mut intake_snapshot {
+        Some(intake) => {
+            crate::screenshots::existing_intake(&mut tx, row.id, &mut intake.screenshot_ids).await?
+        }
+        None => 0,
+    };
     Ok(Json(TicketDetail {
         id: row.id,
         reference: row.reference,
@@ -433,7 +453,8 @@ pub async fn ticket_detail(
         description: row.description,
         category_id: row.category_id,
         category_name: row.category_name,
-        intake_snapshot: row.intake_snapshot.map(|s| s.0),
+        intake_snapshot,
+        removed_screenshots,
         priority_id: row.priority_id,
         priority_name: row.priority_name,
         assignment: TicketAssignmentView {
@@ -456,6 +477,7 @@ pub async fn ticket_detail(
         assignment_changes,
         staff_access,
         ai,
+        content_removed_at: row.content_purged_at,
     }))
 }
 
@@ -629,6 +651,7 @@ pub struct ActionResult {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn requester_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<RequesterAction>,
@@ -646,13 +669,34 @@ pub async fn requester_action(
         RequesterAction::AiNotSolved {} => Transition::AiNotSolved,
         RequesterAction::SkipAi {} => Transition::SkipAi,
     };
+    use crate::metrics::Event as Metric;
+    let metric = match transition {
+        Transition::AcceptResolution { .. } => Some(Metric::HumanConfirmed),
+        Transition::AiSolved => Some(Metric::AiConfirmed),
+        Transition::AiNotSolved | Transition::SkipAi => Some(Metric::AiHandoff),
+        _ => None,
+    };
+    let failure = |error: &ApiError| {
+        if matches!(metric, Some(Metric::AiHandoff)) && matches!(error, ApiError::Internal) {
+            tracing::error!(
+                error_code = "ai_requester_handoff_failed",
+                "requester handoff did not commit"
+            );
+        }
+    };
     let mut tx = state.pool.begin().await?;
     let result =
         lifecycle::transition(&mut tx, id, By::Account(user.account_id()), &transition).await;
-    let status = match result {
+    let result = match result {
         Ok(status) => {
-            tx.commit().await?;
-            status
+            tx.commit()
+                .await
+                .map_err(ApiError::from)
+                .inspect_err(failure)?;
+            if let Some(metric) = metric {
+                state.metrics.event(metric, 1);
+            }
+            Ok(status)
         }
         Err(ApiError::Conflict)
             if matches!(
@@ -662,11 +706,22 @@ pub async fn requester_action(
         {
             // Releases the ticket lock; whoever held it before us has committed.
             drop(tx);
-            ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await?
+            ai_decision_after_conflict(&state.pool, id, user.account_id(), &transition).await
         }
-        Err(error) => return Err(error),
+        Err(error) => {
+            failure(&error);
+            drop(tx);
+            Err(error)
+        }
     };
-    Ok(Json(ActionResult { status }))
+    if let Err(error) = &result {
+        // Denied cancellations and reopens, and any attempt to change an
+        // AI-solved record, are recorded without touching the ticket.
+        let attempted = transition.event_type();
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, attempted, error).await;
+    }
+    Ok(Json(ActionResult { status: result? }))
 }
 
 /// An AI decision that could not be applied because the ticket is no longer (or
@@ -744,6 +799,19 @@ pub enum StaffAction {
     },
 }
 
+impl StaffAction {
+    /// The stable name of the attempted action, for the audit log.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::StartWork { .. } => "start_work",
+            Self::RequestInformation { .. } => "request_information",
+            Self::ProposeResolution { .. } => "propose_resolution",
+            Self::Reopen { .. } => "reopen",
+            Self::SetPriority { .. } => "set_priority",
+        }
+    }
+}
+
 /// Staff status work and priority changes. Thin over [`lifecycle::transition`]
 /// (visibility, self-handling, claimed-ticket and policy rules live there and in
 /// [`authz::authorize_ticket`]); stale clients get `409` and nothing is written.
@@ -757,18 +825,42 @@ pub enum StaffAction {
         (status = 422, body = crate::api::ErrorEnvelope)))]
 pub async fn staff_action(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<StaffAction>,
 ) -> Result<Json<ActionResult>, ApiError> {
-    authz::require_permission(&user, Permission::ReplyAsStaff)?;
-    let status = apply_staff_action(&state.pool, user.account_id(), id, action).await?;
+    if let Err(error) = authz::require_permission(&user, Permission::ReplyAsStaff) {
+        // A role that can never do staff work still leaves a trace when it
+        // aims at an AI-solved record or tries to reopen a ticket.
+        let (pool, account) = (&state.pool, user.account_id());
+        crate::audit::ticket_denied(pool, &auth, account, id, action.name(), &error).await;
+        return Err(error);
+    }
+    let status = apply_staff_action(&state.pool, &auth, user.account_id(), id, action).await?;
     Ok(Json(ActionResult { status }))
 }
 
 /// One staff action in its own transaction: the single-ticket endpoint and each
 /// item of a bulk action (`bulk.rs`) run exactly this.
 pub(crate) async fn apply_staff_action(
+    pool: &PgPool,
+    auth: &Auth,
+    account_id: Uuid,
+    id: Uuid,
+    action: StaffAction,
+) -> Result<TicketStatus, ApiError> {
+    let attempted = action.name();
+    let result = staff_action_in_transaction(pool, account_id, id, action).await;
+    if let Err(error) = &result {
+        // The transaction is gone: denied reopens and attempts on AI-solved
+        // records are recorded on their own, and the ticket stays untouched.
+        crate::audit::ticket_denied(pool, auth, account_id, id, attempted, error).await;
+    }
+    result
+}
+
+async fn staff_action_in_transaction(
     pool: &PgPool,
     account_id: Uuid,
     id: Uuid,
@@ -869,8 +961,8 @@ pub(crate) async fn apply_staff_action(
             .execute(&mut *tx)
             .await?;
             sqlx::query(
-                "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload)
-                 VALUES ($1, $2, 'priority_changed', $3)",
+                "INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, request_id)
+                 VALUES ($1, $2, 'priority_changed', $3, $4)",
             )
             .bind(id)
             .bind(actor.id)
@@ -878,6 +970,7 @@ pub(crate) async fn apply_staff_action(
                 "previous_priority_id": priority_id, "previous_priority_name": previous_name,
                 "priority_id": next, "priority_name": next_name,
             }))
+            .bind(crate::telemetry::request_id())
             .execute(&mut *tx)
             .await?;
             scope.status

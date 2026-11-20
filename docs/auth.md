@@ -54,18 +54,29 @@ becomes the Admin.
 State-changing requests (`POST`/`PUT`/`PATCH`/`DELETE`) need
 `X-Requested-With: tikkit`, else `403 csrf_rejected`. Cross-site pages cannot
 set custom headers without a CORS preflight, which the API never allows; the
-`SameSite=Lax` cookie is the second layer. The typed client sends the header.
+`SameSite=Lax` cookie is another layer. When the browser sends `Origin` or
+`Sec-Fetch-Site`, they must name `PUBLIC_ORIGIN` / `same-origin` too (also
+`403 csrf_rejected`); callers that send neither (the SSR server, scripts) rely
+on the header alone. The typed client sends the header. The full policy,
+including the web server's own origin check: [security.md](security.md#csrf-and-origin-policy).
 
 ## Abuse protection
 
-Login, setup, password change, invitation acceptance, and recovery requests allow 10 attempts per minute per client IP and
-then 5 per minute per username; the token endpoints (`/api/invitations/lookup`,
+Sign-in and password change count only failures; setup, invitation
+acceptance, and recovery count every request. Each scope allows 10 per minute
+per client network (an IPv4 address or an IPv6 /64), 5 per minute per
+username from one network, and 30 per minute per username from all networks
+together, a ceiling that does not apply to a network the account signed in
+from successfully in the last 30 days ([security.md](security.md#bounded-resource-use)).
+The checks run before any account lookup, so known and unknown usernames are
+answered alike. The token endpoints (`/api/invitations/lookup`,
 `/api/auth/recovery/reset`) allow 10 per minute per client IP, else `429 rate_limited` with `Retry-After`.
-The IP is checked first, so a blocked client creates no further keys. Counters
-are in memory (one API process) and capped at 10,000 live keys; beyond that new
-keys are refused for the window. The IP is the socket peer, or the last
-`X-Forwarded-For` hop when `TRUST_PROXY_HEADERS=true`: set it only behind a
-reverse proxy that overwrites that header (the production compose sets it for Caddy).
+Counters are in memory (one API process) and capped at 10,000 keys; a full
+table drops expired windows, then the oldest one, so new clients are never
+refused for want of room. The IP is the socket peer, or the client a
+peer listed in `TRUSTED_PROXIES` forwarded for ([security.md](security.md#reverse-proxy-trust));
+a forwarding header from any other peer is ignored. Costlier signed-in routes
+have per-account budgets ([security.md](security.md#bounded-resource-use)).
 
 ## Invitations
 
@@ -85,7 +96,9 @@ After setup, accounts are created only from Admin invitations.
   in. The invitation row is locked (`FOR UPDATE`) and marked used in the same
   transaction as the account insert, so validation errors, a taken username, or a
   failed transaction leave it usable, and concurrent acceptance has one winner.
-  Unknown fields such as `role` are rejected (`422 unknown_field`).
+  Unknown fields such as `role` are rejected (`422 unknown_field`). A username
+  starting with `anonymized-` is `422 username: reserved`, here and at setup:
+  that namespace belongs to anonymized accounts ([retention.md](retention.md#anonymizing-an-account)).
 - Unknown, expired, revoked, and used tokens are all `410 invitation_invalid`.
 - An existing account with the same email is never reused, linked, or upgraded.
 
@@ -128,8 +141,9 @@ response, and a recovery request only logs `no email was sent` at info level.
 Logs, errors, and audit events never contain tokens, links, addresses, or SMTP
 credentials. A failed background send is recorded on the connection as a stable
 error code (`last_delivery_error`) and does not undo the invitation or recovery
-token. The same send path accepts an idempotency key so the notification outbox
-can retry without a second copy; this API does not implement that outbox.
+token. The same send path accepts an idempotency key, which the ticket notification
+outbox ([notifications.md](notifications.md)) uses to retry without a second
+copy. Invitation and recovery mail do not go through that outbox.
 
 The `/invite/...` and `/reset-password/...` page URLs do contain the token; keep
 reverse-proxy access logs off or path-redacted. Every web page is served with
@@ -162,7 +176,10 @@ Append-only `audit_events`: `setup_completed`, `login_succeeded`, `login_failed`
 `session_revoked` (with `reason`), `invitation_created`, `invitation_revoked`,
 `invitation_accepted`, `recovery_requested` (IP, `matched`), `recovery_completed`,
 `profile_updated` (changed field names), `account_deactivated`,
-`account_reactivated`. Passwords and tokens are never stored or logged.
+`account_reactivated`, and the rejected attempts `setup_rejected` (bootstrap
+replay) and `invitation_rejected` (used, revoked, expired, or unknown link, or
+a body with a field such as `role`). Passwords and tokens are never stored or
+logged. The full model, search, and export: [audit.md](audit.md).
 
 ## Endpoints
 

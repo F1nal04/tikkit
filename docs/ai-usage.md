@@ -180,7 +180,8 @@ separator, a multi-word passphrase (only its first word is replaced), secrets
 passed as command-line arguments (`curl -u user:secret`), and one-time codes
 without a label. It does not look inside screenshots: a screenshot that shows a
 password is sent as it is. Requesters are told before submission that their
-description, details, and screenshots go to the configured provider (#36).
+description, details, and screenshots go to the configured provider
+([ai-requester-step.md](ai-requester-step.md#on-the-form)).
 
 The system instructions (in `ai/prompt.rs`) are separate from requester
 content, declare it untrusted, and forbid following instructions found in it
@@ -233,6 +234,10 @@ workers) deletes older finished rows hourly and at startup, in batches of
 deleted. It also ends abandoned reservations on every poll. Deleted rows are
 gone from reports; no aggregate is kept. Database backups keep their own copy
 until the backup itself expires.
+
+This period covers usage metadata only. The AI input and the stored suggestion
+of a ticket live in `ai_attempts` and follow the Admin retention policy
+([retention.md](retention.md)), which is not set by default.
 
 ## Admin API
 

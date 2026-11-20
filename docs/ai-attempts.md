@@ -29,7 +29,10 @@ nothing.
 | `cancelled` | The requester cancelled the ticket while it was processing | `cancelled` |
 
 `processing` is the only state that changes. A finished attempt is immutable,
-and attempts are never deleted (database trigger). An attempt whose suggestion
+and attempts are never deleted (database trigger). The one exception is the
+Admin retention policy, which blanks `input`, `explanation`, and `steps` of a
+finished attempt of a ticket in a final status and sets `content_purged_at`
+([retention.md](retention.md)); state, outcome, provider, model, and times stay. An attempt whose suggestion
 the requester never answered stays `suggestion_ready` on a ticket that is not
 `ai_solved`: abandoned attempts remain visible as such and are never counted as
 solved. Only the explicit requester decision makes a ticket `ai_solved`
@@ -210,8 +213,11 @@ policy under share locks, locks the ticket and the attempt, and then:
   resolves the ticket;
 - failure or guard refusal: hand off with that code.
 
-**Handoff** is `lifecycle::transition(AiFailed)` (system actor, route
-`ai_failed`) plus the attempt update, in one transaction. The transition only
+**Handoff** is `lifecycle::ai_failed` (the `AiFailed` transition by the system
+actor, route `ai_failed`), which also ends the attempt with its outcome code
+under the ticket lock, just before the event is written, so the audit mirror of
+the event can name the reason ([audit.md](audit.md#ticket-events)). One
+transaction. The transition only
 succeeds from `ai_processing` under the ticket lock, so a ticket is queued at
 most once however many paths race.
 

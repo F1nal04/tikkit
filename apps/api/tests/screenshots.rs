@@ -794,6 +794,15 @@ async fn attached_screenshots_follow_current_ticket_visibility() {
     sqlx::query("UPDATE tickets SET status = 'ai_solved', resolution_source = 'ai', closure_reason = 'requester_confirmed' WHERE id = $1")
         .bind(ticket).execute(pool).await.unwrap();
     check("ai solved", &["requester", "admin"]).await;
+
+    // Recreate the router and database pool with the same private storage as a
+    // restarted application process would. The previous session still works.
+    let path = format!("/api/screenshots/{id}/download");
+    let before = raw(&w.app, "GET", &path, &w.requester, None).await;
+    let restarted = test_app(&TestDb::pool_for(&w.db).await);
+    let after = raw(&restarted, "GET", &path, &w.requester, None).await;
+    assert_eq!(after.status, StatusCode::OK);
+    assert_eq!(after.body, before.body);
     let r = raw(
         &w.app,
         "DELETE",

@@ -1,13 +1,21 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      component:
+        description: Component whose publication is waiting for these checks
+        type: string
+      revision:
+        description: Exact release commit to check
+        type: string
   pull_request:
     branches: [main]
   push:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ inputs.revision && github.run_id || github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.component }}-${{ inputs.revision }}
   cancel-in-progress: true
 
 env:
@@ -22,7 +30,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
         env:
           POSTGRES_USER: tikkit
           POSTGRES_PASSWORD: tikkit
@@ -40,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.revision }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -54,6 +63,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check --filter=@tikkit/api
       - run: bun run test --filter=@tikkit/api
+      - name: Validate Prometheus alerts
+        run: |
+          image=prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+          promtool() {
+            docker run --rm --network none --entrypoint /bin/promtool \
+              -v "$PWD/ops/prometheus:/rules:ro" -w /rules "$image" "$@"
+          }
+          promtool check rules alerts.yml backup-alerts.yml
+          promtool test rules alerts.test.yml backup-alerts.test.yml
 
   api-release:
     runs-on: ubuntu-latest
@@ -62,6 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.revision }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -82,6 +101,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.revision }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -103,5 +123,157 @@ jobs:
           path: |
             apps/web/test-results/
             apps/web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      COMPOSE_PROJECT_NAME: tikkit-ci
+      COMPOSE_FILE: docker-compose.prod.example.yml
+      TIKKIT_WEB_IMAGE: tikkit-ci-web:smoke
+      TIKKIT_API_IMAGE: tikkit-ci-api:smoke
+      PUBLIC_HOST: localhost:18344
+      PROXY_BIND: 127.0.0.1
+      HTTPS_PORT: "18344"
+      HTTP_PORT: "18380"
+      CADDY_GLOBAL_OPTIONS: local_certs
+      METRICS_PORT: "9091"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+        working-directory: apps/web
+      - name: Generate disposable deployment secrets
+        run: |
+          umask 077
+          env_file="$RUNNER_TEMP/tikkit-production.env"
+          {
+            printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+            printf 'TIKKIT_DB_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+            printf 'SESSION_SECRET=%s\n' "$(openssl rand -base64 32)"
+            printf 'ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)"
+          } > "$env_file"
+          printf 'COMPOSE_ENV_FILES=%s\n' "$env_file" >> "$GITHUB_ENV"
+      - name: Build production images
+        run: |
+          docker build -f apps/web/Dockerfile -t "$TIKKIT_WEB_IMAGE" .
+          docker build -f apps/api/Dockerfile -t "$TIKKIT_API_IMAGE" .
+      - name: Migrate and smoke-test a clean Compose install
+        run: |
+          docker compose up -d --wait --wait-timeout 120 postgres
+          docker compose run --rm --no-deps api migrate
+          docker compose up -d --wait --wait-timeout 120
+          for service in api web postgres; do
+            container=$(docker compose ps -q "$service")
+            test "$(docker inspect --format '{{len .HostConfig.PortBindings}}' "$container")" -eq 0
+          done
+          docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt "$RUNNER_TEMP/tikkit-ca.crt"
+          docker compose exec -T api curl -fsS -o /dev/null http://127.0.0.1:9091/metrics
+          bash ops/compose/smoke.sh "https://$PUBLIC_HOST" "$RUNNER_TEMP/tikkit-ca.crt"
+      - name: Check browser bundle and smoke the load workflow
+        timeout-minutes: 5
+        run: |
+          ops/load/bundle-budget.sh "$TIKKIT_WEB_IMAGE"
+          LOAD_SMTP=1 LOAD_API_IMAGE="$TIKKIT_API_IMAGE" LOAD_WEB_IMAGE="$TIKKIT_WEB_IMAGE" ops/load/run.sh smoke
+      - name: Backup and restore drill (reduced)
+        run: |
+          # Own projects, volumes and ports; the stack above stays untouched.
+          env -u COMPOSE_FILE -u COMPOSE_ENV_FILES -u COMPOSE_PROJECT_NAME \
+            DRILL_API_IMAGE="$TIKKIT_API_IMAGE" DRILL_WEB_IMAGE="$TIKKIT_WEB_IMAGE" \
+            DRILL_MODE=reduced DRILL_SOURCE_PROJECT=tikkit-ci-drill \
+            DRILL_RESTORE_PROJECT=tikkit-ci-drill-restore DRILL_PORT_BASE=18444 \
+            DRILL_WORKDIR="$RUNNER_TEMP/tikkit-drill" ops/backup/drill.sh
+      - name: Complete portal workflows through Caddy
+        timeout-minutes: 8
+        run: |
+          WORKFLOW_API_IMAGE="$TIKKIT_API_IMAGE" WORKFLOW_WEB_IMAGE="$TIKKIT_WEB_IMAGE" \
+            bash ops/compose/workflows.sh
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-compose-workflows
+          path: |
+            apps/web/test-results-full/
+            apps/web/playwright-report-full/
+          if-no-files-found: ignore
+          retention-days: 14
+      - if: failure() && env.COMPOSE_ENV_FILES != ''
+        run: docker compose logs --no-color --tail 100
+      - if: always() && env.COMPOSE_ENV_FILES != ''
+        run: docker compose down --volumes --remove-orphans
+
+  workflows:
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [en, de]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+        env:
+          POSTGRES_USER: tikkit
+          POSTGRES_PASSWORD: tikkit
+          POSTGRES_DB: tikkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tikkit -d tikkit"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      WORKFLOW_SETUP_LANGUAGE: ${{ matrix.language }}
+      TEST_DATABASE_URL: postgres://tikkit:tikkit@127.0.0.1:5432/tikkit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: workflows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: bun install --frozen-lockfile
+      - run: timeout 900 cargo test --locked -p tikkit-api --test workflow_server --no-run
+      - run: bunx playwright install --with-deps chromium
+        working-directory: apps/web
+      - name: Browser workflows against real application services
+        run: |
+          until mkdir /tmp/tikkit-e2e.lock 2>/dev/null; do sleep 10; done
+          trap 'rmdir /tmp/tikkit-e2e.lock' EXIT
+          CI=1 bun run test:e2e:full
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-workflows-${{ matrix.language }}
+          path: |
+            apps/web/test-results-full/
+            apps/web/playwright-report-full/
           if-no-files-found: ignore
           retention-days: 14

@@ -1,0 +1,8 @@
+scrape_configs:
+  - job_name: tikkit-backup
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    # The sidecar's busybox httpd serves the file without a content type.
+    fallback_scrape_protocol: PrometheusText0.0.4
+    static_configs:
+      - targets: ["backup:9092"]

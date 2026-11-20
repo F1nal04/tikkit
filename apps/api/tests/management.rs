@@ -599,3 +599,113 @@ async fn competing_team_creations_cannot_share_a_lead_and_restore_requires_an_el
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn competing_teams_cannot_promote_the_same_replacement_lead() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    fixtures::bootstrap_admin(&db.pool).await;
+    let first = fixtures::account(&db.pool, Role::TeamLead, "first").await;
+    let second = fixtures::account(&db.pool, Role::TeamLead, "second").await;
+    let replacement = fixtures::account(&db.pool, Role::TeamLead, "replacement").await;
+    let desk = fixtures::team(&db.pool, "Desk", first).await.unwrap();
+    let network = fixtures::team(&db.pool, "Network", second).await.unwrap();
+    let app = test_app(&db.pool);
+    let admin = login(&app, "admin", PASSWORD).await.session();
+
+    let change = |team, name| {
+        let app = &app;
+        let admin = &admin;
+        async move {
+            let path = format!("/api/teams/{team}");
+            call(
+                app,
+                "PUT",
+                &path,
+                Some(json!({
+                    "name": name, "lead_account_id": replacement, "archived": false,
+                })),
+                Some(admin),
+            )
+            .await
+        }
+    };
+    let (a, b) = tokio::join!(change(desk, "Desk"), change(network, "Network"));
+    let (winner, loser, original) = match (a.status.as_u16(), b.status.as_u16()) {
+        (200, 422) => (desk, network, second),
+        (422, 200) => (network, desk, first),
+        _ => panic!("expected one winner: {} {}", a.status, b.status),
+    };
+    let leaders: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(
+        "SELECT t.id, t.lead_account_id, m.team_id FROM teams t
+         JOIN team_memberships m ON m.account_id = t.lead_account_id
+         WHERE t.archived_at IS NULL ORDER BY t.id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(leaders.len(), 2);
+    assert!(leaders.contains(&(winner, replacement, winner)));
+    assert!(leaders.contains(&(loser, original, loser)));
+}
+
+#[tokio::test]
+async fn two_admin_replacements_commit_in_order_with_one_current_lead() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let admin_a = fixtures::bootstrap_admin(pool).await;
+    let admin_b = fixtures::account(pool, Role::Admin, "admin-b").await;
+    let old = fixtures::account(pool, Role::TeamLead, "old-lead").await;
+    let first = fixtures::account(pool, Role::TeamLead, "first-lead").await;
+    let second = fixtures::account(pool, Role::TeamLead, "second-lead").await;
+    let team = fixtures::team(pool, "Desk", old).await.unwrap();
+    let app = test_app(pool);
+    let a = login(&app, "admin", PASSWORD).await.session();
+    let b = login(&app, "admin-b", PASSWORD).await.session();
+    let path = format!("/api/teams/{team}");
+    let replace = |candidate, cookie| {
+        call(
+            &app,
+            "PUT",
+            &path,
+            Some(json!({
+                "name": "Desk", "lead_account_id": candidate, "archived": false,
+            })),
+            Some(cookie),
+        )
+    };
+    let mut gate = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('tikkit.active_admins'))")
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+
+    let (a, b) =
+        support::queued_requests(pool, gate, replace(first, &a), replace(second, &b)).await;
+    assert_eq!((a.status.as_u16(), b.status.as_u16()), (200, 200));
+    assert_eq!(a.body["lead_account_id"], json!(first));
+    assert_eq!(b.body["lead_account_id"], json!(second));
+    for (account, is_lead) in [(old, false), (first, false), (second, true)] {
+        let scope = tikkit_api::authz::team_of(pool, account)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((scope.team_id, scope.is_lead), (team, is_lead));
+    }
+
+    // Each committed audit record has one lead. The second update observed
+    // the first one's committed state rather than updating from the old lead.
+    let changes: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(
+        "SELECT actor_account_id, (metadata #>> '{from,lead_account_id}')::uuid,
+                (metadata #>> '{to,lead_account_id}')::uuid
+         FROM audit_events WHERE event_type = 'team_updated' AND resource_id = $1 ORDER BY id",
+    )
+    .bind(team.to_string())
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(changes, [(admin_a, old, first), (admin_b, first, second)]);
+}

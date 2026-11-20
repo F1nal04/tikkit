@@ -4,6 +4,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use sqlx::postgres::PgConnectOptions;
 use url::Url;
 
+use crate::security::TrustedProxies;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Environment {
     Development,
@@ -14,6 +16,8 @@ pub enum Environment {
 pub struct Config {
     pub database_url: String,
     pub api_addr: SocketAddr,
+    pub metrics_port: Option<u16>,
+    pub json_logs: bool,
     pub public_origin: Url,
     pub session_secret: Vec<u8>,
     pub encryption_key: [u8; 32],
@@ -23,10 +27,15 @@ pub struct Config {
     pub session_ttl: Duration,
     /// Session age after which the token is rotated.
     pub session_rotate: Duration,
-    /// Take the client IP from `X-Forwarded-For` (only behind a trusted reverse proxy).
-    pub trust_proxy_headers: bool,
+    /// Peers (reverse proxy, SSR server) whose `X-Forwarded-For` is honoured.
+    pub trusted_proxies: TrustedProxies,
     /// Private directory for screenshot files (a persistent volume in production).
     pub screenshot_dir: PathBuf,
+    /// Optional private SMTP trust anchors. Kept separate from HTTPS trust.
+    pub smtp_trust_root_pem: Option<Vec<u8>>,
+    /// Restored copy under verification: no background jobs, no outbound dispatch
+    /// (docs/backup-restore.md). Off in every normal deployment.
+    pub restore_mode: bool,
 }
 
 /// Every configuration problem found, one actionable line each. Never contains values.
@@ -47,6 +56,8 @@ impl fmt::Debug for Config {
         f.debug_struct("Config")
             .field("database_url", &"<redacted>")
             .field("api_addr", &self.api_addr)
+            .field("metrics_port", &self.metrics_port)
+            .field("json_logs", &self.json_logs)
             .field("public_origin", &self.public_origin.as_str())
             .field("session_secret", &"<redacted>")
             .field("encryption_key", &"<redacted>")
@@ -54,8 +65,13 @@ impl fmt::Debug for Config {
             .field("environment", &self.environment)
             .field("session_ttl", &self.session_ttl)
             .field("session_rotate", &self.session_rotate)
-            .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("screenshot_dir", &self.screenshot_dir)
+            .field(
+                "smtp_trust_root_pem",
+                &self.smtp_trust_root_pem.as_ref().map(|_| "<set>"),
+            )
+            .field("restore_mode", &self.restore_mode)
             .finish()
     }
 }
@@ -94,6 +110,22 @@ impl Config {
                 );
                 ([127, 0, 0, 1], 3001).into()
             });
+        let metrics_port = match var("METRICS_PORT").map(|value| value.parse::<u16>()) {
+            None => None,
+            Some(Ok(port)) if port != 0 => Some(port),
+            Some(_) => {
+                fail("METRICS_PORT must be a port between 1 and 65535 (loopback only)");
+                None
+            }
+        };
+        let json_logs = match var("LOG_FORMAT").as_deref() {
+            None | Some("json") => true,
+            Some("text") => false,
+            Some(_) => {
+                fail("LOG_FORMAT must be `json` or `text`");
+                true
+            }
+        };
         let public_origin = match var("PUBLIC_ORIGIN").map(|v| Url::parse(&v)) {
             None => {
                 fail(
@@ -156,12 +188,22 @@ impl Config {
         };
         let session_ttl = hours("SESSION_TTL_HOURS", 24 * 14, 24 * 365);
         let session_rotate = hours("SESSION_ROTATE_HOURS", 24, 24 * 365);
-        let trust_proxy_headers = match var("TRUST_PROXY_HEADERS").as_deref() {
-            None | Some("false") => false,
-            Some("true") => true,
-            Some(_) => {
-                fail("TRUST_PROXY_HEADERS must be `true` or `false`");
-                false
+        // The old switch trusted the header from any peer. `false` meant what an
+        // empty TRUSTED_PROXIES means now; anything else must be migrated
+        // (docs/configuration.md#upgrading).
+        if var("TRUST_PROXY_HEADERS").is_some_and(|v| v != "false") {
+            fail(
+                "TRUST_PROXY_HEADERS was replaced by TRUSTED_PROXIES: list the reverse proxy's and SSR server's addresses or networks instead, e.g. TRUSTED_PROXIES=172.30.0.0/24",
+            );
+        }
+        let trusted_proxies = match var("TRUSTED_PROXIES").map(|v| v.parse()) {
+            None => TrustedProxies::default(),
+            Some(Ok(proxies)) => proxies,
+            Some(Err(())) => {
+                fail(
+                    "TRUSTED_PROXIES must be a comma-separated list of IP addresses or CIDR networks no wider than /8 (IPv4) or /16 (IPv6), e.g. 172.30.0.0/24",
+                );
+                TrustedProxies::default()
             }
         };
         let screenshot_dir =
@@ -172,6 +214,26 @@ impl Config {
             );
         }
 
+        let smtp_trust_root_pem = var("SMTP_CA_FILE").and_then(|path| {
+            let pem = std::fs::read(path).ok().filter(|pem| {
+                reqwest::Certificate::from_pem_bundle(pem).is_ok_and(|roots| !roots.is_empty())
+                    && crate::mail::smtp_tls("localhost", Some(pem)).is_ok()
+            });
+            if pem.is_none() {
+                fail("SMTP_CA_FILE must point to a readable PEM certificate bundle");
+            }
+            pem
+        });
+
+        let restore_mode = match var("RESTORE_MODE").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => {
+                fail("RESTORE_MODE must be `true` or `false`");
+                false
+            }
+        };
+
         match (public_origin, session_secret, encryption_key) {
             (Some(public_origin), Some(session_secret), Some(encryption_key))
                 if errors.is_empty() =>
@@ -179,6 +241,8 @@ impl Config {
                 Ok(Self {
                     database_url,
                     api_addr,
+                    metrics_port,
+                    json_logs,
                     public_origin,
                     session_secret,
                     encryption_key,
@@ -186,8 +250,10 @@ impl Config {
                     environment,
                     session_ttl,
                     session_rotate,
-                    trust_proxy_headers,
+                    trusted_proxies,
                     screenshot_dir,
+                    smtp_trust_root_pem,
+                    restore_mode,
                 })
             }
             _ => Err(ConfigError(errors)),
@@ -235,16 +301,42 @@ mod tests {
     fn valid_configuration_uses_defaults() {
         let c = config(&[]).unwrap();
         assert_eq!(c.api_addr, "127.0.0.1:3001".parse().unwrap());
+        assert!(c.metrics_port.is_none());
+        assert!(c.json_logs);
         assert_eq!(c.shutdown_timeout, Duration::from_secs(20));
         assert_eq!(c.environment, Environment::Development);
         assert_eq!(c.encryption_key[31], 31);
         assert_eq!(c.session_secret.len(), 32);
         assert_eq!(c.session_ttl, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(c.session_rotate, Duration::from_secs(24 * 3600));
-        assert!(!c.trust_proxy_headers);
+        assert!(c.trusted_proxies.is_empty());
         assert_eq!(c.screenshot_dir, PathBuf::from("data/screenshots"));
+        assert!(!c.restore_mode);
         let debug = format!("{c:?}");
         assert!(!debug.contains("hunter2") && !debug.contains(KEY_B64));
+    }
+
+    #[test]
+    fn smtp_relay_ca_file_is_validated_and_used_by_auth_settings() {
+        let file = std::env::temp_dir().join(format!("tikkit-ca-{}.pem", uuid::Uuid::new_v4()));
+        let path = file.to_str().unwrap();
+        let overrides = [("SMTP_CA_FILE", path)];
+        let error = config(&overrides).unwrap_err().to_string();
+        assert!(error.contains("SMTP_CA_FILE"));
+        assert!(!error.contains(path));
+
+        let pem = rcgen::generate_simple_self_signed(vec!["smtp.example.test".into()])
+            .unwrap()
+            .cert
+            .pem();
+        std::fs::write(&file, &pem).unwrap();
+        let loaded = config(&overrides);
+        std::fs::remove_file(file).unwrap();
+        let settings = crate::auth::Settings::from(&loaded.unwrap());
+        assert_eq!(
+            settings.smtp_trust_root_pem.as_deref(),
+            Some(pem.as_bytes())
+        );
     }
 
     #[test]
@@ -252,6 +344,8 @@ mod tests {
         let err = config(&[
             ("DATABASE_URL", "mysql://root:hunter2@db/x"),
             ("API_ADDR", "localhost"),
+            ("METRICS_PORT", "0.0.0.0:9091"),
+            ("LOG_FORMAT", "unknown"),
             ("PUBLIC_ORIGIN", "https://help.example.com/portal"),
             ("SESSION_SECRET", "c2hvcnQ="),
             ("ENCRYPTION_KEY", "CHANGE_ME_openssl_rand_base64_32"),
@@ -259,10 +353,12 @@ mod tests {
             ("ENVIRONMENT", "staging"),
             ("SESSION_TTL_HOURS", "0"),
             ("SESSION_ROTATE_HOURS", "soon"),
-            ("TRUST_PROXY_HEADERS", "yes"),
+            ("TRUST_PROXY_HEADERS", "true"),
+            ("TRUSTED_PROXIES", "0.0.0.0/0"),
+            ("RESTORE_MODE", "maybe"),
         ])
         .unwrap_err();
-        assert_eq!(err.0.len(), 10, "{err}");
+        assert_eq!(err.0.len(), 14, "{err}");
         let text = err.to_string();
         assert!(!text.contains("hunter2") && !text.contains("c2hvcnQ="));
     }
@@ -277,6 +373,22 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 4, "{err}");
+    }
+
+    #[test]
+    fn trusted_proxies_are_parsed_and_the_old_switch_is_migrated() {
+        assert!(config(&[("TRUST_PROXY_HEADERS", "false")]).is_ok());
+        let err = config(&[("TRUST_PROXY_HEADERS", "true")]).unwrap_err();
+        assert!(err.0[0].contains("TRUSTED_PROXIES"), "{err}");
+        let c = config(&[("TRUSTED_PROXIES", "172.30.0.0/24,10.0.0.5")]).unwrap();
+        assert!(c.trusted_proxies.contains("172.30.0.200".parse().unwrap()));
+        assert!(!c.trusted_proxies.contains("172.31.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn restore_mode_is_an_explicit_boolean() {
+        assert!(config(&[("RESTORE_MODE", "true")]).unwrap().restore_mode);
+        assert!(!config(&[("RESTORE_MODE", "false")]).unwrap().restore_mode);
     }
 
     #[test]

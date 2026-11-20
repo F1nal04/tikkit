@@ -52,12 +52,11 @@ impl TestDb {
         conn.execute(format!("CREATE DATABASE {name}").as_str())
             .await
             .unwrap();
-        let pool = PgPoolOptions::new()
-            .connect_with(admin.clone().database(&name))
-            .await
-            .unwrap();
-        db::migrate(&pool).await.unwrap();
-        Some(Self { pool, name, admin })
+        let pool = PgPoolOptions::new().connect_lazy_with(admin.clone().database(&name));
+        // Own cleanup before the first connection/migration can fail.
+        let test = Self { pool, name, admin };
+        db::migrate(&test.pool).await.unwrap();
+        Some(test)
     }
 
     /// Another pool on the same database: a second process (the API and a worker).
@@ -145,6 +144,7 @@ pub fn test_app_with_provider(pool: &PgPool, provider: &url::Url) -> Router {
 pub fn test_state(pool: &PgPool) -> AppState {
     AppState {
         pool: pool.clone(),
+        metrics: Default::default(),
         screenshot_dir: screenshot_dir(pool).into(),
         ai_client: AiClient::new(),
         ai_endpoint: Endpoint::Override {
@@ -364,4 +364,113 @@ pub mod fixtures {
         .await
         .map(drop)
     }
+}
+
+/// Scrape the same private router used by the API binary.
+pub async fn metrics_text(state: &AppState) -> String {
+    let response = tikkit_api::metrics::router(state.clone())
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Default)]
+pub struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Logs {
+    /// One capture per integration test binary. Install process-wide so the
+    /// tracing callsite cache remains enabled when other tests run in parallel.
+    pub fn capture() -> Self {
+        let logs = Self::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .json()
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+        logs
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Wait for transactions to actually contend in this test's private database.
+pub async fn wait_for_lock_waiters(pool: &PgPool, count: i64) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting >= count {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("expected both requests to contend for the database lock");
+}
+
+/// Queue the two requests in a known order while the test holds the relevant lock.
+pub async fn queued_requests<A, B>(
+    pool: &PgPool,
+    gate: sqlx::Transaction<'_, sqlx::Postgres>,
+    first: impl Future<Output = A>,
+    second: impl Future<Output = B>,
+) -> (A, B) {
+    let (start_second, started) = tokio::sync::oneshot::channel();
+    let (a, b, ()) = tokio::join!(
+        first,
+        async {
+            started.await.unwrap();
+            second.await
+        },
+        async {
+            wait_for_lock_waiters(pool, 1).await;
+            start_second.send(()).unwrap();
+            wait_for_lock_waiters(pool, 2).await;
+            gate.commit().await.unwrap();
+        }
+    );
+    (a, b)
+}
+
+pub async fn lock_ticket(pool: &PgPool, id: Uuid) -> sqlx::Transaction<'_, sqlx::Postgres> {
+    let mut gate = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    gate
 }

@@ -49,6 +49,15 @@ test('a field with options is a select', async () => {
   expect(select.value).toBe('de')
 })
 
+test('an error summary can take focus', () => {
+  render(Alert, { props: { summary: true, children: text('Fix the fields') } })
+  const alert = screen.getByRole('alert')
+  expect(alert.id).toBe('form-errors')
+  expect(alert.getAttribute('tabindex')).toBe('-1')
+  alert.focus()
+  expect(document.activeElement).toBe(alert)
+})
+
 test('errors are announced, progress is polite', () => {
   render(Alert, { props: { children: text('Broken') } })
   expect(screen.getByRole('alert').textContent).toBe('Broken')
@@ -103,13 +112,15 @@ test('a dialog is labelled by its title and closes from its own controls', async
     this.dispatchEvent(new Event('close'))
   }
   const actions = createRawSnippet(() => ({ render: () => '<button type="button">Cancel</button>' }))
-  const { rerender } = render(Dialog, { props: { open: false, title: 'Deactivate alice?', children: text('Sure?'), actions } })
+  const { rerender } = render(Dialog, { props: { open: false, title: 'Deactivate alice?', locale: 'en', children: text('Sure?'), actions } })
   const dialog = document.querySelector('dialog')!
   expect(dialog.hasAttribute('open')).toBe(false)
-  await rerender({ open: true })
+  await rerender({ open: true, locale: 'en' })
   expect(dialog.hasAttribute('open')).toBe(true)
+  expect(screen.getByTestId('dialog-announcement').textContent).toBe('')
   expect(screen.getByRole('dialog', { name: 'Deactivate alice?' })).toBe(dialog)
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
-  await rerender({ open: false })
+  await rerender({ open: false, locale: 'en' })
   expect(dialog.hasAttribute('open')).toBe(false)
+  expect(screen.getByTestId('dialog-announcement').textContent).toBe('Dialog closed.')
 })

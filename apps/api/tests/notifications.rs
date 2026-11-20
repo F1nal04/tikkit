@@ -13,7 +13,7 @@ use support::{
     fixtures::{self, PASSWORD, Role},
     login,
     smtp::{FakeSmtp, Fault, Listen, SECRET, USER, decode_mail, listen, wait_messages},
-    test_app_with,
+    test_state,
 };
 use tikkit_api::{
     auth::Settings,
@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 struct World {
     db: TestDb,
+    state: tikkit_api::AppState,
     app: Router,
     settings: Settings,
     smtp: FakeSmtp,
@@ -67,9 +68,11 @@ async fn world() -> Option<World> {
         smtp_trust_root_pem: Some(smtp.ca_pem.clone().into_bytes()),
         ..Settings::default()
     };
-    let app = test_app_with(p, settings.clone());
+    let state = test_state(p);
+    let app = tikkit_api::app_with(state.clone(), settings.clone());
     let w = World {
         db,
+        state,
         app,
         settings,
         smtp,
@@ -172,7 +175,10 @@ impl World {
 
     /// Runs the worker until nothing is due.
     async fn drain(&self) {
-        while process_one(&self.db.pool, &self.settings).await.unwrap() {}
+        while process_one(&self.db.pool, &self.settings, &self.state.metrics)
+            .await
+            .unwrap()
+        {}
     }
 
     async fn rows(&self, account: Uuid, channel: &str) -> Vec<(String, String)> {
@@ -233,7 +239,11 @@ async fn rolled_back_changes_enqueue_and_send_nothing() {
         count(&w, "SELECT count(*) FROM notification_outbox").await,
         0
     );
-    assert!(!process_one(&w.db.pool, &w.settings).await.unwrap());
+    assert!(
+        !process_one(&w.db.pool, &w.settings, &Default::default())
+            .await
+            .unwrap()
+    );
 
     // A rejected API write (stale/forbidden) leaves nothing behind either.
     let r = w
@@ -374,10 +384,38 @@ async fn failed_deliveries_retry_with_backoff_and_an_admin_retry_sends_exactly_o
         .unwrap()
         .port();
     w.configure_smtp(closed).await;
-    let r = w.reply(ticket, "op", "replies", "hello").await;
+    let private_reply = "private notification reply";
+    let r = w.reply(ticket, "op", "replies", private_reply).await;
     assert_eq!(r.status, 201, "{}", r.body);
 
+    let logs = support::Logs::capture();
     w.drain().await;
+    let metrics = support::metrics_text(&w.state).await;
+    assert!(metrics.contains("tikkit_worker_pending_jobs{worker=\"notifications\"} 1\n"));
+    assert!(metrics.contains("tikkit_worker_due_jobs{worker=\"notifications\"} 0\n"));
+    assert!(metrics.contains("tikkit_worker_retries_total{worker=\"notifications\"} 1\n"));
+    assert!(
+        metrics.contains(
+            "tikkit_ticket_operations_total{operation=\"notification_email_failed\"} 1\n"
+        )
+    );
+    let request_id: Uuid = sqlx::query_scalar(
+        "SELECT request_id FROM ticket_events WHERE ticket_id = $1 AND event_type = 'public_reply_added'",
+    ).bind(ticket).fetch_one(&w.db.pool).await.unwrap();
+    let output = logs.text();
+    assert!(
+        output.lines().any(|line| {
+            let event: Value = serde_json::from_str(line).unwrap();
+            event["span"]["worker"] == "notifications"
+                && event["span"]["request_id"] == request_id.to_string()
+                && event["fields"]["message"] == "notification delivery failed"
+        }),
+        "{output}"
+    );
+    for value in [private_reply, SECRET, USER, "shared@example.com"] {
+        assert!(!output.contains(value), "{output}");
+        assert!(!metrics.contains(value));
+    }
     let (status, attempts, error): (String, i32, Option<String>) = sqlx::query_as(
         "SELECT status, attempts, last_error FROM notification_outbox WHERE channel = 'email'",
     )
@@ -545,7 +583,10 @@ async fn concurrent_workers_deliver_each_notification_once() {
             let (pool, settings) = (pool.clone(), settings.clone());
             tokio::spawn(async move {
                 let mut handled = 0;
-                while process_one(&pool, &settings).await.unwrap() {
+                while process_one(&pool, &settings, &Default::default())
+                    .await
+                    .unwrap()
+                {
                     handled += 1;
                 }
                 handled
@@ -1066,7 +1107,12 @@ async fn a_slow_relay_never_blocks_portal_writes() {
     .await;
     let worker = tokio::spawn({
         let (pool, settings) = (w.db.pool.clone(), w.settings.clone());
-        async move { while process_one(&pool, &settings).await.unwrap() {} }
+        async move {
+            while process_one(&pool, &settings, &Default::default())
+                .await
+                .unwrap()
+            {}
+        }
     });
     // Wait until the email delivery is in flight (the in-app row is suppressed first).
     let (_held, _) = silent.accept().await.unwrap();

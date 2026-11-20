@@ -92,6 +92,9 @@ test('waiting: no bypass by default, the skip only under the Admin policy, and a
   const waiting = { status: 'ai_processing', ai: attempt({ state: 'processing', suggestion: null, finished_at: null }) }
   const view = step(waiting)
   expect(screen.getByRole('heading', { name: 'Preparing an AI suggestion' })).toBeTruthy()
+  expect(document.querySelector('.ai-step')?.getAttribute('aria-busy')).toBe('true')
+  expect(document.querySelector('.waiting')?.getAttribute('role')).toBe('status')
+  expect(document.querySelector('.waiting')?.textContent).toContain('Analyzing your request…')
   expect(screen.getByText(/analyzing your description, the program and other details you entered, and any screenshots you attached/)).toBeTruthy()
   expect(screen.queryByRole('button')).toBeNull()
   expect(screen.getByText('Your organization requires this step before a request goes to the support team.')).toBeTruthy()

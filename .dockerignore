@@ -1,0 +1,13 @@
+.git
+.github
+**/.env
+**/.env.*
+**/*.pem
+**/node_modules
+**/.turbo
+**/.svelte-kit
+**/build
+target
+**/data
+**/test-results
+**/playwright-report

@@ -1,0 +1,166 @@
+{
+  "clock_seconds": 0.193,
+  "users": 2,
+  "seconds": 5,
+  "accounts": 12,
+  "seeded_tickets": 12,
+  "configured_provider_ms": 250,
+  "smtp_enabled": true,
+  "groups": {
+    "admin_report": {
+      "count": 1,
+      "p50": 9.9,
+      "p95": 9.9,
+      "p99": 9.9,
+      "max": 9.9,
+      "errors": {}
+    },
+    "admin_submissions": {
+      "count": 1,
+      "p50": 6.6,
+      "p95": 6.6,
+      "p99": 6.6,
+      "max": 6.6,
+      "errors": {}
+    },
+    "sign_in": {
+      "count": 4,
+      "p50": 13.4,
+      "p95": 16.5,
+      "p99": 16.5,
+      "max": 16.5,
+      "errors": {}
+    },
+    "admin_audit": {
+      "count": 1,
+      "p50": 2.2,
+      "p95": 2.2,
+      "p99": 2.2,
+      "max": 2.2,
+      "errors": {}
+    },
+    "screenshot_upload": {
+      "count": 1,
+      "p50": 10.9,
+      "p95": 10.9,
+      "p99": 10.9,
+      "max": 10.9,
+      "errors": {}
+    },
+    "requester_reads": {
+      "count": 4,
+      "p50": 1.7,
+      "p95": 2.4,
+      "p99": 2.4,
+      "max": 2.4,
+      "errors": {}
+    },
+    "queue_staff_detail": {
+      "count": 16,
+      "p50": 2.2,
+      "p95": 4,
+      "p99": 4,
+      "max": 4,
+      "errors": {}
+    },
+    "submission": {
+      "count": 4,
+      "p50": 7.3,
+      "p95": 8.7,
+      "p99": 8.7,
+      "max": 8.7,
+      "errors": {}
+    },
+    "staff_writes": {
+      "count": 20,
+      "p50": 2.9,
+      "p95": 4.7,
+      "p99": 5.1,
+      "max": 5.1,
+      "errors": {}
+    },
+    "admin_combined": {
+      "count": 3,
+      "p50": 6.6,
+      "p95": 9.9,
+      "p99": 9.9,
+      "max": 9.9
+    }
+  },
+  "warmup_seconds": 0,
+  "history": {
+    "ai_solved": 0,
+    "confirmed": 3,
+    "awaiting_confirmation": 1,
+    "screenshot_bearing": 0
+  },
+  "driver": {
+    "cpu_seconds": 0.025316,
+    "peak_sampled_rss_bytes": 19169976,
+    "mean_cores": 0.13185416666666666
+  },
+  "lanes": [
+    {
+      "lane": 1,
+      "scheduled": 1,
+      "completed": 1
+    },
+    {
+      "lane": 2,
+      "scheduled": 1,
+      "completed": 1
+    }
+  ],
+  "admin_lane": {
+    "scheduled": 1,
+    "completed": 1
+  },
+  "checks": {
+    "submit_races": 2,
+    "claim_races": 2,
+    "confirmation_races": 2,
+    "ai_decision_races": 0,
+    "operator_passes": 0
+  },
+  "expected": {
+    "submitted": 2,
+    "ai": 0,
+    "ai_solved": 0,
+    "confirmed": 2,
+    "public_replies": 2,
+    "notes": 2,
+    "attachments": 1,
+    "claims": 2
+  },
+  "resources": {},
+  "reconciliation": {
+    "submitted": 2,
+    "submit_keys": 2,
+    "submit_events": 2,
+    "ai_solved": 0,
+    "ai_not_solved": 0,
+    "reply_events": 2,
+    "note_events": 2,
+    "ai": 0,
+    "confirmed": 2,
+    "public_replies": 2,
+    "notes": 2,
+    "attachments": 1,
+    "claims": 2,
+    "duplicate_notifications": 0,
+    "ai_solved_staff_notifications": 0,
+    "emails_sent": 10,
+    "outbox_pending": 0,
+    "ai_duration_ms": {
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "max": null
+    }
+  },
+  "smtp_accepted": 11,
+  "provider_duration_ms": {
+    "count": 0
+  },
+  "result": "pass"
+}

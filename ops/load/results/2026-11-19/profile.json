@@ -1,0 +1,193 @@
+{
+  "clock_seconds": 127.434,
+  "users": 30,
+  "seconds": 120,
+  "accounts": 300,
+  "seeded_tickets": 30000,
+  "configured_provider_ms": 250,
+  "smtp_enabled": true,
+  "groups": {
+    "sign_in": {
+      "count": 630,
+      "p50": 13.8,
+      "p95": 20.1,
+      "p99": 23.1,
+      "max": 34.1,
+      "errors": {}
+    },
+    "queue_staff_detail": {
+      "count": 3959,
+      "p50": 2,
+      "p95": 43.1,
+      "p99": 48.7,
+      "max": 53.9,
+      "errors": {}
+    },
+    "submit_upload": {
+      "count": 1320,
+      "p50": 5,
+      "p95": 6.7,
+      "p99": 10,
+      "max": 20.3,
+      "errors": {}
+    },
+    "requester_reads": {
+      "count": 1617,
+      "p50": 1.4,
+      "p95": 2,
+      "p99": 3.9,
+      "max": 12.1,
+      "errors": {}
+    },
+    "staff_writes": {
+      "count": 1450,
+      "p50": 2,
+      "p95": 4.7,
+      "p99": 8.3,
+      "max": 15.3,
+      "errors": {}
+    },
+    "admin": {
+      "count": 60,
+      "p50": 20.7,
+      "p95": 680.4,
+      "p99": 708.5,
+      "max": 708.5,
+      "errors": {}
+    }
+  },
+  "checks": {
+    "submit_races": 601,
+    "claim_races": 125,
+    "confirmation_races": 125,
+    "ai_decision_races": 101,
+    "operator_passes": 78
+  },
+  "expected": {
+    "submitted": 601,
+    "ai": 101,
+    "ai_solved": 51,
+    "confirmed": 125,
+    "public_replies": 125,
+    "notes": 125,
+    "attachments": 121,
+    "claims": 125
+  },
+  "resources": {
+    "samples": 39,
+    "db": {
+      "active_or_in_transaction": 3,
+      "pool_open": 8,
+      "client_backends": 8,
+      "max_connections": 100,
+      "api_pool_cap": 10
+    },
+    "workers": {
+      "ai_attempts": {
+        "pending_jobs": 2,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      },
+      "notifications": {
+        "pending_jobs": 1918,
+        "due_jobs": 1918,
+        "oldest_due_seconds": 3.315382
+      },
+      "auto_close": {
+        "pending_jobs": 0,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      },
+      "retention": {
+        "pending_jobs": 0,
+        "due_jobs": 0,
+        "oldest_due_seconds": 0
+      }
+    },
+    "containers": {
+      "api": {
+        "cpu_percent": 42.84,
+        "memory_bytes": 72372716,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "postgres": {
+        "cpu_percent": 160.06,
+        "memory_bytes": 371825050,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "provider": {
+        "cpu_percent": 0.36,
+        "memory_bytes": 24809308,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "proxy": {
+        "cpu_percent": 3.43,
+        "memory_bytes": 38629540,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "smtp": {
+        "cpu_percent": 3.62,
+        "memory_bytes": 34435236,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      },
+      "web": {
+        "cpu_percent": 9.36,
+        "memory_bytes": 45780828,
+        "memory_limit_bytes": 8319351652,
+        "configured_memory_bytes": 0,
+        "configured_nanocpus": 0
+      }
+    },
+    "sampling_interval_ms": {
+      "count": 38,
+      "p50": 3241.7,
+      "p95": 3254.4,
+      "p99": 3256.4,
+      "max": 3256.4
+    }
+  },
+  "reconciliation": {
+    "submitted": 601,
+    "submit_keys": 601,
+    "submit_events": 601,
+    "ai_solved": 51,
+    "ai_not_solved": 50,
+    "reply_events": 125,
+    "note_events": 125,
+    "ai": 101,
+    "confirmed": 125,
+    "public_replies": 125,
+    "notes": 125,
+    "attachments": 121,
+    "claims": 125,
+    "duplicate_notifications": 0,
+    "ai_solved_staff_notifications": 0,
+    "emails_sent": 1562,
+    "outbox_pending": 0,
+    "ai_duration_ms": {
+      "p50": 1560.934,
+      "p95": 1823.288,
+      "p99": 1876.196,
+      "max": 2311.138
+    }
+  },
+  "smtp_accepted": 1563,
+  "provider_duration_ms": {
+    "count": 101,
+    "p50": 251,
+    "p95": 256,
+    "p99": 256,
+    "max": 259
+  },
+  "result": "pass"
+}

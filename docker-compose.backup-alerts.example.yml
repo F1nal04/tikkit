@@ -1,0 +1,17 @@
+# Optional overlay that connects the backup sidecar to the observability overlay's
+# Prometheus (docker-compose.observability.example.yml): scrape job and alert rules.
+# Use it together with docker-compose.prod.example.yml, docker-compose.backup.example.yml
+# and docker-compose.observability.example.yml.
+services:
+  prometheus:
+    configs:
+      - source: prometheus-backup-scrape
+        target: /etc/prometheus/scrape.d/backup.yml
+      - source: prometheus-backup-alerts
+        target: /etc/prometheus/tikkit-backup-alerts.yml
+
+configs:
+  prometheus-backup-scrape:
+    file: ./ops/prometheus/backup-scrape.yml
+  prometheus-backup-alerts:
+    file: ./ops/prometheus/backup-alerts.yml

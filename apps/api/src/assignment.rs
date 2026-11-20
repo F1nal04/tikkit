@@ -6,7 +6,9 @@
 //! event with the actor and the previous and new team and assignee. Nothing routes
 //! automatically: every change here is an explicit staff action.
 
-use axum::extract::State;
+use std::sync::Arc;
+
+use axum::{Extension, extract::State};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -17,7 +19,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     api::{ApiError, Json, Path},
-    auth::{CurrentUser, ident},
+    auth::{Auth, CurrentUser, ident},
     authz::{self, Permission, TicketScope},
     lifecycle,
     management::invalid,
@@ -90,11 +92,12 @@ pub struct AssignmentReceipt {
         (status = 422, description = "`team_id` or `assignee_account_id` is not an eligible target", body = crate::api::ErrorEnvelope)))]
 pub async fn change_assignment(
     State(state): State<AppState>,
+    Extension(auth): Extension<Arc<Auth>>,
     user: CurrentUser,
     Path(id): Path<Uuid>,
     Json(action): Json<AssignmentAction>,
 ) -> Result<Json<AssignmentReceipt>, ApiError> {
-    apply(&state.pool, user.account_id(), id, action)
+    apply(&state.pool, &auth, user.account_id(), id, action)
         .await
         .map(Json)
 }
@@ -102,6 +105,30 @@ pub async fn change_assignment(
 /// One assignment change in its own transaction: the single-ticket endpoint and
 /// each item of a bulk action (`bulk.rs`) run exactly this.
 pub(crate) async fn apply(
+    pool: &PgPool,
+    auth: &Auth,
+    account_id: Uuid,
+    id: Uuid,
+    action: AssignmentAction,
+) -> Result<AssignmentReceipt, ApiError> {
+    use AssignmentAction as A;
+    let attempted = match action {
+        A::Dispatch { .. } => "dispatch",
+        A::ReturnToGeneral { .. } => "return_to_general",
+        A::Claim { .. } => "claim",
+        A::Assign { .. } => "assign",
+        A::Unassign { .. } => "unassign",
+    };
+    let result = apply_in_transaction(pool, account_id, id, action).await;
+    if let Err(error) = &result {
+        // The transaction is gone: a denied attempt on an AI-solved record is
+        // recorded on its own, and the ticket stays untouched.
+        crate::audit::ticket_denied(pool, auth, account_id, id, attempted, error).await;
+    }
+    result
+}
+
+async fn apply_in_transaction(
     pool: &PgPool,
     account_id: Uuid,
     id: Uuid,
@@ -258,8 +285,8 @@ pub(crate) async fn apply(
              UPDATE tickets SET team_id = $2, assignee_account_id = $3, updated_at = clock_timestamp()
              WHERE id = $1 RETURNING updated_at
          ), event AS (
-             INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, created_at)
-             SELECT $1, $4, 'assignment_changed', $5, updated_at FROM changed
+             INSERT INTO ticket_events (ticket_id, actor_account_id, event_type, payload, created_at, request_id)
+             SELECT $1, $4, 'assignment_changed', $5, updated_at, $6 FROM changed
          )
          SELECT (SELECT name FROM teams WHERE id = $2), (SELECT display_name FROM accounts WHERE id = $3)",
     )
@@ -272,6 +299,7 @@ pub(crate) async fn apply(
         "previous_team_id": team_id, "team_id": next_team,
         "previous_assignee_account_id": assignee, "assignee_account_id": next_assignee,
     }))
+    .bind(crate::telemetry::request_id())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

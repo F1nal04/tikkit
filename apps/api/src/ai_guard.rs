@@ -27,7 +27,6 @@ use crate::{
     },
     ai_config::ActiveAi,
     api::ApiError,
-    auth::audit,
     notifications::poll_loop,
 };
 
@@ -312,7 +311,6 @@ impl AiGuard {
                 tracing::info!(
                     %usage_id,
                     provider = active.provider.as_str(),
-                    model = %active.model,
                     images = request.images.len(),
                     status = "succeeded",
                     input_tokens = suggestion.usage.input_tokens,
@@ -576,7 +574,6 @@ fn log_outcome(
     tracing::info!(
         %usage_id,
         provider = active.provider.as_str(),
-        model = %active.model,
         images = request.images.len(),
         status,
         outcome,
@@ -694,11 +691,10 @@ pub async fn purge_expired(pool: &PgPool) -> Result<u64, ApiError> {
     .await?
     .rows_affected();
     if deleted > 0 {
-        audit(
+        crate::audit::system(
             &mut *tx,
+            "ai_usage_retention",
             "ai_usage_purged",
-            None,
-            None,
             serde_json::json!({ "deleted": deleted, "retention_days": retention_days }),
         )
         .await?;

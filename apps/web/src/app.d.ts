@@ -4,6 +4,7 @@ declare global {
   namespace App {
     interface Locals {
       locale: Locale
+      requestId: string
     }
   }
 }

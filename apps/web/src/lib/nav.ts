@@ -13,7 +13,7 @@ const GUARDS: readonly (readonly [prefix: string, roles: readonly Role[]])[] = [
 ]
 
 export type NavSection = 'portal' | 'workspace' | 'admin'
-export type NavKey = 'myTickets' | 'newTicket' | 'queue' | 'team' | 'adminHome' | 'accounts' | 'teams' | 'settings' | 'email' | 'ai' | 'catalog'
+export type NavKey = 'myTickets' | 'newTicket' | 'queue' | 'team' | 'adminHome' | 'accounts' | 'teams' | 'settings' | 'email' | 'ai' | 'catalog' | 'submissions' | 'audit' | 'reports' | 'retention'
 
 /** Add a page to the sidebar here; it shows only to roles that may open `href`. */
 export const NAV: readonly { section: NavSection; key: NavKey; href: string }[] = [
@@ -22,6 +22,10 @@ export const NAV: readonly { section: NavSection; key: NavKey; href: string }[] 
   { section: 'workspace', key: 'queue', href: '/queue' },
   { section: 'workspace', key: 'team', href: '/team' },
   { section: 'admin', key: 'adminHome', href: '/admin' },
+  { section: 'admin', key: 'submissions', href: '/admin/submissions' },
+  { section: 'admin', key: 'reports', href: '/admin/reports' },
+  { section: 'admin', key: 'audit', href: '/admin/audit' },
+  { section: 'admin', key: 'retention', href: '/admin/retention' },
   { section: 'admin', key: 'accounts', href: '/admin/accounts' },
   { section: 'admin', key: 'teams', href: '/admin/teams' },
   { section: 'admin', key: 'settings', href: '/admin/settings' },

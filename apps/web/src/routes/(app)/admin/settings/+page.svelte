@@ -3,7 +3,9 @@
   import { ApiError } from '@tikkit/api-client'
   import { api as apiClient } from '#lib/api.ts'
   import Alert from '#lib/components/Alert.svelte'
+  import ErrorSummary from '#lib/components/ErrorSummary.svelte'
   import Field from '#lib/components/Field.svelte'
+  import { fieldItems, focusFormErrors } from '#lib/a11y.ts'
   import { errorText, fieldText, messages } from '#lib/i18n.ts'
   import type { PageProps } from './$types'
 
@@ -35,6 +37,7 @@
     } catch (e) {
       error = e
       if (e instanceof ApiError) fields = e.fields
+      await focusFormErrors()
     } finally {
       busy = false
     }
@@ -44,9 +47,20 @@
 <svelte:head><title>{t.settingsTitle}</title></svelte:head>
 
 <h1>{t.settingsTitle}</h1>
-{#if error}<Alert>{errorText(t, error)}</Alert>{/if}
 {#if saved}<Alert kind="success">{t.saved}</Alert>{/if}
 <form onsubmit={save} novalidate aria-busy={busy}>
+  {#if error}
+    <ErrorSummary
+      title={errorText(t, error)}
+      items={fieldItems(fields, {
+        name: t.organizationName,
+        timezone: t.timezone,
+        default_language: t.defaultLanguage,
+        requester_cancellation_policy: t.cancellationPolicy,
+        resolution_confirmation_hours: t.confirmationHours,
+      }, (code) => fieldText(t, code))}
+    />
+  {/if}
   <Field name="name" label={t.organizationName} bind:value={form.name} error={fieldText(t, fields.name?.[0])} />
   <Field
     name="timezone"

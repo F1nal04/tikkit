@@ -85,7 +85,7 @@
   {/snippet}
   {#each data.records.items as record (record.id)}
     <tr data-outcome={record.outcome}>
-      <th scope="row"><a href={`/queue/${record.ticket_id}`}>#{record.reference} {record.subject}</a></th>
+      <th scope="row"><a href={`/admin/submissions/${record.ticket_id}`}>#{record.reference} {record.subject}</a></th>
       <td>{record.requester.display_name} ({record.requester.username})</td>
       <td>{r.outcomes[record.outcome]}</td>
       <td><StatusBadge status={record.status} label={t.statuses[record.status]} /></td>
@@ -106,7 +106,8 @@
 <style>
   p { margin: 0; }
   h3 { margin: 1rem 0 0; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
+  dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 1rem; margin: 0; }
+  dt { overflow-wrap: anywhere; }
   dd { margin: 0; }
   .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; }
   .pager { display: flex; gap: 1rem; }

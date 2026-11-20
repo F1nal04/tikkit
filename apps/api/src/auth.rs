@@ -40,6 +40,7 @@ use crate::{
     AppState,
     api::{ApiError, FieldErrors, Json, Language, Role},
     config::{Config, Environment},
+    security::{Throttle, TrustedProxies, request_client_ip, same_origin},
 };
 
 pub const COOKIE_NAME: &str = "tikkit_session";
@@ -48,9 +49,22 @@ pub const CSRF_HEADER: &str = "x-requested-with";
 pub const CSRF_VALUE: &str = "tikkit";
 
 const LIMIT_WINDOW: Duration = Duration::from_secs(60);
+/// Attempts (failed sign-ins) per scope and client network: an IPv4 address
+/// or an IPv6 /64, the smallest network one subscriber normally gets.
 const LIMIT_PER_IP: u32 = 10;
-const LIMIT_PER_USERNAME: u32 = 5;
+/// Failed attempts per scope, username, and client network.
+const LIMIT_PER_USERNAME_AND_IP: u32 = 5;
+/// Failed attempts per scope and username from all networks together: slows
+/// a guessing botnet, and does not apply to a network the account has
+/// signed in from successfully ([`KNOWN_GOOD_FOR`]), so nobody can lock the
+/// legitimate user out of their own place.
+const LIMIT_PER_USERNAME: u32 = 30;
+/// How long a successful sign-in exempts its (username, network) pair from
+/// [`LIMIT_PER_USERNAME`].
+const KNOWN_GOOD_FOR: Duration = Duration::from_secs(30 * 24 * 3600);
 const LIMIT_MAX_KEYS: usize = 10_000;
+/// Audit rows one account may cause per window by repeating one denied action on one ticket.
+const LIMIT_DENIALS: u32 = 5;
 /// How long a rotated-away token keeps working, for requests already in flight.
 const ROTATION_GRACE: &str = "interval '1 minute'";
 
@@ -59,14 +73,29 @@ pub struct Settings {
     pub session_ttl: Duration,
     pub session_rotate: Duration,
     pub secure_cookie: bool,
-    pub trust_proxy_headers: bool,
+    /// Peers whose `X-Forwarded-For` is honoured (`TRUSTED_PROXIES`).
+    pub trusted_proxies: TrustedProxies,
+    /// Send `Strict-Transport-Security` (the portal is served over https).
+    pub hsts: bool,
+    /// Deadline for one API request ([`crate::security::REQUEST_TIMEOUT`];
+    /// tests shorten it).
+    pub request_timeout: Duration,
     /// Origin for links in invitations and emails, without trailing slash.
     pub public_origin: String,
     /// Decrypts the stored SMTP password. Never logged.
     pub encryption_key: [u8; 32],
-    /// Test-only PEM trust anchor for the SMTP client. Production leaves this
-    /// empty so verification uses the default WebPKI roots. Never disables checks.
+    /// Optional PEM trust anchors for the SMTP client. Empty uses WebPKI roots.
     pub smtp_trust_root_pem: Option<Vec<u8>>,
+    /// Restore mode (docs/backup-restore.md): nothing is sent to an SMTP relay or
+    /// an AI provider from a request, and `main` starts no background worker.
+    pub restore_mode: bool,
+}
+
+impl Settings {
+    /// Whether a request may reach a mail relay or an AI provider.
+    pub fn outbound_enabled(&self) -> bool {
+        !self.restore_mode
+    }
 }
 
 impl fmt::Debug for Settings {
@@ -75,13 +104,16 @@ impl fmt::Debug for Settings {
             .field("session_ttl", &self.session_ttl)
             .field("session_rotate", &self.session_rotate)
             .field("secure_cookie", &self.secure_cookie)
-            .field("trust_proxy_headers", &self.trust_proxy_headers)
+            .field("trusted_proxies", &self.trusted_proxies)
+            .field("hsts", &self.hsts)
+            .field("request_timeout", &self.request_timeout)
             .field("public_origin", &self.public_origin)
             .field("encryption_key", &"<redacted>")
             .field(
                 "smtp_trust_root_pem",
                 &self.smtp_trust_root_pem.as_ref().map(|_| "<set>"),
             )
+            .field("restore_mode", &self.restore_mode)
             .finish()
     }
 }
@@ -92,10 +124,13 @@ impl Default for Settings {
             session_ttl: Duration::from_secs(14 * 24 * 3600),
             session_rotate: Duration::from_secs(24 * 3600),
             secure_cookie: false,
-            trust_proxy_headers: false,
+            trusted_proxies: TrustedProxies::default(),
+            hsts: false,
+            request_timeout: crate::security::REQUEST_TIMEOUT,
             public_origin: "http://localhost:3000".into(),
             encryption_key: [0; 32],
             smtp_trust_root_pem: None,
+            restore_mode: false,
         }
     }
 }
@@ -106,10 +141,13 @@ impl From<&Config> for Settings {
             session_ttl: c.session_ttl,
             session_rotate: c.session_rotate,
             secure_cookie: c.environment == Environment::Production,
-            trust_proxy_headers: c.trust_proxy_headers,
+            trusted_proxies: c.trusted_proxies.clone(),
+            hsts: c.public_origin.scheme() == "https",
+            request_timeout: crate::security::REQUEST_TIMEOUT,
             public_origin: c.public_origin.as_str().trim_end_matches('/').into(),
             encryption_key: c.encryption_key,
-            smtp_trust_root_pem: None,
+            smtp_trust_root_pem: c.smtp_trust_root_pem.clone(),
+            restore_mode: c.restore_mode,
         }
     }
 }
@@ -118,57 +156,179 @@ impl From<&Config> for Settings {
 pub struct Auth {
     pub(crate) settings: Settings,
     // ponytail: in-memory limiter, single process; move to Postgres/Redis if multi-instance
-    attempts: Mutex<HashMap<String, (Instant, u32)>>,
+    attempts: Limiter,
+    /// Per-account route budgets ([`crate::security::Throttle`]), kept apart so
+    /// they can never fill the table that guards sign-in.
+    actions: Limiter,
+    /// `username|network` pairs that signed in successfully, with the time.
+    known_good: Mutex<HashMap<String, Instant>>,
 }
+
+/// Fixed-window counters keyed by string, bounded to [`LIMIT_MAX_KEYS`] keys.
+#[derive(Default)]
+struct Limiter(Mutex<HashMap<String, (Instant, u32)>>);
 
 impl Auth {
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
-            attempts: Mutex::default(),
+            attempts: Limiter::default(),
+            actions: Limiter::default(),
+            known_good: Mutex::default(),
         }
     }
 
-    /// Fixed-window counters; every listed key counts the attempt.
-    /// One fixed-window counter. When the table is full of live keys, new keys
-    /// are refused rather than growing memory without bound.
+    fn hit(&self, key: String, max: u32) -> Result<(), ApiError> {
+        self.attempts.hit(key, max)
+    }
+
+    /// One request against `throttle`'s per-minute budget for `account`.
+    pub(crate) fn limit_account(&self, throttle: Throttle, account: Uuid) -> Result<(), ApiError> {
+        let (scope, max) = throttle.budget();
+        self.actions
+            .hit(format!("{scope}:{}", account.simple()), max)
+    }
+}
+
+impl Limiter {
+    /// Counts one request and refuses it once the window holds more than `max`.
     fn hit(&self, key: String, max: u32) -> Result<(), ApiError> {
         let now = Instant::now();
-        let mut attempts = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
-        if attempts.len() >= LIMIT_MAX_KEYS {
-            attempts.retain(|_, (start, _)| now - *start < LIMIT_WINDOW);
-            if attempts.len() >= LIMIT_MAX_KEYS && !attempts.contains_key(&key) {
-                return Err(ApiError::RateLimited(LIMIT_WINDOW.as_secs()));
-            }
-        }
-        let (start, count) = attempts.entry(key).or_insert((now, 0));
-        if now - *start >= LIMIT_WINDOW {
-            (*start, *count) = (now, 0);
-        }
+        let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (start, count) = Self::entry(&mut table, key, now);
         *count += 1;
         if *count > max {
-            let left = LIMIT_WINDOW.saturating_sub(now - *start).as_secs();
-            return Err(ApiError::RateLimited(left.max(1)));
+            return Err(ApiError::RateLimited(Self::left(*start, now)));
         }
         Ok(())
     }
 
-    /// Per-IP only, for endpoints keyed by an unguessable token rather than a username.
-    pub(crate) fn limit_ip(&self, scope: &str, client: &Client) -> Result<(), ApiError> {
-        let ip = client.ip.as_deref().unwrap_or("unknown");
-        self.hit(format!("{scope}:ip:{ip}"), LIMIT_PER_IP)
+    /// Refuses without counting when the window already holds `max`.
+    fn check(&self, key: &str, max: u32) -> Result<(), ApiError> {
+        let now = Instant::now();
+        let table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match table.get(key) {
+            Some(&(start, count)) if now - start < LIMIT_WINDOW && count >= max => {
+                Err(ApiError::RateLimited(Self::left(start, now)))
+            }
+            _ => Ok(()),
+        }
     }
 
-    /// Per-IP first, so one client cannot mint unbounded per-username keys.
+    /// Counts without deciding (a failure recorded after the fact).
+    fn count(&self, key: String) {
+        let now = Instant::now();
+        let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        *Self::entry(&mut table, key, now).1 += 1;
+    }
+
+    /// The live counter for `key`. A full table first drops expired windows,
+    /// then the oldest one: memory stays bounded and new clients are never
+    /// refused for want of room (an evicted counter just starts again).
+    fn entry(
+        table: &mut HashMap<String, (Instant, u32)>,
+        key: String,
+        now: Instant,
+    ) -> (&mut Instant, &mut u32) {
+        if table.len() >= LIMIT_MAX_KEYS && !table.contains_key(&key) {
+            table.retain(|_, (start, _)| now - *start < LIMIT_WINDOW);
+            if table.len() >= LIMIT_MAX_KEYS
+                && let Some(oldest) = table
+                    .iter()
+                    .min_by_key(|(_, (start, _))| *start)
+                    .map(|(k, _)| k.clone())
+            {
+                table.remove(&oldest);
+            }
+        }
+        let (start, count) = table.entry(key).or_insert((now, 0));
+        if now - *start >= LIMIT_WINDOW {
+            (*start, *count) = (now, 0);
+        }
+        (start, count)
+    }
+
+    fn left(start: Instant, now: Instant) -> u64 {
+        LIMIT_WINDOW.saturating_sub(now - start).as_secs().max(1)
+    }
+}
+
+impl Auth {
+    /// Whether another denied `action` of `account` on `ticket` may still be
+    /// written to the audit log in this window. Repeats beyond it change nothing
+    /// for the caller; they are just not recorded again.
+    pub(crate) fn allow_denial_record(&self, account: Uuid, ticket: Uuid, action: &str) -> bool {
+        let key = format!("denied:{}:{}:{action}", account.simple(), ticket.simple());
+        self.hit(key, LIMIT_DENIALS).is_ok()
+    }
+
+    /// Per client network only, for endpoints keyed by an unguessable token
+    /// rather than a username. Every request counts.
+    pub(crate) fn limit_ip(&self, scope: &str, client: &Client) -> Result<(), ApiError> {
+        self.hit(format!("{scope}:ip:{}", client.network()), LIMIT_PER_IP)
+    }
+
+    /// Every request counts (setup, invitation acceptance, recovery): checked
+    /// like [`Auth::check_attempt`], then recorded like a failure.
     pub(crate) fn limit_attempt(
         &self,
         scope: &str,
         client: &Client,
         username: &str,
     ) -> Result<(), ApiError> {
-        self.limit_ip(scope, client)?;
-        let username: String = username.chars().take(64).collect();
-        self.hit(format!("{scope}:user:{username}"), LIMIT_PER_USERNAME)
+        self.check_attempt(scope, client, username)?;
+        self.record_failure(scope, client, username);
+        Ok(())
+    }
+
+    /// Whether a credential attempt may proceed. Counts nothing, so only
+    /// failures ([`Auth::record_failure`]) spend the budgets, and answers the
+    /// same for known and unknown usernames.
+    pub(crate) fn check_attempt(
+        &self,
+        scope: &str,
+        client: &Client,
+        username: &str,
+    ) -> Result<(), ApiError> {
+        let [ip, pair, user] = attempt_keys(scope, client, username);
+        self.attempts.check(&ip, LIMIT_PER_IP)?;
+        self.attempts.check(&pair, LIMIT_PER_USERNAME_AND_IP)?;
+        if !self.is_known_good(client, username) {
+            self.attempts.check(&user, LIMIT_PER_USERNAME)?;
+        }
+        Ok(())
+    }
+
+    /// One failed credential attempt against every budget it belongs to.
+    pub(crate) fn record_failure(&self, scope: &str, client: &Client, username: &str) {
+        for key in attempt_keys(scope, client, username) {
+            self.attempts.count(key);
+        }
+    }
+
+    /// A successful sign-in: this network is the account's own from now on.
+    pub(crate) fn remember_success(&self, client: &Client, username: &str) {
+        let now = Instant::now();
+        let mut known = self.known_good.lock().unwrap_or_else(|e| e.into_inner());
+        if known.len() >= LIMIT_MAX_KEYS {
+            known.retain(|_, at| now - *at < KNOWN_GOOD_FOR);
+            if known.len() >= LIMIT_MAX_KEYS
+                && let Some(oldest) = known
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(k, _)| k.clone())
+            {
+                known.remove(&oldest);
+            }
+        }
+        known.insert(known_good_key(client, username), now);
+    }
+
+    fn is_known_good(&self, client: &Client, username: &str) -> bool {
+        let known = self.known_good.lock().unwrap_or_else(|e| e.into_inner());
+        known
+            .get(&known_good_key(client, username))
+            .is_some_and(|at| at.elapsed() < KNOWN_GOOD_FOR)
     }
 
     fn cookie(&self, token: &str, expires_at: OffsetDateTime) -> HeaderValue {
@@ -197,6 +357,22 @@ impl Auth {
             .parse()
             .expect("cookie is a valid header value")
     }
+}
+
+/// `[network, username+network, username]` budget keys of one attempt.
+fn attempt_keys(scope: &str, client: &Client, username: &str) -> [String; 3] {
+    let username: String = username.chars().take(64).collect();
+    let net = client.network();
+    [
+        format!("{scope}:ip:{net}"),
+        format!("{scope}:pair:{username}|{net}"),
+        format!("{scope}:user:{username}"),
+    ]
+}
+
+fn known_good_key(client: &Client, username: &str) -> String {
+    let username: String = username.chars().take(64).collect();
+    format!("{username}|{}", client.network())
 }
 
 /// The signed-in account, resolved by the [`session`] middleware.
@@ -238,32 +414,43 @@ impl<S: Send + Sync> OptionalFromRequestParts<S> for CurrentUser {
     }
 }
 
-/// Client address (from the socket, or the last `X-Forwarded-For` hop when
-/// `TRUST_PROXY_HEADERS=true`) and user agent, for rate limits and session records.
+/// Client address (the socket peer, or the client a `TRUSTED_PROXIES` peer
+/// forwarded for; see [`TrustedProxies::client_ip`]) and user agent, for rate
+/// limits, session records, and audit events.
 pub struct Client {
     pub(crate) ip: Option<String>,
     user_agent: Option<String>,
+}
+
+impl Client {
+    /// The rate-limit network of this client: its IPv4 address, or its IPv6
+    /// /64 (one subscriber's usual allocation, which it can fill with
+    /// addresses at will). IPv4-mapped IPv6 counts as IPv4.
+    pub(crate) fn network(&self) -> String {
+        match self.ip.as_deref().map(str::parse::<std::net::IpAddr>) {
+            Some(Ok(std::net::IpAddr::V6(v6))) if v6.to_ipv4_mapped().is_none() => {
+                let net = std::net::Ipv6Addr::from(u128::from(v6) & !((1u128 << 64) - 1));
+                format!("{net}/64")
+            }
+            Some(Ok(std::net::IpAddr::V6(v6))) => v6.to_ipv4_mapped().unwrap().to_string(),
+            Some(Ok(ip)) => ip.to_string(),
+            _ => "unknown".into(),
+        }
+    }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Client {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        let trust_proxy = parts
+        let none = TrustedProxies::default();
+        let trusted = parts
             .extensions
             .get::<Arc<Auth>>()
-            .is_some_and(|a| a.settings.trust_proxy_headers);
+            .map_or(&none, |a| &a.settings.trusted_proxies);
+        let connect = parts.extensions.get::<ConnectInfo<SocketAddr>>();
+        let ip = request_client_ip(&parts.headers, connect, trusted).map(|ip| ip.to_string());
         let header = |name| parts.headers.get(name).and_then(|v| v.to_str().ok());
-        let forwarded = trust_proxy
-            .then(|| header("x-forwarded-for")?.rsplit(',').next())
-            .flatten()
-            .map(|ip| ip.trim().to_owned());
-        let ip = forwarded.or_else(|| {
-            parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|c| c.0.ip().to_string())
-        });
         let user_agent = header(USER_AGENT.as_str()).map(|ua| ua.chars().take(256).collect());
         Ok(Self { ip, user_agent })
     }
@@ -388,7 +575,10 @@ async fn resolve(
                 WHERE id = $1 AND revoked_at IS NULL AND rotated_at IS NULL
                 RETURNING id, account_id, expires_at, user_agent, ip)
              INSERT INTO sessions (account_id, token_hash, expires_at, user_agent, ip, rotated_from)
-             SELECT account_id, $2, expires_at, user_agent, ip, id FROM old RETURNING id",
+             SELECT old.account_id, $2, old.expires_at, old.user_agent, old.ip, old.id
+             FROM old JOIN accounts a ON a.id = old.account_id
+             WHERE a.is_active AND a.anonymized_at IS NULL FOR SHARE OF a
+             RETURNING id",
         )
         .bind(row.session_id)
         .bind(token_hash(&new_token))
@@ -421,9 +611,11 @@ async fn resolve(
     )))
 }
 
-/// Rejects state-changing requests that lack `X-Requested-With: tikkit`. Browsers
-/// cannot add custom headers cross-site without a CORS preflight, which we never grant.
-pub async fn csrf(request: Request, next: Next) -> Response {
+/// Rejects state-changing requests that lack `X-Requested-With: tikkit`, or
+/// whose browser metadata (`Origin`, `Sec-Fetch-Site`) names another site than
+/// `PUBLIC_ORIGIN`. Browsers cannot add custom headers cross-site without a
+/// CORS preflight, which we never grant; the origin check is the second layer.
+pub async fn csrf(Extension(auth): Extension<Arc<Auth>>, request: Request, next: Next) -> Response {
     let safe = matches!(
         *request.method(),
         Method::GET | Method::HEAD | Method::OPTIONS
@@ -431,7 +623,8 @@ pub async fn csrf(request: Request, next: Next) -> Response {
     let ok = request
         .headers()
         .get(CSRF_HEADER)
-        .is_some_and(|v| v == CSRF_VALUE);
+        .is_some_and(|v| v == CSRF_VALUE)
+        && same_origin(request.headers(), &auth.settings.public_origin);
     if !safe && !ok {
         return ApiError::CsrfRejected.into_response();
     }
@@ -444,6 +637,16 @@ pub async fn csrf(request: Request, next: Next) -> Response {
 pub async fn setup_status(State(state): State<AppState>) -> Result<Json<SetupStatus>, ApiError> {
     let setup_required = setup_open(&state).await?;
     Ok(Json(SetupStatus { setup_required }))
+}
+
+/// Records a bootstrap attempt after setup was completed (a replay). Rate
+/// limited per client so the closed endpoint cannot be used to flood the log.
+async fn setup_rejected(state: &AppState, auth: &Auth, client: &Client) -> Result<(), sqlx::Error> {
+    if auth.limit_ip("setup_rejected", client).is_err() {
+        return Ok(());
+    }
+    let metadata = json!({ "reason": "already_completed", "ip": client.ip });
+    audit(&state.pool, "setup_rejected", None, None, metadata).await
 }
 
 async fn setup_open(state: &AppState) -> Result<bool, sqlx::Error> {
@@ -469,6 +672,7 @@ pub async fn setup(
     let username = body.username.trim().to_owned();
     let normalized = username.to_lowercase();
     if !setup_open(&state).await? {
+        setup_rejected(&state, &auth, &client).await?;
         return Err(ApiError::SetupAlreadyCompleted);
     }
     auth.limit_attempt("setup", &client, &normalized)?;
@@ -497,6 +701,8 @@ pub async fn setup(
     .await?
     .rows_affected();
     if claimed != 1 {
+        drop(tx);
+        setup_rejected(&state, &auth, &client).await?;
         return Err(ApiError::SetupAlreadyCompleted);
     }
     let language = match body.language {
@@ -550,19 +756,19 @@ pub async fn login(
         .chars()
         .take(64)
         .collect();
-    auth.limit_attempt("login", &client, &normalized)?;
+    auth.check_attempt("login", &client, &normalized)?;
     let found: Option<(Uuid, String, bool)> = sqlx::query_as(
         "SELECT id, password_hash, is_active FROM accounts WHERE username_normalized = $1",
     )
     .bind(&normalized)
     .fetch_optional(&state.pool)
     .await?;
-    // Verify against a dummy hash for unknown users so timing does not reveal them.
-    let hash = found
-        .as_ref()
-        .map_or_else(|| DUMMY_HASH.clone(), |f| f.1.clone());
+    // Verify against a dummy hash for unknown users so timing does not reveal
+    // them, and for accounts whose stored hash is unusable on purpose (an
+    // anonymized account's `!`), which would otherwise fail without any work.
+    let (hash, usable) = verification_hash(found.as_ref().map(|f| f.1.as_str()));
     let password = body.password;
-    let verified = blocking(move || verify_password(&password, &hash)).await?;
+    let verified = blocking(move || verify_password(&password, &hash)).await? && usable;
     let failure = match &found {
         None => Some("unknown_username"),
         Some(_) if !verified => Some("wrong_password"),
@@ -571,6 +777,7 @@ pub async fn login(
     };
     let subject = found.as_ref().map(|f| f.0);
     if let Some(reason) = failure {
+        auth.record_failure("login", &client, &normalized);
         let metadata =
             // No typed username: for unknown users it may be a misplaced password.
             json!({ "reason": reason, "ip": client.ip });
@@ -578,6 +785,7 @@ pub async fn login(
         return Err(ApiError::InvalidCredentials);
     }
     let account_id = subject.expect("checked above");
+    auth.remember_success(&client, &normalized);
     let mut tx = state.pool.begin().await?;
     end_presented_session(&mut tx, &headers).await?;
     let token = create_session(&mut tx, &auth, account_id, &client).await?;
@@ -638,7 +846,7 @@ pub async fn change_password(
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Response, ApiError> {
     let username = user.account.username.to_lowercase();
-    auth.limit_attempt("password", &client, &username)?;
+    auth.check_attempt("password", &client, &username)?;
     if let Err(code) = check_password(&body.new_password, &username) {
         return Err(ApiError::Validation(FieldErrors::from([(
             "new_password".into(),
@@ -654,6 +862,7 @@ pub async fn change_password(
     let new_hash = blocking(move || verify_password(&current, &hash).then(|| hash_password(&new)))
         .await?
         .ok_or_else(|| {
+            auth.record_failure("password", &client, &username);
             ApiError::Validation(FieldErrors::from([(
                 "current_password".into(),
                 vec!["incorrect"],
@@ -661,6 +870,7 @@ pub async fn change_password(
         })?;
 
     let mut tx = state.pool.begin().await?;
+    lock_active_account(&mut tx, account_id).await?;
     sqlx::query("UPDATE accounts SET password_hash = $2 WHERE id = $1")
         .bind(account_id)
         .bind(&new_hash)
@@ -736,7 +946,31 @@ pub(crate) async fn revoke_all_sessions<'c>(
     .map(|r| r.rows_affected())
 }
 
+/// The write protocol for an account's personal data (docs/retention.md).
+/// Every transaction that stores something for an account (profile, password,
+/// session, draft, upload, saved view) calls this first: it takes a share lock
+/// on the account row and refuses unless the account is active. Anonymization
+/// locks the same row `FOR UPDATE` before it deletes anything, so a request
+/// that was authenticated while the account was still active either commits
+/// before the erasure looks, or waits and is refused; it can never write
+/// after it. (`lifecycle::lock_actor` is the same lock for ticket writes.)
+pub async fn lock_active_account(db: &mut sqlx::PgConnection, id: Uuid) -> Result<(), ApiError> {
+    let active: Option<bool> = sqlx::query_scalar(
+        "SELECT is_active AND anonymized_at IS NULL FROM accounts WHERE id = $1 FOR SHARE",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    if active == Some(true) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
+}
+
 /// Always a brand-new random token: a cookie presented before login is never adopted.
+/// Only for an active account (see [`lock_active_account`]): otherwise
+/// `RowNotFound`.
 pub(crate) async fn create_session(
     tx: &mut sqlx::PgConnection,
     auth: &Auth,
@@ -746,7 +980,8 @@ pub(crate) async fn create_session(
     let token = new_token();
     sqlx::query(
         "INSERT INTO sessions (account_id, token_hash, expires_at, user_agent, ip)
-         VALUES ($1, $2, now() + $3, $4, $5)",
+         SELECT a.id, $2, now() + $3, $4, $5 FROM accounts a
+         WHERE a.id = $1 AND a.is_active AND a.anonymized_at IS NULL FOR SHARE",
     )
     .bind(account_id)
     .bind(token_hash(&token))
@@ -778,7 +1013,9 @@ pub(crate) async fn load_account<'c>(
     })
 }
 
-/// Appends an audit event. Metadata must never hold passwords, tokens, or secrets.
+/// Appends an audit event ([`crate::audit::record`]) by an account, or by an
+/// anonymous caller when `actor` is `None`; background jobs use
+/// [`crate::audit::system`]. Metadata must never hold passwords, tokens, or secrets.
 pub async fn audit<'c>(
     db: impl PgExecutor<'c>,
     event_type: &str,
@@ -786,17 +1023,17 @@ pub async fn audit<'c>(
     subject: Option<Uuid>,
     metadata: Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO audit_events (event_type, actor_account_id, subject_account_id, metadata)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(event_type)
-    .bind(actor)
-    .bind(subject)
-    .bind(metadata)
-    .execute(db)
-    .await
-    .map(drop)
+    let entry = crate::audit::Entry {
+        action: event_type,
+        who: actor.map_or(
+            crate::audit::Who::Service(crate::audit::ANONYMOUS),
+            crate::audit::Who::Account,
+        ),
+        subject,
+        ticket: None,
+        metadata,
+    };
+    crate::audit::record(db, entry).await
 }
 
 fn cookie_token(headers: &HeaderMap) -> Option<String> {
@@ -868,11 +1105,28 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
     })
 }
 
+/// The hash a sign-in verifies against, and whether a match may count: the
+/// stored one if it is a real password hash, otherwise the dummy (same cost,
+/// never a success).
+fn verification_hash(stored: Option<&str>) -> (String, bool) {
+    match stored {
+        Some(hash) if PasswordHash::new(hash).is_ok() => (hash.to_owned(), true),
+        _ => (DUMMY_HASH.clone(), false),
+    }
+}
+
+/// Usernames starting with this belong to anonymized accounts
+/// (docs/retention.md). Nobody can register one, so the placeholder of an
+/// erased account is always free; the database enforces the same
+/// (`accounts_username_reserved`).
+pub const RESERVED_USERNAME_PREFIX: &str = "anonymized-";
+
 /// `normalized` is `lower(trim(username))`; returns a field error code.
 pub fn check_username(normalized: &str) -> Result<(), &'static str> {
     match normalized.chars().count() {
         0..3 => Err("too_short"),
         65.. => Err("too_long"),
+        _ if normalized.starts_with(RESERVED_USERNAME_PREFIX) => Err("reserved"),
         _ if !normalized
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c)) =>
@@ -949,6 +1203,10 @@ mod tests {
         assert_eq!(check_username("al ice"), Err("invalid"));
         assert_eq!(check_username("alice@example"), Err("invalid"));
         assert_eq!(check_username("älice"), Err("invalid"));
+        assert_eq!(check_username(&norm("Anonymized-1")), Err("reserved"));
+        assert_eq!(check_username("anonymized-"), Err("reserved"));
+        assert_eq!(check_username("anonymized"), Ok(()));
+        assert_eq!(check_username("not-anonymized-1"), Ok(()));
     }
 
     #[test]
@@ -985,6 +1243,20 @@ mod tests {
     }
 
     #[test]
+    fn unusable_hashes_cost_a_full_verification_and_never_match() {
+        let real = hash_password("correct horse battery");
+        assert_eq!(verification_hash(Some(&real)), (real.clone(), true));
+        for unusable in [Some("!"), Some(""), Some("not a hash"), None] {
+            let (hash, usable) = verification_hash(unusable);
+            assert!(!usable, "{unusable:?}");
+            assert_eq!(
+                hash, *DUMMY_HASH,
+                "{unusable:?}: same Argon2 work as an unknown user"
+            );
+        }
+    }
+
+    #[test]
     fn rate_limits_are_per_key_fixed_windows() {
         let auth = Auth::new(Settings::default());
         let hit = |key: &str| auth.hit(key.to_owned(), 2);
@@ -993,38 +1265,112 @@ mod tests {
         assert!(hit("ip:2").is_ok());
     }
 
-    #[test]
-    fn rate_limiter_checks_ip_first_and_caps_its_memory() {
-        let auth = Auth::new(Settings::default());
-        let client = Client {
-            ip: Some("10.0.0.1".into()),
+    fn client(ip: &str) -> Client {
+        Client {
+            ip: Some(ip.into()),
             user_agent: None,
-        };
-        for i in 0..LIMIT_PER_IP {
-            assert!(
-                auth.limit_attempt("login", &client, &format!("u{i}"))
-                    .is_ok()
-            );
         }
-        assert!(auth.limit_attempt("login", &client, "fresh").is_err());
-        let keys = auth.attempts.lock().unwrap().len();
-        assert_eq!(
-            keys as u32,
-            1 + LIMIT_PER_IP,
-            "a blocked IP adds no username key"
-        );
+    }
 
-        let live = auth.attempts.lock().unwrap().len();
-        for i in live..LIMIT_MAX_KEYS {
-            auth.hit(format!("k{i}"), 1).unwrap();
+    #[test]
+    fn only_failures_count_and_each_network_has_its_own_budget() {
+        let auth = Auth::new(Settings::default());
+        let home = client("198.51.100.7");
+        // Successful attempts never spend the budget.
+        for _ in 0..50 {
+            assert!(auth.check_attempt("login", &home, "alice").is_ok());
+        }
+        for _ in 0..LIMIT_PER_USERNAME_AND_IP {
+            assert!(auth.check_attempt("login", &home, "alice").is_ok());
+            auth.record_failure("login", &home, "alice");
         }
         assert!(matches!(
-            auth.hit("new".into(), 1),
-            Err(ApiError::RateLimited(60))
+            auth.check_attempt("login", &home, "alice"),
+            Err(ApiError::RateLimited(s)) if (1..=60).contains(&s)
         ));
+        // The same username from another network is unaffected.
         assert!(
-            auth.hit("k100".into(), 5).is_ok(),
-            "existing keys keep counting"
+            auth.check_attempt("login", &client("203.0.113.9"), "alice")
+                .is_ok()
         );
+        // Per network across usernames.
+        let spray = client("192.0.2.1");
+        for i in 0..LIMIT_PER_IP {
+            assert!(
+                auth.check_attempt("login", &spray, &format!("u{i}"))
+                    .is_ok()
+            );
+            auth.record_failure("login", &spray, &format!("u{i}"));
+        }
+        assert!(auth.check_attempt("login", &spray, "fresh").is_err());
+    }
+
+    #[test]
+    fn ipv6_clients_are_limited_per_64() {
+        let auth = Auth::new(Settings::default());
+        for i in 0..LIMIT_PER_IP {
+            let rotating = client(&format!("2001:db8:1:2::{:x}", i + 1));
+            auth.record_failure("login", &rotating, &format!("u{i}"));
+        }
+        let same_64 = client("2001:db8:1:2:ffff::1");
+        assert!(auth.check_attempt("login", &same_64, "another").is_err());
+        assert!(
+            auth.check_attempt("login", &client("2001:db8:1:3::1"), "another")
+                .is_ok()
+        );
+        assert_eq!(
+            client("2001:db8:1:2:aaaa::1").network(),
+            "2001:db8:1:2::/64"
+        );
+        assert_eq!(client("::ffff:198.51.100.7").network(), "198.51.100.7");
+        assert_eq!(
+            Client {
+                ip: None,
+                user_agent: None
+            }
+            .network(),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn a_distributed_lockout_spares_the_owners_own_network() {
+        let auth = Auth::new(Settings::default());
+        let home = client("198.51.100.7");
+        auth.remember_success(&home, "alice");
+        // Many networks, each within its own budgets, exhaust the username ceiling.
+        for i in 0..LIMIT_PER_USERNAME {
+            let attacker = client(&format!("203.0.113.{}", i % 200 + 1));
+            auth.record_failure("login", &attacker, "alice");
+        }
+        assert!(
+            auth.check_attempt("login", &client("192.0.2.200"), "alice")
+                .is_err()
+        );
+        assert!(
+            auth.check_attempt("login", &home, "alice").is_ok(),
+            "known-good network"
+        );
+        // The ceiling applies to unknown usernames exactly like known ones.
+        for i in 0..LIMIT_PER_USERNAME {
+            let attacker = client(&format!("203.0.113.{}", i % 200 + 1));
+            auth.record_failure("login", &attacker, "nobody");
+        }
+        assert!(
+            auth.check_attempt("login", &client("192.0.2.200"), "nobody")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_full_table_evicts_the_oldest_window_instead_of_refusing() {
+        let limiter = Limiter::default();
+        for i in 0..LIMIT_MAX_KEYS {
+            limiter.hit(format!("k{i}"), 5).unwrap();
+        }
+        assert!(limiter.hit("new client".into(), 5).is_ok());
+        let table = limiter.0.lock().unwrap();
+        assert_eq!(table.len(), LIMIT_MAX_KEYS);
+        assert!(table.contains_key("new client"));
     }
 }

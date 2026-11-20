@@ -205,6 +205,8 @@ pub async fn create_view(
             .filter(|q| !q.is_empty()),
         ..body.filters
     };
+    let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, actor.id).await?;
     // ponytail: soft cap; two concurrent saves can pass the count together.
     let row: Option<Row> = sqlx::query_as(
         "INSERT INTO saved_views (owner_account_id, name, filters)
@@ -215,9 +217,10 @@ pub async fn create_view(
     .bind(name)
     .bind(Jsonb(&filters))
     .bind(VIEWS_MAX)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| unique_violation(e, "name"))?;
+    tx.commit().await?;
     let row = row.ok_or_else(|| {
         ApiError::Validation(FieldErrors::from([(
             "saved_views".into(),

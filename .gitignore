@@ -8,6 +8,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!.env.production.example
 .DS_Store
 *.pem
 *-debug.log*
@@ -16,3 +17,7 @@ test-results/
 # Development screenshot storage (SCREENSHOT_DIR default).
 data/
 playwright-report/
+
+# Full-stack Playwright artifacts
+apps/web/test-results-full/
+apps/web/playwright-report-full/

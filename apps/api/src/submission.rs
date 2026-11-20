@@ -200,12 +200,15 @@ async fn audit_draft(
     Ok(())
 }
 
+/// Unsubmitted drafts one account may keep.
+pub const MAX_OPEN_DRAFTS: i64 = 100;
+
 /// Save incomplete input privately. Retained until the owner deletes or submits it.
 #[utoipa::path(post, path = "/api/ticket-drafts", tag = "tickets", request_body = TicketIntake,
     responses(
         (status = 201, body = Draft),
         (status = 401, description = "`unauthorized`", body = crate::api::ErrorEnvelope),
-        (status = 422, description = "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)", body = crate::api::ErrorEnvelope),
+        (status = 422, description = "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts)", body = crate::api::ErrorEnvelope),
     ))]
 pub async fn create_draft(
     State(state): State<AppState>,
@@ -214,6 +217,26 @@ pub async fn create_draft(
 ) -> Result<(StatusCode, Json<Draft>), ApiError> {
     body.validate(false)?;
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
+    // Bounded storage per account (after the account lock, which refuses an
+    // inactive or anonymized account); the advisory lock serializes the count and insert
+    // across API processes.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('ticket_draft'), hashtext($1))")
+        .bind(user.account_id().to_string())
+        .execute(&mut *tx)
+        .await?;
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ticket_drafts WHERE requester_account_id = $1 AND submitted_ticket_id IS NULL",
+    )
+    .bind(user.account_id())
+    .fetch_one(&mut *tx)
+    .await?;
+    if open >= MAX_OPEN_DRAFTS {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "draft".into(),
+            vec!["too_many"],
+        )])));
+    }
     screenshots::keep_pending(&mut tx, user.account_id(), &body.screenshot_ids).await?;
     let draft: Draft = sqlx::query_as(&format!("INSERT INTO ticket_drafts (requester_account_id, intake) VALUES ($1, $2) RETURNING {DRAFT_COLUMNS}"))
         .bind(user.account_id()).bind(sqlx::types::Json(body)).fetch_one(&mut *tx).await?;
@@ -285,6 +308,7 @@ pub async fn update_draft(
     Json(body): Json<DraftUpdate>,
 ) -> Result<Json<Draft>, ApiError> {
     let mut tx = state.pool.begin().await?;
+    crate::auth::lock_active_account(&mut tx, user.account_id()).await?;
     lock_draft(&mut tx, user.account_id(), id, body.version).await?;
     body.intake.validate(false)?;
     screenshots::keep_pending(&mut tx, user.account_id(), &body.intake.screenshot_ids).await?;
@@ -441,6 +465,9 @@ pub async fn submit_ticket(
     )
     .await?;
     tx.commit().await?;
+    if receipt.status == TicketStatus::Queued {
+        state.metrics.event(crate::metrics::Event::DirectIntake, 1);
+    }
     Ok((StatusCode::CREATED, Json(receipt)))
 }
 
@@ -484,5 +511,8 @@ pub async fn submit_draft(
     sqlx::query("UPDATE ticket_drafts SET intake = NULL, submitted_ticket_id = $2, version = version + 1, updated_at = now() WHERE id = $1")
         .bind(id).bind(receipt.id).execute(&mut *tx).await?;
     tx.commit().await?;
+    if receipt.status == TicketStatus::Queued {
+        state.metrics.event(crate::metrics::Event::DirectIntake, 1);
+    }
     Ok((StatusCode::CREATED, Json(receipt)))
 }

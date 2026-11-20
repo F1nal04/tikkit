@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tikkit API",
-    "description": "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; lists use `limit`/`cursor` and return a Page. Authentication is the HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send `X-Requested-With: tikkit` or is rejected with 403 `csrf_rejected` (docs/auth.md).",
+    "description": "Conventions: docs/api-conventions.md. Errors use the ErrorEnvelope schema; lists use `limit`/`cursor` and return a Page. Authentication is the HttpOnly `tikkit_session` cookie; every POST/PUT/PATCH/DELETE must send `X-Requested-With: tikkit` and, from a browser, come from the portal's own origin, or is rejected with 403 `csrf_rejected` (docs/security.md).",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -272,6 +272,200 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "`conflict`: the account was anonymized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{id}/anonymize": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Removes the identity of a deactivated account for good (Admin only). The\naccount ID, role, and every ticket, event, and statistic that refers to it\nstay; see docs/retention.md for the exact policy. The account must be\ndeactivated first, so the last active Admin and an active team's lead can\nnever be anonymized. Irreversible. Writes `account_anonymized`.",
+        "operationId": "anonymize_account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnonymizeAccount"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnonymizationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: a ticket of the account is being changed right now; try again; `restore_mode_blocked`: this copy is in restore mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`username`: `mismatch`; `account`: `active`, `already_anonymized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{id}/personal-data/export": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Exports the personal data of one account as a JSON document (Admin only).\nThe typed `username` must be the account's. Bounded: each section holds at\nmost 10,000 rows and `truncated` names the sections that were cut, and the\nwhole export at most 16 MiB (`413 export_too_large` otherwise). Never\ncontains credentials, hashes, internal notes, or other people's data; see\ndocs/retention.md for the exact contents. Writes `personal_data_exported`.",
+        "operationId": "export_personal_data",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountConfirmation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The export, as an attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`export_too_large`: the account's data exceeds 16 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`username`: `mismatch`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -420,6 +614,351 @@
         }
       }
     },
+    "/api/admin/audit": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "The audit log, newest first (Admin only). Searching is a pure read: it\nwrites nothing, so reviewing history leaves no trace in it.",
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Acting account ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "actor_username",
+            "in": "query",
+            "description": "Acting account's username (case-insensitive, exact).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Action identifier, e.g. `login_failed` or `ticket_ai_solved`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "description": "Resource type, e.g. `ticket`, `account`, `team`, `invitation`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "description": "Resource identifier within its type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ticket_id",
+            "in": "query",
+            "description": "Events about this ticket.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ticket_reference",
+            "in": "query",
+            "description": "Events about the ticket with this reference number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "description": "Events written by one request, or by the jobs it caused (`x-request-id`, a UUID).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AuditEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` (unknown parameter, malformed value, or empty time range)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`cursor: invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit/actions": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "The action identifiers that occur in the log, for the search filter (Admin only).",
+        "operationId": "actions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditActions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit/export": {
+      "post": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Exports the matching events as CSV, newest first (Admin only). Bounded: at\nmost 10,000 rows; `x-export-truncated: true` says a longer result was cut\n(narrow the filters or the time range). Cells that a spreadsheet would run\nas a formula are neutralized. The export itself is audited\n(`audit_exported`: who, the filters, the row count).",
+        "operationId": "export",
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Acting account ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "actor_username",
+            "in": "query",
+            "description": "Acting account's username (case-insensitive, exact).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Action identifier, e.g. `login_failed` or `ticket_ai_solved`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "description": "Resource type, e.g. `ticket`, `account`, `team`, `invitation`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "description": "Resource identifier within its type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ticket_id",
+            "in": "query",
+            "description": "Events about this ticket.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ticket_reference",
+            "in": "query",
+            "description": "Events about the ticket with this reference number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "description": "Events written by one request, or by the jobs it caused (`x-request-id`, a UUID).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive event time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV with a header row. Headers `x-export-rows` and `x-export-truncated`.",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin) or `csrf_rejected`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/notifications": {
       "get": {
         "tags": [
@@ -465,7 +1004,7 @@
         "tags": [
           "notifications"
         ],
-        "summary": "Re-queues every `failed` row. Rows keep their idempotency key, so a message\nthe relay already accepted is never sent twice.",
+        "summary": "Re-queues every `failed` row. A durable delivery receipt suppresses the\nresend. A relay acceptance without a committed receipt may be delivered again.",
         "operationId": "retry_failed",
         "responses": {
           "200": {
@@ -490,6 +1029,500 @@
           },
           "403": {
             "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/personal-data": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Finds one account by username and counts what is stored about it (Admin\nonly). Read-only; the preview before an export or anonymization.",
+        "operationId": "personal_data_summary",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "description": "Exact username (case-insensitive). Resolves to one account ID.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: no account has that username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/reports": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "get_report",
+        "parameters": [
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "Frozen category ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Current destination team ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, reversed, or over-366-day range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/reports/export": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "export_report",
+        "parameters": [
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "Frozen category ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Current destination team ID.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, reversed, or over-366-day range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "More than 10,000 matching rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/retention": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The retention policy and the latest runs (Admin only).",
+        "operationId": "get_retention",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionOverview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Replaces the retention policy (Admin only). Saving deletes nothing unless\n`automatic` is on; then the worker applies the policy within a day.",
+        "operationId": "put_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionSettingsWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`retention_preview_stale`: with `automatic` on, the periods were not previewed or the settings changed since the preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (a period: `out_of_range`; `confirm`: `invalid`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/retention/preview": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Dry run (Admin only): exact counts per category for the given periods,\nsaved or not. Changes nothing and writes no audit event.",
+        "operationId": "preview_retention",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (a period: `out_of_range`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/retention/runs": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Starts applying the saved policy as previewed (Admin only). The preview must\nbe of the saved periods, made under the current settings, and at most an\nhour old; otherwise `409 retention_preview_stale` and nothing starts. The\nretention worker does the work in batches; `GET /api/admin/retention` shows\nits progress.",
+        "operationId": "start_retention_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRetentionRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`retention_preview_stale`: the stored policy is not the previewed one, or the preview is too old; `conflict`: a run is already pending; `restore_mode_blocked`: this copy is in restore mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`confirm`: `invalid`; `policy`: `not_configured`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -588,6 +1621,260 @@
           },
           "422": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/submissions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Every submitted ticket, newest first (Admin only): AI-stage and AI-solved\nrecords, escalated tickets, operator resolutions, and cancellations. Drafts\nare not submissions and never listed. Filters apply before the page limit.",
+        "operationId": "list_submissions",
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "query",
+            "description": "The ticket's (frozen) category, archived ones included.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Current destination team, including archived teams.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "assignee_id",
+            "in": "query",
+            "description": "Current assignee account.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "entered_queue",
+            "in": "query",
+            "description": "Whether a recorded transition entered the shared queue.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "priority_id",
+            "in": "query",
+            "description": "Current effective priority.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "Current closure classification used in Admin reports.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SubmissionResolution"
+            }
+          },
+          {
+            "name": "ai_disposition",
+            "in": "query",
+            "description": "AI reporting bucket, including bypass routes with no attempt.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AiDisposition"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Current ticket status. `draft` is not a submission and is rejected.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TicketStatus"
+            }
+          },
+          {
+            "name": "resolution_source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResolutionSourceFilter"
+            }
+          },
+          {
+            "name": "ai_outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AiOutcomeFilter"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive submission time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Exclusive submission time, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 25).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SubmissionSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_query` (unknown filter value, `status=draft`, bad or empty date range)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`validation_failed` (`cursor`: `invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/submissions/{id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One submission with its frozen intake, AI attempt (suggestion, internal\noutcome code, decision and confirmation event), and every event (Admin\nonly). Read-only: there is no action here, and AI-solved records stay final.",
+        "operationId": "submission_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` (not an Admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` (missing, or a draft)",
             "content": {
               "application/json": {
                 "schema": {
@@ -849,6 +2136,16 @@
         "responses": {
           "202": {
             "description": "Accepted; identical for unknown usernames"
+          },
+          "409": {
+            "description": "`outbound_disabled`: restore mode sends no email and creates no token, for every username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           },
           "429": {
             "description": "`rate_limited`",
@@ -3287,7 +4584,7 @@
             }
           },
           "409": {
-            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, or `ai_model_unsupported`",
+            "description": "`ai_not_configured` (no provider, model, or key), `ai_credential_unreadable`, `ai_model_unsupported`, or `outbound_disabled` (restore mode)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3974,7 +5271,7 @@
             }
           },
           "422": {
-            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads)",
+            "description": "`validation_failed` (input bounds; `screenshot_ids` not own pending uploads; `draft: too_many` at 100 open drafts)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5212,6 +6509,20 @@
           }
         }
       },
+      "AccountConfirmation": {
+        "type": "object",
+        "description": "The typed confirmation of a request about one account.",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "The account's current username, typed by the Admin."
+          }
+        },
+        "additionalProperties": false
+      },
       "AccountSummary": {
         "type": "object",
         "required": [
@@ -5225,9 +6536,14 @@
           "role",
           "language",
           "is_active",
+          "anonymized",
           "created_at"
         ],
         "properties": {
+          "anonymized": {
+            "type": "boolean",
+            "description": "The account's identity was removed; it cannot be reactivated."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -5478,6 +6794,25 @@
           "not_solved"
         ]
       },
+      "AiDisposition": {
+        "type": "string",
+        "description": "Mutually exclusive AI reporting buckets, derived from the Admin attempt\noutcome and the recorded submission route.",
+        "enum": [
+          "solved",
+          "not_solved",
+          "provider_failed",
+          "failed",
+          "missing_attempt",
+          "policy_withdrawn",
+          "processing",
+          "awaiting_decision",
+          "cancelled",
+          "category_exempt",
+          "ai_disabled",
+          "requester_skip",
+          "unknown"
+        ]
+      },
       "AiFailureCount": {
         "type": "object",
         "required": [
@@ -5698,6 +7033,20 @@
             "$ref": "#/components/schemas/AiOutcomeStatus"
           }
         }
+      },
+      "AiOutcomeFilter": {
+        "type": "string",
+        "description": "`ai_outcome` filter: an [`AiRecordOutcome`], or `none` for submissions that\nnever had an AI attempt.",
+        "enum": [
+          "none",
+          "processing",
+          "awaiting_decision",
+          "solved",
+          "not_solved",
+          "skipped",
+          "failed",
+          "cancelled"
+        ]
       },
       "AiOutcomeStats": {
         "type": "object",
@@ -6174,6 +7523,93 @@
           }
         }
       },
+      "AiVolume": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AiDisposition"
+          }
+        }
+      },
+      "AnonymizationResult": {
+        "type": "object",
+        "description": "What an anonymization removed. Counts only.",
+        "required": [
+          "account_id",
+          "username",
+          "sessions",
+          "drafts",
+          "pending_screenshots",
+          "saved_views",
+          "notifications",
+          "audit_events",
+          "ticket_content"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "audit_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audit events whose username snapshot or IP address was removed."
+          },
+          "drafts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "notifications": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending_screenshots": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "saved_views": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ticket_content": {
+            "$ref": "#/components/schemas/RetentionCounts",
+            "description": "Content removed from the account's own final tickets, if requested."
+          },
+          "username": {
+            "type": "string",
+            "description": "The placeholder that replaced the username and display name."
+          }
+        }
+      },
+      "AnonymizeAccount": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "purge_ticket_content": {
+            "type": "boolean",
+            "description": "Also remove the content of the account's own tickets that are in a\nfinal status now (as ticket content retention would later)."
+          },
+          "username": {
+            "type": "string",
+            "description": "The account's current username, typed by the Admin."
+          }
+        },
+        "additionalProperties": false
+      },
       "AnswerSnapshot": {
         "type": "object",
         "required": [
@@ -6412,6 +7848,183 @@
           "visible": {
             "type": "boolean",
             "description": "The caller can still open the ticket as staff. False after a transfer to a\nteam the caller is not in: further reads are `404`."
+          }
+        }
+      },
+      "AuditAccount": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "username"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AuditActions": {
+        "type": "object",
+        "required": [
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every action identifier present in the log, sorted."
+          }
+        }
+      },
+      "AuditActor": {
+        "type": "object",
+        "description": "Who acted, as it was when the event was written.",
+        "required": [
+          "account_id",
+          "username",
+          "role",
+          "team_id",
+          "team_name",
+          "service"
+        ],
+        "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` when a service acted."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "The account's role at the time. `null` for services and for events\nolder than this field."
+              }
+            ]
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set exactly when no account acted: `anonymous` or the background service."
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The account's team at the time, if it had one."
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "action",
+          "actor",
+          "subject",
+          "resource_type",
+          "resource_id",
+          "ticket_id",
+          "ticket_reference",
+          "request_id",
+          "metadata"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Stable machine identifier."
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AuditActor"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Identifiers, codes, and before/after settings. Never secrets or content."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The request that wrote the event, or that caused the job that wrote it."
+          },
+          "resource_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AuditAccount",
+                "description": "The account the event is about, if any."
+              }
+            ]
+          },
+          "ticket_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "ticket_reference": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`null` when the event is not about a ticket."
           }
         }
       },
@@ -6860,6 +8473,22 @@
           "confirmation_timeout"
         ]
       },
+      "ClosureVolume": {
+        "type": "object",
+        "required": [
+          "resolution",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/SubmissionResolution"
+          }
+        }
+      },
       "CreateInvitationRequest": {
         "type": "object",
         "properties": {
@@ -6956,6 +8585,24 @@
           "url": {
             "type": "string",
             "description": "Single-use acceptance link. Shown only now; only its hash is stored."
+          }
+        }
+      },
+      "DailyVolume": {
+        "type": "object",
+        "required": [
+          "day",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "description": "Calendar date in UTC."
           }
         }
       },
@@ -7100,6 +8747,7 @@
           "invalid_credentials",
           "csrf_rejected",
           "rate_limited",
+          "request_timeout",
           "setup_already_completed",
           "invitation_invalid",
           "reset_token_invalid",
@@ -7110,6 +8758,10 @@
           "method_not_allowed",
           "conflict",
           "payload_too_large",
+          "retention_preview_stale",
+          "export_too_large",
+          "outbound_disabled",
+          "restore_mode_blocked",
           "smtp_not_configured",
           "smtp_auth_failed",
           "smtp_tls_failed",
@@ -7171,6 +8823,26 @@
           "request_id": {
             "type": "string",
             "description": "Same value as the `x-request-id` response header."
+          }
+        }
+      },
+      "EventActor": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
           }
         }
       },
@@ -7555,6 +9227,27 @@
           }
         }
       },
+      "NamedVolume": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "NewCategory": {
         "type": "object",
         "required": [
@@ -7705,6 +9398,100 @@
         },
         "additionalProperties": false
       },
+      "OperatorTotals": {
+        "type": "object",
+        "required": [
+          "queued",
+          "first_response_samples",
+          "mean_first_response_seconds",
+          "initial_closures",
+          "initial_requester_confirmed",
+          "initial_confirmation_timeout",
+          "subsequent_closures",
+          "reopens",
+          "rejected_proposals",
+          "time_to_proposal_samples",
+          "mean_queue_to_proposal_seconds",
+          "confirmation_wait_samples",
+          "mean_proposal_to_closure_seconds",
+          "resolution_samples",
+          "mean_queue_to_closure_seconds"
+        ],
+        "properties": {
+          "confirmation_wait_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "first_response_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_closures": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_confirmation_timeout": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "initial_requester_confirmed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mean_first_response_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mean_proposal_to_closure_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mean_queue_to_closure_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mean_queue_to_proposal_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rejected_proposals": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reopens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolution_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subsequent_closures": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "time_to_proposal_samples": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "Order": {
         "type": "object",
         "required": [
@@ -7786,9 +9573,14 @@
                 "role",
                 "language",
                 "is_active",
+                "anonymized",
                 "created_at"
               ],
               "properties": {
+                "anonymized": {
+                  "type": "boolean",
+                  "description": "The account's identity was removed; it cannot be reactivated."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -7925,6 +9717,108 @@
                   "type": "string",
                   "format": "uuid",
                   "description": "Open with `GET /api/tickets/{ticket_id}` for the intake and the suggestion."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_AuditEvent": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "created_at",
+                "action",
+                "actor",
+                "subject",
+                "resource_type",
+                "resource_id",
+                "ticket_id",
+                "ticket_reference",
+                "request_id",
+                "metadata"
+              ],
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "description": "Stable machine identifier."
+                },
+                "actor": {
+                  "$ref": "#/components/schemas/AuditActor"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "metadata": {
+                  "type": "object",
+                  "description": "Identifiers, codes, and before/after settings. Never secrets or content."
+                },
+                "request_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "The request that wrote the event, or that caused the job that wrote it."
+                },
+                "resource_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "resource_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuditAccount",
+                      "description": "The account the event is about, if any."
+                    }
+                  ]
+                },
+                "ticket_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "ticket_reference": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "`null` when the event is not about a ticket."
                 }
               }
             }
@@ -8275,6 +10169,147 @@
           }
         }
       },
+      "Page_SubmissionSummary": {
+        "type": "object",
+        "description": "One page of a list. `next_cursor` is null on the last page.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One submission in the Admin list. No ticket text beyond the subject.",
+              "required": [
+                "id",
+                "reference",
+                "subject",
+                "status",
+                "category_id",
+                "category_name",
+                "priority_name",
+                "requester",
+                "team_name",
+                "assignee_display_name",
+                "resolution_source",
+                "closure_reason",
+                "resolution",
+                "route",
+                "ai_outcome",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "ai_outcome": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AiRecordOutcome",
+                      "description": "What became of the AI attempt; `null` when there never was one."
+                    }
+                  ]
+                },
+                "assignee_display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "category_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "category_name": {
+                  "type": "string",
+                  "description": "The category name frozen at submission."
+                },
+                "closure_reason": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ClosureReason"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Submission time."
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "priority_name": {
+                  "type": "string",
+                  "description": "Current effective priority."
+                },
+                "reference": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "requester": {
+                  "$ref": "#/components/schemas/TicketRequester"
+                },
+                "resolution": {
+                  "$ref": "#/components/schemas/SubmissionResolution"
+                },
+                "resolution_source": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResolutionSource",
+                      "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+                    }
+                  ]
+                },
+                "route": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SubmissionRoute",
+                      "description": "`null` for records predating the submission event."
+                    }
+                  ]
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TicketStatus"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "team_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`null`: the shared general queue, or never human work."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Team": {
         "type": "object",
         "description": "One page of a list. `next_cursor` is null on the last page.",
@@ -8432,6 +10467,82 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PersonalDataSummary": {
+        "type": "object",
+        "description": "What is stored about one account, as counts. Nothing is changed.",
+        "required": [
+          "account_id",
+          "username",
+          "display_name",
+          "role",
+          "is_active",
+          "anonymized_at",
+          "tickets",
+          "open_tickets",
+          "final_tickets_with_content",
+          "drafts",
+          "pending_screenshots",
+          "sessions",
+          "audit_events"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "anonymized_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "audit_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audit events the account acted in or is the subject of."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "drafts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "final_tickets_with_content": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, in a final status with their content still stored."
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "open_tickets": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, not in a final status. Anonymization leaves them open."
+          },
+          "pending_screenshots": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tickets": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tickets the account submitted."
+          },
+          "username": {
+            "type": "string"
           }
         }
       },
@@ -8707,11 +10818,16 @@
         "type": "object",
         "required": [
           "status",
-          "checks"
+          "checks",
+          "restore_mode"
         ],
         "properties": {
           "checks": {
             "$ref": "#/components/schemas/Checks"
+          },
+          "restore_mode": {
+            "type": "boolean",
+            "description": "`true` while `RESTORE_MODE` is on: no background jobs, nothing sent outbound.\nOlder builds omit the field, which restore tooling treats as \"unsupported\"."
           },
           "status": {
             "type": "string",
@@ -8730,6 +10846,110 @@
           }
         },
         "additionalProperties": false
+      },
+      "Report": {
+        "type": "object",
+        "required": [
+          "submissions",
+          "daily",
+          "categories",
+          "priorities",
+          "ai_outcomes",
+          "ai_attempts",
+          "ai_rate_numerator",
+          "ai_rate_denominator",
+          "deflection_rate_numerator",
+          "deflection_rate_denominator",
+          "closures",
+          "awaiting_confirmation",
+          "operator",
+          "workload"
+        ],
+        "properties": {
+          "ai_attempts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ai_outcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiVolume"
+            }
+          },
+          "ai_rate_denominator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Solved, not-solved, and recorded failures. Null with a team filter."
+          },
+          "ai_rate_numerator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Explicit AI confirmations. Null with a team filter."
+          },
+          "awaiting_confirmation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedVolume"
+            }
+          },
+          "closures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClosureVolume"
+            }
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyVolume"
+            }
+          },
+          "deflection_rate_denominator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Submissions excluding cancellations and policy withdrawals. Null with a team filter."
+          },
+          "deflection_rate_numerator": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Explicit AI confirmations. Null with a team filter."
+          },
+          "operator": {
+            "$ref": "#/components/schemas/OperatorTotals"
+          },
+          "priorities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedVolume"
+            }
+          },
+          "submissions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workload": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Workload"
+            }
+          }
+        }
       },
       "RequesterAction": {
         "oneOf": [
@@ -8875,6 +11095,344 @@
           "ai",
           "operator"
         ]
+      },
+      "ResolutionSourceFilter": {
+        "type": "string",
+        "description": "`resolution_source` filter: `none` is every submission without one (open\nor cancelled).",
+        "enum": [
+          "ai",
+          "operator",
+          "none"
+        ]
+      },
+      "RetentionCounts": {
+        "type": "object",
+        "description": "Records per category. In a preview: what a run started now would remove.\nIn a run: what it has removed so far.",
+        "required": [
+          "drafts",
+          "screenshots",
+          "ai_content",
+          "ticket_content",
+          "audit_events"
+        ],
+        "properties": {
+          "ai_content": {
+            "type": "integer",
+            "format": "int64",
+            "description": "AI attempts whose input and suggestion were removed."
+          },
+          "audit_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Audit events deleted."
+          },
+          "drafts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Drafts deleted."
+          },
+          "screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Screenshot records deleted (their files follow)."
+          },
+          "ticket_content": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tickets whose text was removed."
+          }
+        }
+      },
+      "RetentionLimits": {
+        "type": "object",
+        "description": "Bounds of the retention periods, in days.",
+        "required": [
+          "min_days",
+          "max_days",
+          "audit_min_days"
+        ],
+        "properties": {
+          "audit_min_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The audit log's retention floor."
+          },
+          "max_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "min_days": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RetentionOverview": {
+        "type": "object",
+        "description": "The retention policy, its bounds, and the latest runs.",
+        "required": [
+          "settings",
+          "limits",
+          "runs"
+        ],
+        "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/RetentionLimits"
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetentionRun"
+            },
+            "description": "Newest first, at most 10."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RetentionSettings"
+          }
+        }
+      },
+      "RetentionPolicy": {
+        "type": "object",
+        "description": "Retention periods in days. `null` keeps that category for good, which is\nthe default for all five.",
+        "required": [
+          "draft_days",
+          "screenshot_days",
+          "ai_content_days",
+          "ticket_content_days",
+          "audit_days"
+        ],
+        "properties": {
+          "ai_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "AI input and suggestion of tickets in a final status."
+          },
+          "audit_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Audit events. At least 30 days."
+          },
+          "draft_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unsubmitted drafts, from their last save."
+          },
+          "screenshot_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Screenshots of tickets in a final status, from the final status."
+          },
+          "ticket_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Subject, description, answers, messages, and cancellation reason of\ntickets in a final status. Implies their screenshots and AI content."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RetentionPreview": {
+        "type": "object",
+        "description": "What a run would remove if it started at `as_of`.",
+        "required": [
+          "as_of",
+          "policy",
+          "affected",
+          "token"
+        ],
+        "properties": {
+          "affected": {
+            "$ref": "#/components/schemas/RetentionCounts"
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy"
+          },
+          "token": {
+            "type": "string",
+            "description": "Send this back, with `as_of`, to confirm what this preview showed."
+          }
+        }
+      },
+      "RetentionRun": {
+        "type": "object",
+        "description": "One application of the policy.",
+        "required": [
+          "id",
+          "state",
+          "requested_by",
+          "requested_by_username",
+          "created_at",
+          "as_of",
+          "finished_at",
+          "policy",
+          "deleted"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The clock the periods were measured from."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted": {
+            "$ref": "#/components/schemas/RetentionCounts",
+            "description": "Removed so far (final once `completed`)."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy",
+            "description": "The periods the run applies, as they were when it started."
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The Admin who started it; `null` for an automatic run."
+          },
+          "requested_by_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RetentionRunState"
+          }
+        }
+      },
+      "RetentionRunState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "completed"
+        ]
+      },
+      "RetentionSettings": {
+        "type": "object",
+        "required": [
+          "policy",
+          "automatic",
+          "version",
+          "updated_at"
+        ],
+        "properties": {
+          "automatic": {
+            "type": "boolean",
+            "description": "Whether the worker applies the policy daily. Off by default."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bumped by every save. Previews are bound to it."
+          }
+        }
+      },
+      "RetentionSettingsWrite": {
+        "type": "object",
+        "description": "Every period is required; `null` keeps that category for good.",
+        "required": [
+          "draft_days",
+          "screenshot_days",
+          "ai_content_days",
+          "ticket_content_days",
+          "audit_days",
+          "automatic"
+        ],
+        "properties": {
+          "ai_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "audit_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "automatic": {
+            "type": "boolean"
+          },
+          "confirm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Must be `DELETE` when `automatic` is true and any period is set: saving\nthen authorizes deletion without a further confirmation."
+          },
+          "draft_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "preview_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `token` of a preview of exactly these periods, required together\nwith `confirm`: what was confirmed is what was reviewed."
+          },
+          "screenshot_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ticket_content_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "RetryResult": {
         "type": "object",
@@ -9385,6 +11943,260 @@
           "q"
         ]
       },
+      "StartRetentionRun": {
+        "type": "object",
+        "required": [
+          "confirm",
+          "preview_token",
+          "as_of"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The `as_of` of that preview: the run's clock, so it removes what the\npreview counted."
+          },
+          "confirm": {
+            "type": "string",
+            "description": "Must be `DELETE`."
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "The `token` of the preview the Admin confirmed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmissionAi": {
+        "type": "object",
+        "description": "The ticket's AI attempt as Admins see it: the stored suggestion, the\ninternal outcome code, and the requester's decision.",
+        "required": [
+          "attempt_id",
+          "outcome",
+          "state",
+          "outcome_code",
+          "provider",
+          "model",
+          "language",
+          "suggestion",
+          "decision",
+          "decision_event_id",
+          "decided_at",
+          "created_at",
+          "finished_at",
+          "content_removed"
+        ],
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "content_removed": {
+            "type": "boolean",
+            "description": "Retention removed the stored suggestion; `suggestion` is then `null`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiDecision"
+              }
+            ]
+          },
+          "decision_event_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The decision event in `events` (for `solved`: the confirmation event)."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "model": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AiRecordOutcome"
+          },
+          "outcome_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Internal stable code of why there is no suggestion (docs/ai-attempts.md)."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AiAttemptState"
+          },
+          "suggestion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiSuggestion",
+                "description": "The one stored suggestion, untrusted model text: render as plain text."
+              }
+            ]
+          }
+        }
+      },
+      "SubmissionDetail": {
+        "type": "object",
+        "description": "One submission in full, read-only.",
+        "required": [
+          "summary",
+          "description",
+          "intake_snapshot",
+          "removed_screenshots",
+          "confirmation_deadline",
+          "ai",
+          "content_removed_at",
+          "events"
+        ],
+        "properties": {
+          "ai": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmissionAi"
+              }
+            ]
+          },
+          "confirmation_deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "content_removed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when retention removed the ticket's text; the text fields then hold `—`."
+          },
+          "description": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubmissionEvent"
+            },
+            "description": "Every event of the ticket, oldest first."
+          },
+          "intake_snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmittedIntake",
+                "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
+              }
+            ]
+          },
+          "removed_screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Intake screenshots the retention policy has removed."
+          },
+          "summary": {
+            "$ref": "#/components/schemas/SubmissionSummary"
+          }
+        }
+      },
+      "SubmissionEvent": {
+        "type": "object",
+        "description": "One immutable ticket event: transitions, assignment and priority changes,\nand message events (which carry the message ID only, never its text).",
+        "required": [
+          "id",
+          "event_type",
+          "from_status",
+          "to_status",
+          "actor",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "actor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventActor",
+                "description": "`null` for background jobs."
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "from_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus",
+                "description": "Set on status transitions only."
+              }
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "to_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TicketStatus"
+              }
+            ]
+          }
+        }
+      },
       "SubmissionReceipt": {
         "type": "object",
         "description": "Immutable submission receipt. A replay returns the original submitted status;\nread `/api/tickets/{id}` for the current status.",
@@ -9404,6 +12216,149 @@
           },
           "status": {
             "$ref": "#/components/schemas/TicketStatus"
+          }
+        }
+      },
+      "SubmissionResolution": {
+        "type": "string",
+        "description": "How a submission ended, from its status and closure provenance. Only\n`ai_confirmed` is an AI resolution; an undecided or abandoned suggestion is\n`open` or `cancelled`, never solved.",
+        "enum": [
+          "open",
+          "ai_confirmed",
+          "requester_confirmed",
+          "confirmation_timeout",
+          "cancelled"
+        ]
+      },
+      "SubmissionRoute": {
+        "type": "string",
+        "description": "How the submission entered: the `route` of its `submit` event.",
+        "enum": [
+          "ai",
+          "ai_disabled",
+          "category_exempt",
+          "requester_skip"
+        ]
+      },
+      "SubmissionSummary": {
+        "type": "object",
+        "description": "One submission in the Admin list. No ticket text beyond the subject.",
+        "required": [
+          "id",
+          "reference",
+          "subject",
+          "status",
+          "category_id",
+          "category_name",
+          "priority_name",
+          "requester",
+          "team_name",
+          "assignee_display_name",
+          "resolution_source",
+          "closure_reason",
+          "resolution",
+          "route",
+          "ai_outcome",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "ai_outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AiRecordOutcome",
+                "description": "What became of the AI attempt; `null` when there never was one."
+              }
+            ]
+          },
+          "assignee_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category_name": {
+            "type": "string",
+            "description": "The category name frozen at submission."
+          },
+          "closure_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClosureReason"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Submission time."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "priority_name": {
+            "type": "string",
+            "description": "Current effective priority."
+          },
+          "reference": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "requester": {
+            "$ref": "#/components/schemas/TicketRequester"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/SubmissionResolution"
+          },
+          "resolution_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResolutionSource",
+                "description": "Set on `closed` (`operator`) and `ai_solved` (`ai`) tickets."
+              }
+            ]
+          },
+          "route": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmissionRoute",
+                "description": "`null` for records predating the submission event."
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TicketStatus"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null`: the shared general queue, or never human work."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -9535,9 +12490,14 @@
           "created_at",
           "finished_at",
           "decision",
-          "decided_at"
+          "decided_at",
+          "content_removed"
         ],
         "properties": {
+          "content_removed": {
+            "type": "boolean",
+            "description": "Retention removed the stored suggestion; `suggestion` is then `null`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -9637,6 +12597,7 @@
           "priority_name",
           "assignment",
           "intake_snapshot",
+          "removed_screenshots",
           "resolution_source",
           "closure_reason",
           "proposal_version",
@@ -9648,7 +12609,8 @@
           "priority_changes",
           "assignment_changes",
           "staff_access",
-          "ai"
+          "ai",
+          "content_removed_at"
         ],
         "properties": {
           "ai": {
@@ -9698,6 +12660,14 @@
             "format": "date-time",
             "description": "Auto-close time of the pending proposal; set only while `awaiting_confirmation`."
           },
+          "content_removed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when retention removed the ticket's text (subject, description,\nanswers, messages): those fields then hold the marker `—`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -9716,7 +12686,7 @@
               },
               {
                 "$ref": "#/components/schemas/SubmittedIntake",
-                "description": "Frozen original intake; null only for legacy records predating submission."
+                "description": "Frozen original intake; null only for legacy records predating submission.\n`screenshot_ids` lists only screenshots that still exist."
               }
             ]
           },
@@ -9743,6 +12713,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Stable human-facing number."
+          },
+          "removed_screenshots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Intake screenshots the retention policy has removed."
           },
           "requester": {
             "oneOf": [
@@ -10091,6 +13066,69 @@
           }
         },
         "additionalProperties": false
+      },
+      "Workload": {
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "assignee_id",
+          "assignee_name",
+          "assignee_role",
+          "queued",
+          "active",
+          "awaiting_confirmation"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "assignee_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "assignee_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee_role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role"
+              }
+            ]
+          },
+          "awaiting_confirmation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "team_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       }
     }
   }

@@ -10,6 +10,7 @@
     "check": "turbo run check",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
+    "test:e2e:full": "bun run --cwd apps/web test:e2e:full",
     "start": "turbo run start"
   },
   "devDependencies": {
