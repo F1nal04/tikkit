@@ -3,7 +3,7 @@ name: tikkit-dev
 
 services:
   postgres:
-    image: postgres:17.6
+    image: postgres:18.6
     environment:
       POSTGRES_DB: tikkit
       POSTGRES_USER: tikkit
