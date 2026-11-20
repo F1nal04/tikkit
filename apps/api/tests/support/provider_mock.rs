@@ -18,6 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
+use tokio::sync::watch;
 use url::Url;
 
 #[derive(Clone)]
@@ -72,17 +73,41 @@ struct Script {
     /// Requests being answered right now, and the most there ever were.
     in_flight: Arc<AtomicUsize>,
     max_in_flight: Arc<AtomicUsize>,
+    /// `false` while [`Mock::hold`] keeps answers back.
+    open: watch::Receiver<bool>,
 }
+
+/// The longest a held request waits for [`Mock::release`]: below the test
+/// workers' call timeout, so a test that never releases fails, not hangs.
+const HOLD_LIMIT: Duration = Duration::from_secs(8);
 
 pub struct Mock {
     pub url: Url,
     seen: Arc<Mutex<Vec<Seen>>>,
+    in_flight: Arc<AtomicUsize>,
     max_in_flight: Arc<AtomicUsize>,
+    open: watch::Sender<bool>,
 }
 
 impl Mock {
     pub fn count(&self) -> usize {
         self.seen.lock().unwrap().len()
+    }
+
+    /// Requests being answered right now.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::SeqCst)
+    }
+
+    /// Keeps every answer back until [`Mock::release`], so a test can see
+    /// which requests are in flight together without relying on timing.
+    pub fn hold(&self) {
+        self.open.send_replace(false);
+    }
+
+    /// Lets held and later requests be answered.
+    pub fn release(&self) {
+        self.open.send_replace(true);
     }
 
     /// The most requests the mock was answering at the same time.
@@ -128,6 +153,8 @@ async fn handler(
     };
     let now = script.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
     script.max_in_flight.fetch_max(now, Ordering::SeqCst);
+    let mut open = script.open.clone();
+    let _ = tokio::time::timeout(HOLD_LIMIT, open.wait_for(|open| *open)).await;
     tokio::time::sleep(reply.delay).await;
     script.in_flight.fetch_sub(1, Ordering::SeqCst);
     let mut response = (StatusCode::from_u16(reply.status).unwrap(), reply.body).into_response();
@@ -141,12 +168,15 @@ async fn handler(
 /// last one repeats.
 pub async fn serve(replies: Vec<Reply>) -> Mock {
     let seen = Arc::new(Mutex::new(Vec::new()));
+    let in_flight = Arc::new(AtomicUsize::new(0));
     let max_in_flight = Arc::new(AtomicUsize::new(0));
+    let (open, open_rx) = watch::channel(true);
     let script = Script {
         replies: Arc::new(Mutex::new(replies)),
         seen: seen.clone(),
-        in_flight: Arc::default(),
+        in_flight: in_flight.clone(),
         max_in_flight: max_in_flight.clone(),
+        open: open_rx,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
@@ -158,6 +188,8 @@ pub async fn serve(replies: Vec<Reply>) -> Mock {
     Mock {
         url,
         seen,
+        in_flight,
         max_in_flight,
+        open,
     }
 }

@@ -1544,7 +1544,7 @@ async fn the_worker_loop_stops_within_the_shutdown_window() {
 
 #[tokio::test]
 async fn attempts_beyond_the_provider_slots_wait_their_turn() {
-    let Some(w) = world(vec![success().after(Duration::from_millis(400))]).await else {
+    let Some(w) = world(vec![success()]).await else {
         return;
     };
     // Two provider slots (the default), three tickets, three workers at once.
@@ -1553,7 +1553,30 @@ async fn attempts_beyond_the_provider_slots_wait_their_turn() {
         w.submit("ai_processing").await,
         w.submit("ai_processing").await,
     ];
-    let claimed = futures(vec![w.worker(), w.worker(), w.worker()]).await;
+    // The provider answers only once the test has seen two calls in flight
+    // together and the third worker give up, however slow the machine is.
+    w.mock.hold();
+    let workers: Vec<_> = (0..3)
+        .map(|_| {
+            let worker = w.worker();
+            tokio::spawn(async move { ai_attempts::process_one(&worker).await.unwrap() })
+        })
+        .collect();
+    let settled = tokio::time::timeout(Duration::from_secs(5), async {
+        while w.mock.in_flight() < 2 || !workers.iter().any(|t| t.is_finished()) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    w.mock.release();
+    let mut claimed = Vec::new();
+    for task in workers {
+        claimed.push(task.await.unwrap());
+    }
+    assert!(
+        settled.is_ok(),
+        "two calls in flight together and one worker left without a claim"
+    );
     assert_eq!(claimed.iter().filter(|c| **c).count(), 2);
     assert_eq!(w.mock.max_in_flight(), 2);
     // The oldest two are done; the third was left unclaimed, not refused.
