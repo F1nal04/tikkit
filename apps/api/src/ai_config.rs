@@ -832,7 +832,7 @@ fn seal(key: &[u8; 32], provider: Provider, api_key: &str) -> Vec<u8> {
     OsRng.fill_bytes(&mut nonce);
     let ciphertext = Aes256Gcm::new(key.into())
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: api_key.as_bytes(),
                 aad: &binding(provider),
@@ -866,9 +866,10 @@ fn open(key: &[u8; 32], provider: Provider, sealed: &[u8]) -> Option<ApiKey> {
         return None;
     }
     let (nonce, ciphertext) = sealed.split_at(12);
+    let nonce = Nonce::try_from(nonce).ok()?;
     let plain = Aes256Gcm::new(key.into())
         .decrypt(
-            Nonce::from_slice(nonce),
+            &nonce,
             Payload {
                 msg: ciphertext,
                 aad: &binding(provider),
